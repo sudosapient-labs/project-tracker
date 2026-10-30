@@ -1,7 +1,7 @@
 /* =====================================================================
    ACTIONS · INPUT HANDLERS · DRAG & DROP · KEYBOARD · INIT
    ===================================================================== */
-import { $, $$, addD, dOff, esc, fmtDateTime, instant, iso, parse, shiftD, today, uid, withDay, withTime } from '../core/utils.js';
+import { $, $$, addD, dOff, esc, fmtDateTime, fmtTime, instant, iso, parse, parseTime, shiftD, today, uid, withDay, withTime } from '../core/utils.js';
 import { PR, PSTAT, ST } from '../core/constants.js';
 import { seed } from '../data/seed.js';
 import { D, DEFAULT_PREFS, S, allTasks, canSee, commentsOf, logAct, me, mem, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
@@ -11,7 +11,7 @@ import { mutate, toast } from '../ui/toast.js';
 import { autosize, focusKey, fxSet, go, render } from '../shell/render.js';
 import { viewOf } from '../shell/view-engine.js';
 import { TEMPLATES, closeModal, openModal } from '../overlays/modals.js';
-import { closePop, dateVal, openPop, tgt } from '../overlays/popovers.js';
+import { closePop, dateDirty, dpHead, openPop, tgt } from '../overlays/popovers.js';
 import { strengthMeter } from '../pages/settings.js';
 
 export const A = {},
@@ -274,8 +274,11 @@ A.ctxBtn = el => {
 A.popPick = el => {
   const p = S.ui.pop;
   let v = el.dataset.v;
-  // Picking a day keeps the time already set; the value stays all day otherwise.
-  if (p.type === 'date') return setDate(p, v && withDay(dateVal(p), v));
+  // Picking a day keeps the drafted time; the value stays all day otherwise.
+  if (p.type === 'date') {
+    p.m = iso(new Date(parse(v).getFullYear(), parse(v).getMonth(), 1));
+    return draftDate(p, withDay(p.draft, v));
+  }
   if (p.type === 'subassignee') {
     const t = task(p.id);
     const sb = t?.subtasks[p.i];
@@ -344,15 +347,68 @@ function setDate(p, v, keep) {
   if (p.field === 'due' && v && p.id !== '__form' && t.start && instant(t.start) > instant(v, true)) patch.start = v;
   updateTask(p.id, patch);
 }
-/* The time is wall-clock time in the selected zone; an empty time makes the value all day. */
+/* Date popover: edits change p.draft and are written only by Save (or a click outside). The time is
+   wall-clock time in the selected zone; an empty time makes the value all day. */
+function draftDate(p, v) {
+  p.draft = v || null;
+  p.timeText = fmtTime(p.draft);
+  p.timeBad = p.timeErr = false;
+  render();
+}
+// Typing re-renders only the header and Save button, so the caret stays where it is.
 IN.popTime = el => {
   const p = S.ui.pop;
-  if (p?.type === 'date') setDate(p, withTime(dateVal(p) || dOff(0), el.value), true);
+  if (p?.type !== 'date') return;
+  p.timeText = el.value;
+  const hm = parseTime(el.value);
+  p.timeBad = hm === null;
+  if (hm !== null) p.draft = hm || p.draft ? withTime(p.draft || dOff(0), hm) : null;
+  if (p.timeErr && !p.timeBad) {
+    p.timeErr = false;
+    el.classList.remove('is-error');
+    $('.dp-err')?.remove();
+  }
+  $('.dp-head').outerHTML = dpHead(p);
+  $('[data-a="popDateSave"]').disabled = !dateDirty(p) && !p.timeBad;
+};
+A.popTimePick = el => {
+  const p = S.ui.pop;
+  draftDate(p, withTime(p.draft || dOff(0), el.dataset.v));
+};
+A.popTimeOn = () => {
+  S.ui.pop.timeOn = true;
+  render();
+  setTimeout(() => $('#pop-time')?.focus(), 0);
 };
 A.popAllDay = () => {
   const p = S.ui.pop;
-  if (p?.type === 'date' && dateVal(p)) setDate(p, withTime(dateVal(p), ''), true);
+  p.timeOn = false;
+  draftDate(p, p.draft && withTime(p.draft, ''));
 };
+A.popDateClear = () => {
+  const p = S.ui.pop;
+  p.timeOn = false;
+  draftDate(p, null);
+};
+A.popDateCancel = () => closePop();
+/* Write the draft and confirm it. `dismissing` (a click outside) drops an unreadable time instead of blocking. */
+export function saveDatePop(dismissing) {
+  const p = S.ui.pop;
+  if (p?.type !== 'date') return;
+  if (p.timeBad && !dismissing) {
+    p.timeErr = true;
+    render();
+    setTimeout(() => $('#pop-time')?.select(), 0);
+    return;
+  }
+  if (!dateDirty(p)) return dismissing || closePop();
+  const v = p.draft;
+  // When dismissing, the click that dismissed decides what happens to the popover.
+  setDate(p, v, dismissing);
+  const what = p.field === 'start' ? 'Start date' : 'Due date';
+  if (p.id !== '__form') toast(v ? `${what} saved · ${fmtDateTime(v)}` : `${what} cleared`, { ms: 2400 });
+}
+A.popDateSave = () => saveDatePop();
 A.popToggleLabel = el => {
   const p = S.ui.pop;
   const t = tgt(p);
@@ -695,6 +751,7 @@ A.cancelComposer = () => {
   render();
 };
 KEY.commitComposer = () => A.commitComposer();
+KEY.popDateSave = () => saveDatePop();
 A.commitComposer = () => {
   const c = S.ui.composer;
   const el = $('#composer-in');
