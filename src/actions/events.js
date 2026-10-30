@@ -4,7 +4,7 @@
 import { $$ } from '../core/utils.js';
 import { S } from '../core/store.js';
 import { render } from '../shell/render.js';
-import { A, BLUR, DBL, IN } from './actions.js';
+import { A, BLUR, DBL, IN, saveDatePop } from './actions.js';
 
 document.addEventListener(
   'click',
@@ -18,6 +18,8 @@ document.addEventListener(
     const inPop = e.target.closest('[data-pop-root]');
     if (S.ui.pop && !inPop) {
       const trig = el && (el.dataset.a === 'pop' || el.dataset.a === 'ctxBtn' || el.dataset.a === 'addFilter');
+      // A date popover keeps its edits when dismissed by a click outside.
+      if (S.ui.pop.type === 'date') saveDatePop(true);
       if (!trig) {
         S.ui.pop = null;
         if (!el) {

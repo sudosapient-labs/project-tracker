@@ -117,12 +117,28 @@ export const withDay = (v, day) => (hasTime(v) ? withTime(day, timeOf(v)) : day)
 export const shiftD = (v, n) => withDay(v, iso(addD(parse(v), n)));
 export const isPast = v => !!v && Date.now() > instant(v, true);
 export const dueSoon = v => hasTime(v) && instant(v) >= Date.now() && instant(v) - Date.now() <= 2 * 36e5;
-export function fmtTime(v) {
-  const hm = timeOf(v);
+/* Display an 'HH:MM' wall-clock time in the selected time format. */
+export function fmtHM(hm) {
   if (!hm) return '';
   if (timeFormat === '24') return hm;
   const [h, m] = hm.split(':').map(Number);
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+export const fmtTime = v => fmtHM(timeOf(v));
+/* Read a typed time ('4', '4p', '4:30 pm', '16:30', '1630') as 'HH:MM'; '' when empty, null when unreadable. */
+export function parseTime(s) {
+  s = (s || '').trim().toLowerCase();
+  if (!s) return '';
+  const m = s.match(/^(\d{1,2})(?:[:.]?(\d{2}))?\s*(?:([ap])\.?m?\.?)?$/);
+  if (!m) return null;
+  let h = +m[1];
+  const min = +(m[2] || 0);
+  if (min > 59) return null;
+  if (m[3]) {
+    if (h < 1 || h > 12) return null;
+    h = (h % 12) + (m[3] === 'p' ? 12 : 0);
+  } else if (h > 23) return null;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
 }
 export const fmtDateTime = (v, long) => (v ? fmtDate(v, long) + (hasTime(v) ? ', ' + fmtTime(v) : '') : '');
 export function fmtDate(s, long) {

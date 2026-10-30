@@ -540,6 +540,138 @@
   color: var(--text-3);
   padding: 8px 8px 4px;
 }
+/* Date popover: draft summary, quick picks, calendar, time, Save */
+.pop.dp {
+  width: 280px;
+  max-width: none;
+  max-height: calc(100vh - 16px);
+  padding: 0;
+}
+.dp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--divider);
+}
+.dp-sum {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1;
+  font-size: var(--fs-sm);
+}
+.dp-sum b {
+  font-weight: 600;
+}
+.dp-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--r-full);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.dp-state.ok {
+  color: var(--green);
+  background: var(--green-soft);
+}
+.dp-state.dirty {
+  color: var(--amber);
+  background: var(--amber-soft);
+}
+.dp-picks {
+  display: flex;
+  gap: 4px;
+  padding: 8px 8px 2px;
+}
+.dp-picks .dp-chip {
+  flex: 1 1 auto;
+}
+.dp-chip {
+  height: var(--h-sm);
+  padding: 0 5px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background var(--dur),
+    border-color var(--dur),
+    color var(--dur);
+}
+.dp-chip:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.dp-chip.on {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+.dp-time {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--divider);
+}
+.dp-lbl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-2);
+}
+.dp-trow {
+  display: flex;
+  gap: 4px;
+}
+.dp-trow .input {
+  flex: 1;
+  min-width: 0;
+  height: var(--h-sm);
+  padding: 0 8px;
+  font-size: var(--fs-sm);
+}
+.dp-trow .dp-chip {
+  flex: none;
+}
+.dp-err {
+  margin-top: -2px;
+  font-size: var(--fs-xs);
+  color: var(--red);
+}
+.dp-foot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  border-top: 1px solid var(--divider);
+  background: var(--surface-2);
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+}
+.dp-foot .dp-clear:hover {
+  color: var(--red);
+  background: var(--red-soft);
+}
+.dp-foot .btn-primary {
+  gap: 4px;
+  padding: 0 10px;
+}
+.dp-foot .btn-primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 /* Filter builder uses the same insets as every other menu: 4px popover padding + 8px item padding. */
 .fbuild {
   min-width: 440px;

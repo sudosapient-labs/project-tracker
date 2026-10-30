@@ -1,5 +1,5 @@
 /* ---------------- POPOVERS ---------------- */
-import { $, MOD, MONL, WD, addD, dOff, dayKey, diffD, esc, fmtDate, fmtTime, hasTime, instant, iso, parse, timeOf, today } from '../core/utils.js';
+import { $, MOD, MONL, WD, addD, dOff, dayKey, diffD, esc, fmtDate, fmtHM, fmtTime, hasTime, instant, iso, parse, timeOf, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { LABELS, PRIOS, PSTAT, STATUSES } from '../core/constants.js';
 import { D, S, allTasks, canSee, me, mem, pColor, proj, task, visibleProjects } from '../core/store.js';
@@ -31,6 +31,8 @@ export function openPop(el, extra = {}) {
   if (d.pop === 'date') {
     const cur = dateVal(S.ui.pop);
     S.ui.pop.m = iso(cur ? parse(cur) : today());
+    // Edits stay a draft until Save, so the popover can say whether they are saved.
+    Object.assign(S.ui.pop, { draft: cur, timeOn: hasTime(cur), timeText: fmtTime(cur), timeBad: false, timeErr: false });
   }
   render();
   setTimeout(() => {
@@ -70,6 +72,17 @@ export function dateVal(p) {
   const t = tgt(p);
   return (p.field === 'subdue' ? t?.subtasks[p.i]?.due : t?.[p.field]) || null;
 }
+export const dateDirty = p => (p.draft || null) !== dateVal(p);
+/* Date popover header: the draft value and whether it matches what is saved. */
+export function dpHead(p) {
+  const v = p.draft;
+  const what = `<span class="faint">${{ start: 'Start', due: 'Due', subdue: 'Due' }[p.field] || 'Date'}</span>`;
+  const sum = v
+    ? `${what}<b>${WD[parse(v).getDay()]}, ${fmtDate(v)}</b>${hasTime(v) ? `<span class="num">${fmtTime(v)}</span>` : '<span class="faint">All day</span>'}`
+    : `${what}<span class="faint">No date</span>`;
+  const state = dateDirty(p) ? `<span class="dp-state dirty">Unsaved</span>` : v ? `<span class="dp-state ok">${ic('check', 12)}Saved</span>` : '';
+  return `<div class="dp-head"><span class="dp-sum trunc">${sum}</span>${state}</div>`;
+}
 export function popList(items, opt = {}) {
   const q = (S.ui.pop.q || '').toLowerCase();
   const list = items.filter(it => !q || it.name.toLowerCase().includes(q));
@@ -82,7 +95,7 @@ export function miniCal(p, val) {
   const start = startOfWeek(first);
   const cells = Array.from({ length: 42 }, (_, i) => addD(start, i));
   const wdn = Array.from({ length: 7 }, (_, i) => WD[(i + S.prefs.weekStart) % 7].slice(0, 2));
-  return `<div style="padding:6px 6px 2px;width:252px">
+  return `<div style="padding:8px 8px 2px">
     <div class="row" style="margin-bottom:6px"><b style="font-weight:600;font-size:13px;padding-left:4px">${MONL[m.getMonth()]} ${m.getFullYear()}</b><span class="sp"></span><button class="ibtn ibtn-xs" data-a="popMonth" data-d="-1" aria-label="Previous month">${ic('chevron-left', 14)}</button><button class="ibtn ibtn-xs" data-a="popMonth" data-d="1" aria-label="Next month">${ic('chevron-right', 14)}</button></div>
     <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center;font-size:11px">${wdn.map(d => `<span class="faint" style="padding:3px 0">${d}</span>`).join('')}
     ${cells
@@ -182,16 +195,25 @@ export function popHtml(p) {
       break;
     }
     case 'date': {
-      const val = dateVal(p);
+      const val = p.draft;
       const q = [
         ['Today', 0],
         ['Tomorrow', 1],
         ['Next week', 7 - ((today().getDay() + 6) % 7)],
-        ['In 2 weeks', 14],
+        ['2 weeks', 14],
       ];
-      const time = `<div class="row" style="gap:6px;padding:4px 8px 8px"><span class="faint row">${ic('clock', 14)}</span><input type="time" class="input num" style="height:30px;flex:1" data-in="popTime" value="${timeOf(val)}" aria-label="Time"><button class="btn btn-ghost btn-sm ${hasTime(val) ? '' : 'on'}" data-a="popAllDay" aria-pressed="${!hasTime(val)}" ${hasTime(val) ? '' : 'disabled'}>All day</button></div>`;
-      inner = `<div class="row" style="gap:4px;padding:4px;flex-wrap:wrap">${q.map(([n, d]) => `<button class="badge" data-a="popPick" data-v="${dOff(d)}" style="cursor:pointer">${n}</button>`).join('')}${val ? `<button class="badge" data-a="popPick" data-v="" style="cursor:pointer;color:var(--red)">Clear</button>` : ''}</div><div class="msep"></div>${miniCal(p, val)}<div class="msep"></div>${time}`;
-      style = 'min-width:0';
+      const picks = `<div class="dp-picks">${q.map(([n, d]) => `<button class="dp-chip ${dayKey(val) === dOff(d) ? 'on' : ''}" data-a="popPick" data-v="${dOff(d)}">${n}</button>`).join('')}</div>`;
+      const hint = p.timeErr ? `<div class="dp-err">Try a time like ${fmtHM('16:30')}</div>` : '';
+      const times = ['09:00', '12:00', '17:00']
+        .map(hm => `<button class="dp-chip num ${timeOf(val) === hm ? 'on' : ''}" data-a="popTimePick" data-v="${hm}">${fmtHM(hm).replace(':00', '')}</button>`)
+        .join('');
+      const time = `<div class="dp-time">
+        <div class="row"><span class="dp-lbl">${ic('clock', 14)}Time</span><span class="sp"></span><div class="seg" role="group" aria-label="Time"><button class="${p.timeOn ? '' : 'on'}" data-a="popAllDay" aria-pressed="${!p.timeOn}">All day</button><button class="${p.timeOn ? 'on' : ''}" data-a="popTimeOn" aria-pressed="${p.timeOn}">Set time</button></div></div>
+        ${p.timeOn ? `<div class="dp-trow"><input class="input num ${p.timeErr ? 'is-error' : ''}" id="pop-time" data-in="popTime" data-key-enter="popDateSave" value="${esc(p.timeText)}" placeholder="${fmtHM('09:00')}" aria-label="Time" autocomplete="off">${times}</div>${hint}` : ''}
+      </div>`;
+      const foot = `<div class="dp-foot">${val ? `<button class="btn btn-ghost btn-sm dp-clear" data-a="popDateClear">Clear</button>` : ''}<span class="sp"></span><button class="btn btn-ghost btn-sm" data-a="popDateCancel">Cancel</button><button class="btn btn-primary btn-sm" data-a="popDateSave" ${dateDirty(p) || p.timeBad ? '' : 'disabled'}>${ic('check', 14)}Save</button></div>`;
+      inner = `${dpHead(p)}${picks}${miniCal(p, val)}${time}${foot}`;
+      cls = 'dp';
       break;
     }
     case 'pstatus': {
