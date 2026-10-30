@@ -21,6 +21,10 @@ export function loadConfig(env = process.env) {
     allowOpenSignup: env.ALLOW_OPEN_SIGNUP === 'true',
     requireVerification: env.REQUIRE_EMAIL_VERIFICATION !== 'false',
     trustProxy: env.TRUST_PROXY === 'true',
+    // Web Push. Keys are generated and stored on first start when not set.
+    vapidPublicKey: env.VAPID_PUBLIC_KEY || '',
+    vapidPrivateKey: env.VAPID_PRIVATE_KEY || '',
+    vapidSubject: env.VAPID_SUBJECT || `mailto:${(env.MAIL_FROM || '').match(/<([^>]+)>/)?.[1] || 'admin@localhost'}`,
     secureCookies: env.SECURE_COOKIES ? env.SECURE_COOKIES === 'true' : prod,
     maxUploadBytes: (Number(env.MAX_UPLOAD_MB) || 250) * 1024 * 1024,
     // Without a mail transport, non-production API responses include the emailed link so the

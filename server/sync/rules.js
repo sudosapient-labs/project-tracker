@@ -271,7 +271,7 @@ export const RULES = {
         ctx.emit('projects', p);
       }
       ctx.removedUsers.push(m.id);
-      for (const t of ['sessions', 'favorites', 'user_state', 'notifications']) ctx.db.run(`DELETE FROM ${t} WHERE user_id = ?`, m.id);
+      for (const t of ['sessions', 'favorites', 'user_state', 'notifications', 'push_subscriptions']) ctx.db.run(`DELETE FROM ${t} WHERE user_id = ?`, m.id);
       ctx.db.run('DELETE FROM users WHERE id = ?', m.id);
       ctx.db.run('UPDATE auth_tokens SET used_at = ? WHERE email = ? AND used_at IS NULL', ctx.now, m.email);
     },

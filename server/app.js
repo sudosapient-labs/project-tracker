@@ -7,6 +7,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { createRepo } from './repo.js';
 import { createMailer } from './lib/mailer.js';
+import { createPusher } from './lib/push.js';
 import { rateLimiter } from './lib/rate-limit.js';
 import { csrfGuard } from './auth.js';
 import { createEngine } from './sync/engine.js';
@@ -15,10 +16,11 @@ import { dataRoutes } from './routes/data.js';
 import { fileRoutes } from './routes/files.js';
 import { workspaceRoutes } from './routes/workspace.js';
 
-export function createApp({ db, config, log = console }) {
+export function createApp({ db, config, log = console, pushSend }) {
   const repo = createRepo(db);
   const mailer = createMailer(db, config, log);
-  const engine = createEngine({ db, repo, config, mailer, log });
+  const pusher = createPusher(db, config, log, pushSend);
+  const engine = createEngine({ db, repo, config, mailer, pusher, log });
   const limit = rateLimiter({ enabled: config.rateLimit });
   const app = new Hono();
 
@@ -26,7 +28,7 @@ export function createApp({ db, config, log = console }) {
     const sock = c.env?.incoming?.socket?.remoteAddress || '';
     const fwd = config.trustProxy ? (c.req.header('x-forwarded-for') || '').split(',')[0].trim() : '';
     c.set('ip', (fwd || sock || 'local').replace(/^::ffff:/, ''));
-    Object.entries({ db, repo, config, mailer, engine }).forEach(([k, v]) => c.set(k, v));
+    Object.entries({ db, repo, config, mailer, engine, pusher }).forEach(([k, v]) => c.set(k, v));
     return next();
   });
   app.use(
@@ -67,9 +69,19 @@ export function createApp({ db, config, log = console }) {
       await next();
       c.header('Cache-Control', 'public, max-age=31536000, immutable');
     });
+    // The service worker and manifest must be re-checked on every load so updates roll out.
+    app.use('/sw.js', async (c, next) => {
+      await next();
+      c.header('Cache-Control', 'no-cache');
+    });
+    app.use('/manifest.webmanifest', async (c, next) => {
+      await next();
+      c.header('Content-Type', 'application/manifest+json');
+      c.header('Cache-Control', 'no-cache');
+    });
     app.use('*', serveStatic({ root: config.staticDir }));
     app.get('*', c => c.html(fs.readFileSync(index, 'utf8')));
   }
 
-  return { app, repo, mailer, engine };
+  return { app, repo, mailer, engine, pusher };
 }

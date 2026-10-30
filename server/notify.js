@@ -31,6 +31,17 @@ const GATE = {
   due: 'push_due',
 };
 const EMAIL = { mention: 'email_mention', team: 'email_mention', everyone: 'email_mention', assign: 'email_assign', comment: 'email_comment' };
+// Push → … preferences. Access requests always push; status changes stay in the inbox.
+const PUSH = {
+  mention: 'push_mention',
+  team: 'push_mention',
+  everyone: 'push_mention',
+  assign: 'push_assign',
+  comment: 'push_comment',
+  due: 'push_due',
+  overdue: 'push_due',
+  access: true,
+};
 
 /* `reason` picks the preference; `n` is the record the inbox renders ({ type, task, project, text, snippet }).
    Pass the task itself as `task` when it may not be saved yet (e.g. while it's being created).
@@ -54,11 +65,22 @@ export function notify(ctx, to, reason, n, task = null) {
     read: false,
   };
   repo.put('notifs', row, to);
-  ctx.changes.push({ c: 'notifs', id: row.id, v: row, uid: to });
+  const t = task || (n.task && repo.get('tasks', n.task));
+  const who = ctx.uid ? repo.get('members', ctx.uid)?.name || 'Someone' : 'Sudo Sapient';
+  const want = PUSH[reason];
+  // Sent by engine.publish once the change is committed.
+  const push =
+    want === true || (want && prefs[want])
+      ? {
+          title: ctx.uid ? `${who} ${n.text}` : `${t ? t.title : 'Sudo Sapient'} ${n.text}`,
+          body: n.snippet && ctx.uid ? (t ? `${t.key} ${t.title} — ${n.snippet}` : n.snippet) : t ? t.key : n.snippet || '',
+          tag: row.id,
+          url: t ? `/#task/${t.key}` : '/#inbox',
+        }
+      : null;
+  ctx.changes.push({ c: 'notifs', id: row.id, v: row, uid: to, ...(push ? { push } : {}) });
 
   if (ctx.mailer && EMAIL[reason] && prefs[EMAIL[reason]]) {
-    const t = task || (n.task && repo.get('tasks', n.task));
-    const who = ctx.uid ? repo.get('members', ctx.uid)?.name || 'Someone' : 'Sudo Sapient';
     const subject = t ? `${who} ${n.text} ${t.key}: ${t.title}` : `${who} ${n.text}`;
     ctx.mailer.queue({
       to: m.email,

@@ -26,7 +26,7 @@ let retryT = null;
 let retryMs = 1000;
 let stateSent = '';
 let errSink = null;
-const hooks = { signedOut: () => {}, resync: () => {}, notified: () => {} };
+const hooks = { signedOut: () => {}, resync: () => {} };
 export const onSync = h => Object.assign(hooks, h);
 
 const fields = o => new Map(Object.keys(o).map(k => [k, JSON.stringify(o[k])]));
@@ -347,9 +347,7 @@ export function applyRemote(list) {
   collect();
   let changed = false;
   for (const ch of list) {
-    const fresh = ch.c === 'notifs' && ch.v && !D().notifs.some(n => n.id === ch.id);
     changed = adopt(ch.c, ch.id, ch.v) || changed;
-    if (fresh) hooks.notified(ch.v);
     if (ch.c === 'projects' && ch.v == null) {
       D().projOrder = D().projOrder.filter(x => x !== ch.id);
       shadow.docs.projOrder = JSON.stringify(D().projOrder);

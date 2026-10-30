@@ -11,6 +11,7 @@ import { toast } from '../ui/toast.js';
 import { hashFor, render, routeFromHash } from '../shell/render.js';
 import { commit, connectLive, onSync, prime, stopSync } from '../shell/sync.js';
 import { A, EMAIL_RE } from './actions.js';
+import { disablePushHere, refreshPush } from './push.js';
 
 const AUTH_SCREENS = ['login', 'signup', 'forgot'];
 
@@ -61,6 +62,7 @@ async function enter(hash, msg) {
   S.ui.auth = null;
   openRoute(hash || S.ui.returnTo || '');
   S.ui.returnTo = null;
+  refreshPush();
   if (msg) toast(msg);
 }
 
@@ -391,6 +393,7 @@ export function signedOut(msg) {
 A.signOut = async () => {
   S.ui.pop = null;
   await commit().catch(() => {});
+  await disablePushHere();
   await post('/api/auth/logout').catch(() => {});
   signedOut();
 };
@@ -417,4 +420,9 @@ A.onbExit = async () => {
 /* An emailed link pasted into a tab that already has the app open only changes the hash. */
 addEventListener('hashchange', () => {
   if (/^#(verify|reset|invite|join)\//.test(location.hash)) boot();
+});
+
+/* A push notification was clicked while the app was open: go to what it's about. */
+navigator.serviceWorker?.addEventListener('message', e => {
+  if (e.data?.type === 'open' && !S.ui.auth) openRoute((e.data.url || '').split('#')[1] || '');
 });

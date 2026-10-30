@@ -7,12 +7,12 @@ import { openDb } from '../../server/db.js';
 import { createApp } from '../../server/app.js';
 import { totpAt } from '../../server/lib/crypto.js';
 
-export function setup(env = {}) {
+export function setup(env = {}, deps = {}) {
   const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gr8r-up-'));
   const config = loadConfig({ NODE_ENV: 'test', DISABLE_RATE_LIMIT: 'true', UPLOAD_DIR: uploadDir, APP_URL: 'http://app.test', ...env });
   const db = openDb(':memory:');
   const quiet = { info() {}, error() {} };
-  const ctx = createApp({ db, config, log: quiet });
+  const ctx = createApp({ db, config, log: quiet, pushSend: deps.pushSend || (async () => {}) });
   return {
     ...ctx,
     db,

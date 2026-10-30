@@ -9,7 +9,8 @@ import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
 import { post, upload } from '../core/api.js';
 import { autosize, focusKey, fxSet, go, render } from '../shell/render.js';
-import { applyRemote, commit, onSync, restoreSnapshot, retryNow, takeSnapshot } from '../shell/sync.js';
+import { applyRemote, commit, restoreSnapshot, retryNow, takeSnapshot } from '../shell/sync.js';
+import { enablePush } from './push.js';
 import { viewOf } from '../shell/view-engine.js';
 import { TEMPLATES, closeModal, openModal } from '../overlays/modals.js';
 import { closePop, dateDirty, dpHead, openPop, tgt } from '../overlays/popovers.js';
@@ -1932,26 +1933,14 @@ IN.npToggle = el => {
   D().notifPrefs[el.dataset.k] = el.checked;
   save();
   toast('Notification preferences saved', { ms: 1500 });
-  // Push toggles show desktop notifications, which need the browser's permission.
-  if (el.checked && el.dataset.k.startsWith('push_') && window.Notification?.permission === 'default') Notification.requestPermission().then(() => render());
+  // Push toggles deliver through this browser's push subscription, which needs permission.
+  if (el.checked && el.dataset.k.startsWith('push_'))
+    enablePush({ prompt: true }).then(state => {
+      if (state === 'denied') toast('Notifications are blocked for this site. Allow them in your browser settings.', { kind: 'err', ms: 6000 });
+      else if (state === 'failed') toast("Couldn't turn on push notifications in this browser.", { kind: 'err' });
+      render();
+    });
 };
-
-/* A new notification arrived while this tab is in the background: show it on the desktop if the
-   matching Push preference is on and the browser allows it. */
-const PUSH_PREF = { mention: 'push_mention', assign: 'push_assign', comment: 'push_comment' };
-onSync({
-  notified(n) {
-    if (window.Notification?.permission !== 'granted' || (document.visibilityState === 'visible' && document.hasFocus())) return;
-    const pref = PUSH_PREF[n.type] || (/due|overdue/.test(n.text) ? 'push_due' : null);
-    if (!pref || D().notifPrefs[pref] === false) return;
-    const t = n.task ? task(n.task) : null;
-    const note = new Notification([mem(n.by)?.name, n.text, t?.title].filter(Boolean).join(' '), { body: n.snippet || '', tag: n.id });
-    note.onclick = () => {
-      focus();
-      A.openNotif({ dataset: { id: n.id } });
-    };
-  },
-});
 IN.prefSel = el => {
   const k = el.dataset.k;
   S.prefs[k] = k === 'weekStart' ? +el.value : el.value;

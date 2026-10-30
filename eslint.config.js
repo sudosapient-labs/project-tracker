@@ -13,6 +13,10 @@ export default [
     languageOptions: { globals: { ...globals.node } },
   },
   {
+    files: ['public/sw.js'],
+    languageOptions: { globals: { ...globals.serviceworker } },
+  },
+  {
     // Unused bindings are fine when they exist to drop fields with rest destructuring.
     rules: { 'no-unused-vars': ['error', { ignoreRestSiblings: true, argsIgnorePattern: '^_' }] },
   },

@@ -253,9 +253,9 @@ export function settingsBody(sec, title) {
     case 'notif-push':
       return (
         H(
-          `Desktop notifications while Sudo Sapient is open in a browser tab.${
-            !window.Notification
-              ? ' This browser doesn’t support them.'
+          `Notifications on this device, even when Sudo Sapient is closed.${
+            !('PushManager' in window) || !window.Notification
+              ? ' This browser doesn’t support push notifications. On iPhone and iPad, add Sudo Sapient to your Home Screen first.'
               : Notification.permission === 'denied'
                 ? ' Notifications are blocked for this site in your browser settings.'
                 : Notification.permission === 'default'

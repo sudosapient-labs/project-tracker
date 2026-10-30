@@ -58,6 +58,7 @@ import './actions/session.js';
 import { S, D } from './core/store.js';
 import { A } from './actions/actions.js';
 import { boot } from './actions/session.js';
+import { registerServiceWorker } from './actions/push.js';
 import { go, render } from './shell/render.js';
 
 (function init() {
@@ -70,6 +71,7 @@ import { go, render } from './shell/render.js';
     document.body.appendChild(l);
   }
   boot();
+  registerServiceWorker();
 })();
 
 // Dev-only handle for debugging and screenshot tooling; stripped from production builds.

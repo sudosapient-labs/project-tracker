@@ -53,6 +53,22 @@ For production you need at least `APP_URL`, persistent `DATABASE_PATH` / `UPLOAD
   preferences) is stored per account, not in the browser.
 - **Files** stream to `POST /api/files` and are served only to people who can see the project.
 - **Jobs** (`server/jobs.js`) send due-date reminders, overdue alerts and daily digests.
+- **Push.** Turning on a Push preference subscribes the browser (Web Push, VAPID); notifications
+  arrive even when the app is closed, and clicking one opens the task. Browsers only allow push on
+  HTTPS (or localhost); on iPhone/iPad the app must be added to the Home Screen first.
+
+## Installable app (PWA)
+
+`public/manifest.webmanifest` and the service worker (`public/sw.js`) make the app installable.
+The worker caches the app shell and build assets so it opens without a connection (it then shows
+that the server can't be reached); API responses are never cached. In development it's registered
+in a pass-through mode so Vite's hot reload is unaffected.
+
+## Brand
+
+The wordmark (`public/logo.svg`, `LOGO` in `src/core/icons.js`), the stacked app icon
+(`public/icon.svg`, `public/icons/*.png`) and the "s" monogram (favicon, small marks) are outlines of
+Archivo Black (SIL Open Font License) with the square accent from the original mark.
 
 ## Security
 

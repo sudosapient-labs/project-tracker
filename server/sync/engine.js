@@ -18,7 +18,7 @@ const DOCS = new Set(['ws', ...PERSONAL_DOCS]);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 
-export function createEngine({ db, repo, config, mailer, log = console }) {
+export function createEngine({ db, repo, config, mailer, pusher = null, log = console }) {
   const conns = new Set();
 
   /* Add the reader's own favourite flag to projects and tasks. */
@@ -194,6 +194,8 @@ export function createEngine({ db, repo, config, mailer, log = console }) {
 
   /* ---------- fan-out ---------- */
   function publish(changes, { exceptClient } = {}) {
+    // Web Push goes to every subscribed browser, whether or not the app is open.
+    if (pusher) for (const ch of changes) if (ch.push && ch.uid) pusher.notify(ch.uid, ch.push);
     if (!changes.length || !conns.size) return;
     // One batch can touch a record several times (e.g. a project's key counter); send its last state.
     const last = new Map();

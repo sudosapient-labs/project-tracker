@@ -49,6 +49,23 @@ export function dataRoutes() {
     return c.json({ ok: true });
   });
 
+  /* ---------- Web Push ---------- */
+  r.get('/push/key', requireAuth(), c => c.json({ publicKey: c.var.pusher.publicKey }));
+  const pushSub = z.object({ endpoint: z.string().url().max(1000), keys: z.object({ p256dh: z.string().max(200), auth: z.string().max(100) }) });
+  r.post('/push/subscriptions', requireAuth(), async c => {
+    const b = await parseBody(c, pushSub);
+    if (b.error) return b.error;
+    if (!/^https:\/\//.test(b.data.endpoint)) return c.json({ error: 'Push endpoints must use HTTPS.' }, 400);
+    c.var.pusher.subscribe(c.var.auth.member.id, b.data, c.req.header('user-agent') || '');
+    return c.json({ ok: true }, 201);
+  });
+  r.post('/push/unsubscribe', requireAuth('session'), async c => {
+    const b = await parseBody(c, z.object({ endpoint: z.string().max(1000) }));
+    if (b.error) return b.error;
+    c.var.pusher.unsubscribe(c.var.auth.member.id, b.data.endpoint);
+    return c.json({ ok: true });
+  });
+
   /* Live updates. The client reconnects (and re-bootstraps) whenever the stream drops. */
   r.get('/events', requireAuth(), c => {
     const { engine } = c.var;
