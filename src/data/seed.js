@@ -283,8 +283,8 @@ export function seed() {
       { id: 's4', title: 'Annotate interactions', done: false },
     ],
     attachments: [
-      { id: 'a1', name: 'homepage-wireframes-v3.fig', type: 'fig', size: '4.2 MB', by: 'm2', at: minsAgo(300) },
-      { id: 'a2', name: 'nav-audit-findings.pdf', type: 'pdf', size: '860 KB', by: 'm2', at: minsAgo(8000) },
+      { id: 'f1', name: 'homepage-wireframes-v3.fig', type: 'fig', size: '4.2 MB', by: 'm2', at: minsAgo(300) },
+      { id: 'f2', name: 'nav-audit-findings.pdf', type: 'pdf', size: '860 KB', by: 'm2', at: minsAgo(8000) },
     ],
   });
   t('p1', 'Finalize navigation', 'progress', 'm3', 'high', 0, ['design', 'frontend'], {
@@ -498,12 +498,7 @@ export function seed() {
   const tmp = tk('t3');
   tmp.updated = minsAgo(38);
   return {
-    ws: { name: 'Gr8r Studio', url: 'gr8rstudio', c: '#1D1C1A', brand: true },
-    workspaces: [
-      { id: 'w1', name: 'Gr8r Studio', c: '#1D1C1A', plan: 'Team', brand: true },
-      { id: 'w2', name: 'Personal', c: '#3D8E5F', plan: 'Free' },
-      { id: 'w3', name: 'Acme Labs', c: '#3B82C4', plan: 'Business' },
-    ],
+    ws: { name: 'Gr8r Studio', c: '#1D1C1A', brand: true },
     me: 'm1',
     members,
     projects,
@@ -520,12 +515,6 @@ export function seed() {
       { id: 'se1', dev: 'MacBook Pro · Chrome', loc: 'San Francisco, US', at: 'Active now', cur: true },
       { id: 'se2', dev: 'iPhone 15 · Gr8r app', loc: 'San Francisco, US', at: '2 hours ago' },
       { id: 'se3', dev: 'Windows · Edge', loc: 'Oakland, US', at: 'Sep 12' },
-    ],
-    invoices: [
-      { id: 'INV-2026-009', date: dOff(-23), amt: '$96.00', st: 'Paid' },
-      { id: 'INV-2026-008', date: dOff(-53), amt: '$96.00', st: 'Paid' },
-      { id: 'INV-2026-007', date: dOff(-84), amt: '$80.00', st: 'Paid' },
-      { id: 'INV-2026-006', date: dOff(-114), amt: '$80.00', st: 'Paid' },
     ],
     tfa: false,
     notifPrefs: {
