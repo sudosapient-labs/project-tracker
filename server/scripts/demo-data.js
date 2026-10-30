@@ -1,12 +1,12 @@
 /* ---------- seed data ---------- */
-import { dOff, minsAgo, uid, withTime } from '../core/utils.js';
+import { dOff, minsAgo, uid, withTime } from '../../src/core/utils.js';
 
 export function seed() {
   const members = [
     {
       id: 'm1',
       name: 'Tanjim Islam',
-      email: 'hello@gr8rstudio.com',
+      email: 'hello@sudosapient.dev',
       role: 'Owner',
       team: 'product',
       title: 'Head of Product',
@@ -18,7 +18,7 @@ export function seed() {
     {
       id: 'm2',
       name: 'Sarah Chen',
-      email: 'sarah@gr8rstudio.com',
+      email: 'sarah@sudosapient.dev',
       role: 'Admin',
       team: 'design',
       title: 'Design Lead',
@@ -30,7 +30,7 @@ export function seed() {
     {
       id: 'm3',
       name: 'John Carter',
-      email: 'john@gr8rstudio.com',
+      email: 'john@sudosapient.dev',
       role: 'Member',
       team: 'eng',
       title: 'Frontend Engineer',
@@ -42,7 +42,7 @@ export function seed() {
     {
       id: 'm4',
       name: 'Emma Wilson',
-      email: 'emma@gr8rstudio.com',
+      email: 'emma@sudosapient.dev',
       role: 'Member',
       team: 'design',
       title: 'Product Designer',
@@ -54,7 +54,7 @@ export function seed() {
     {
       id: 'm5',
       name: 'Priya Patel',
-      email: 'priya@gr8rstudio.com',
+      email: 'priya@sudosapient.dev',
       role: 'Member',
       team: 'mkt',
       title: 'Content Strategist',
@@ -66,7 +66,7 @@ export function seed() {
     {
       id: 'm6',
       name: 'Marcus Lee',
-      email: 'marcus@gr8rstudio.com',
+      email: 'marcus@sudosapient.dev',
       role: 'Member',
       team: 'eng',
       title: 'Backend Engineer',
@@ -78,7 +78,7 @@ export function seed() {
     {
       id: 'm7',
       name: 'Lena Fischer',
-      email: 'lena@gr8rstudio.com',
+      email: 'lena@sudosapient.dev',
       role: 'Admin',
       team: 'product',
       title: 'QA Lead',
@@ -114,7 +114,7 @@ export function seed() {
       start: dOff(-30),
       fav: true,
       members: ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7'],
-      desc: 'Rebuild gr8rstudio.com with a clearer information architecture, a responsive component library, and a faster CMS-driven blog.',
+      desc: 'Rebuild sudosapient.dev with a clearer information architecture, a responsive component library, and a faster CMS-driven blog.',
       milestones: [
         { name: 'Wireframes signed off', date: dOff(2) },
         { name: 'Dev handoff', date: dOff(14) },
@@ -500,7 +500,7 @@ export function seed() {
   const tmp = tk('t3');
   tmp.updated = minsAgo(38);
   return {
-    ws: { name: 'Gr8r Studio', c: '#1D1C1A', brand: true },
+    ws: { name: 'Sudo Sapient', c: '#1D1C1A', brand: true },
     me: 'm1',
     members,
     projects,
@@ -515,7 +515,7 @@ export function seed() {
     recentSearches: ['homepage', 'Sarah', 'wireframes'],
     sessions: [
       { id: 'se1', dev: 'MacBook Pro · Chrome', loc: 'San Francisco, US', at: 'Active now', cur: true },
-      { id: 'se2', dev: 'iPhone 15 · Gr8r app', loc: 'San Francisco, US', at: '2 hours ago' },
+      { id: 'se2', dev: 'iPhone 15 · Sudo Sapient app', loc: 'San Francisco, US', at: '2 hours ago' },
       { id: 'se3', dev: 'Windows · Edge', loc: 'Oakland, US', at: 'Sep 12' },
     ],
     tfa: false,

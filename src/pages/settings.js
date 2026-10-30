@@ -52,6 +52,7 @@ export const SET_NAV = [
       ['password', 'Password', 'key-round'],
       ['sessions', 'Sessions', 'monitor-smartphone'],
       ['2fa', 'Two-factor authentication', 'shield-check'],
+      ['account', 'Account', 'user-cog'],
     ],
   ],
 ];
@@ -72,7 +73,7 @@ export function pageSettings() {
   const title = SET_NAV.flatMap(g => g[1]).find(x => x[0] === sec) || ['appearance', 'Appearance'];
   return `<div class="set">
     <nav class="set-nav" aria-label="Settings">${SET_NAV.map(([g, items]) => `<div class="gh">${g}</div>${items.map(([k, n, i]) => `<button class="sitem ${sec === k ? 'on' : ''}" data-a="go" data-r="settings" data-sec="${k}">${ic(i, 15)}<span>${n}</span></button>`).join('')}`).join('')}</nav>
-    <div class="set-body" data-keep="set:${sec}"><div class="set-in">${settingsBody(sec, title[1])}</div></div>
+    <div class="set-body" data-keep="set:${esc(sec)}"><div class="set-in">${settingsBody(sec, title[1])}</div></div>
   </div>`;
 }
 export function settingsBody(sec, title) {
@@ -92,7 +93,7 @@ export function settingsBody(sec, title) {
       );
     case 'appearance':
       return (
-        H('Customize how Gr8r looks on this device.') +
+        H('Customize how Sudo Sapient looks on this device.') +
         `
       <div class="sblock" style="margin-top:0"><h2>Theme</h2><div class="themecards" style="margin-top:12px" role="radiogroup" aria-label="Theme">${[
         ['light', 'Light'],
@@ -252,7 +253,17 @@ export function settingsBody(sec, title) {
       );
     case 'notif-push':
       return (
-        H('Notifications on desktop and mobile.') +
+        H(
+          `Notifications on this device, even when Sudo Sapient is closed.${
+            !('PushManager' in window) || !window.Notification
+              ? ' This browser doesn’t support push notifications. On iPhone and iPad, add Sudo Sapient to your Home Screen first.'
+              : Notification.permission === 'denied'
+                ? ' Notifications are blocked for this site in your browser settings.'
+                : Notification.permission === 'default'
+                  ? ' Your browser will ask for permission when you turn one on.'
+                  : ''
+          }`,
+        ) +
         srow('Mentions', '', tog('push_mention', np.push_mention, 'np')) +
         srow('Assignments', '', tog('push_assign', np.push_assign, 'np')) +
         srow('Comments', '', tog('push_comment', np.push_comment, 'np')) +
@@ -280,7 +291,7 @@ export function settingsBody(sec, title) {
       <div class="row" style="gap:14px">${av(d.me, 'xl', false)}<div><div class="label" style="margin-bottom:6px">Avatar color</div><div class="swatches">${['#5A67D8', '#C54B78', '#3B82C4', '#23918A', '#C48A1E', '#8662C9'].map(c => `<button type="button" class="sw ${me().c === c ? 'on' : ''}" style="--c:${c};width:22px;height:22px" data-a="avColor" data-v="${c}" aria-label="Color"></button>`).join('')}</div></div></div>
       <div class="field"><label class="label" for="pf-name">Full name</label><input class="input ${err ? 'is-error' : ''}" id="pf-name" value="${esc(P.name)}">${err ? `<span class="err">${ic('circle-alert', 12)}${err}</span>` : ''}</div>
       <div class="field"><label class="label" for="pf-title">Title</label><input class="input" id="pf-title" value="${esc(P.title)}"></div>
-      <div class="field"><label class="label" for="pf-email">Email</label><input class="input" id="pf-email" value="${esc(me().email)}" disabled><span class="hint">Contact a workspace owner to change your sign-in email.</span></div>
+      <div class="field"><label class="label" for="pf-email">Email</label><input class="input" id="pf-email" value="${esc(me().email)}" disabled><span class="hint">Change your sign-in email in <button type="button" class="link" data-a="go" data-r="settings" data-sec="account">Account</button>.</span></div>
       <div><button class="btn btn-primary" data-a="saveProfile" id="pf-save">Save profile</button></div></form>`
       );
     }
@@ -289,7 +300,7 @@ export function settingsBody(sec, title) {
         H('Personal defaults for how you work.') +
         srow(
           'Open on launch',
-          'The page you see when Gr8r opens.',
+          'The page you see when Sudo Sapient opens.',
           sel(
             'home',
             [
@@ -327,7 +338,7 @@ export function settingsBody(sec, title) {
       const pw = S.ui.pwNew || '';
       return (
         H("Use a long password you don't use anywhere else.") +
-        `${S.ui.pwDone ? `<div class="alert ok" style="margin-bottom:14px">${ic('circle-check', 15)}<span>Password updated. Other sessions stay signed in.</span></div>` : ''}<form data-submit="savePassword" class="col" style="gap:14px;max-width:400px">
+        `${S.ui.pwDone ? `<div class="alert ok" style="margin-bottom:14px">${ic('circle-check', 15)}<span>Password updated. Your other sessions were signed out.</span></div>` : ''}<form data-submit="savePassword" class="col" style="gap:14px;max-width:400px">
       <div class="field"><label class="label" for="pw-cur">Current password</label><input type="password" class="input ${e.pwCur ? 'is-error' : ''}" id="pw-cur" autocomplete="current-password">${e.pwCur ? `<span class="err">${ic('circle-alert', 12)}${e.pwCur}</span>` : ''}</div>
       <div class="field"><label class="label" for="pw-new">New password</label><input type="password" class="input ${e.pwNew ? 'is-error' : ''}" id="pw-new" data-in="pwStrength" value="${esc(pw)}" autocomplete="new-password">${strengthMeter(pw)}${e.pwNew ? `<span class="err">${ic('circle-alert', 12)}${e.pwNew}</span>` : '<span class="hint">At least 10 characters with a number or symbol.</span>'}</div>
       <div class="field"><label class="label" for="pw-conf">Confirm new password</label><input type="password" class="input ${e.pwConf ? 'is-error' : ''}" id="pw-conf" autocomplete="new-password">${e.pwConf ? `<span class="err">${ic('circle-alert', 12)}${e.pwConf}</span>` : ''}</div>
@@ -352,21 +363,47 @@ export function settingsBody(sec, title) {
       return (
         H('Add a second step when signing in.') +
         (d.tfa
-          ? `<div class="alert ok">${ic('shield-check', 16)}<div><b>Two-factor authentication is on.</b><div class="muted">You'll enter a code from your authenticator app when signing in on a new device.</div></div></div><div class="sblock"><h2>Recovery codes</h2><p class="muted" style="font-size:13px">Store these somewhere safe. Each code works once.</p><div style="display:grid;grid-template-columns:repeat(2,max-content);gap:6px 28px;font-family:var(--mono);font-size:13px;padding:14px;border:1px solid var(--border);border-radius:var(--r);background:var(--sunken);user-select:all">${['7KQ2-M8PX', 'D4TN-9WRE', 'HV3C-QZ6L', 'P2YB-J7SK', 'R9FG-4NUD', 'X6MA-T3HE'].map(c => `<span>${c}</span>`).join('')}</div><div style="margin-top:14px"><button class="btn btn-danger-ghost" data-a="disable2fa">Turn off two-factor authentication</button></div></div>`
+          ? `<div class="alert ok">${ic('shield-check', 16)}<div><b>Two-factor authentication is on.</b><div class="muted">You'll enter a code from your authenticator app when signing in on a new device.</div></div></div><div class="sblock"><h2>Recovery codes</h2>${
+              S.ui.recoveryCodes
+                ? `<p class="muted" style="font-size:13px">Store these somewhere safe. Each code works once, and they won't be shown again.</p><div style="display:grid;grid-template-columns:repeat(2,max-content);gap:6px 28px;font-family:var(--mono);font-size:13px;padding:14px;border:1px solid var(--border);border-radius:var(--r);background:var(--sunken);user-select:all" id="tfa-codes">${S.ui.recoveryCodes.map(c => `<span>${esc(c)}</span>`).join('')}</div>`
+                : `<p class="muted" style="font-size:13px">Your recovery codes were shown when you turned this on. To get new ones, turn two-factor authentication off and on again.</p>`
+            }<div style="margin-top:14px">${
+              S.ui.tfaOff
+                ? `<form data-submit="confirmDisable2fa" class="col" style="gap:10px;max-width:400px"><div class="field"><label class="label" for="tfa-off">Your password, or a code from your authenticator app</label><input type="password" class="input ${S.ui.errors.tfaOff ? 'is-error' : ''}" id="tfa-off" autocomplete="current-password" autofocus>${S.ui.errors.tfaOff ? `<span class="err">${ic('circle-alert', 12)}${esc(S.ui.errors.tfaOff)}</span>` : ''}</div><div class="row"><button class="btn btn-danger" data-a="confirmDisable2fa" id="tfa-off-btn">Turn off</button><button type="button" class="btn btn-ghost" data-a="cancelDisable2fa">Cancel</button></div></form>`
+                : `<button class="btn btn-danger-ghost" data-a="disable2fa">Turn off two-factor authentication</button>`
+            }</div></div>`
           : S.ui.tfaSetup
-            ? `<div class="panel" style="padding:18px;display:flex;gap:20px;flex-wrap:wrap"><div style="width:132px;height:132px;display:grid;grid-template-columns:repeat(11,1fr);gap:1px;padding:8px;background:#fff;border-radius:8px;border:1px solid var(--border)" aria-label="QR code">${Array.from(
-                { length: 121 },
-                (_, i) => {
-                  const r = Math.floor(i / 11),
-                    c = i % 11;
-                  const f = (r < 3 && c < 3) || (r < 3 && c > 7) || (r > 7 && c < 3);
-                  const on = f ? !((r === 1 && c === 1) || (r === 1 && c === 9) || (r === 9 && c === 1)) : (i * 7919) % 13 < 6;
-                  return `<i style="background:${on ? '#1D1C1A' : '#fff'}"></i>`;
-                },
-              ).join('')}</div>
-        <div class="grow col" style="gap:10px;min-width:220px"><div><b>1. Scan the QR code</b><div class="muted" style="font-size:13px">Use 1Password, Authy, or Google Authenticator.</div></div><div><b>2. Enter the 6-digit code</b></div><form data-submit="verify2fa" class="row"><input class="input mono ${S.ui.errors.tfa ? 'is-error' : ''}" id="tfa-code" inputmode="numeric" maxlength="6" placeholder="000000" style="width:130px;letter-spacing:.2em;font-size:15px" autofocus><button class="btn btn-primary" data-a="verify2fa">Verify</button><button type="button" class="btn btn-ghost" data-a="cancel2fa">Cancel</button></form>${S.ui.errors.tfa ? `<span class="err">${ic('circle-alert', 12)}${S.ui.errors.tfa}</span>` : '<span class="hint">Any 6 digits work in this prototype.</span>'}</div></div>`
-            : `<div class="panel" style="padding:18px" ><div class="row" style="gap:14px;align-items:flex-start"><span class="ftype" style="--c:var(--amber);width:36px;height:36px">${ic('shield-alert', 18)}</span><div class="grow"><b>Two-factor authentication is off</b><p class="muted" style="margin:4px 0 12px;font-size:13px">Protect your account with a code from an authenticator app in addition to your password.</p><button class="btn btn-primary" data-a="setup2fa">Set up two-factor authentication</button></div></div></div>`)
+            ? `<div class="panel" style="padding:18px;display:flex;gap:20px;flex-wrap:wrap"><div style="width:148px;height:148px;padding:8px;background:#fff;border-radius:8px;border:1px solid var(--border);flex:none" role="img" aria-label="QR code for your authenticator app">${S.ui.tfaSetup.qr.replace('<svg', '<svg width="130" height="130"')}</div>
+        <div class="grow col" style="gap:10px;min-width:220px"><div><b>1. Scan the QR code</b><div class="muted" style="font-size:13px">Use 1Password, Authy, or Google Authenticator.</div></div><div><b>2. Enter the 6-digit code</b></div><form data-submit="verify2fa" class="row"><input class="input mono ${S.ui.errors.tfa ? 'is-error' : ''}" id="tfa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" style="width:130px;letter-spacing:.2em;font-size:15px" autofocus><button class="btn btn-primary" data-a="verify2fa" id="tfa-verify">Verify</button><button type="button" class="btn btn-ghost" data-a="cancel2fa">Cancel</button></form>${S.ui.errors.tfa ? `<span class="err">${ic('circle-alert', 12)}${esc(S.ui.errors.tfa)}</span>` : `<span class="hint">Can't scan it? Enter this key instead: <span class="mono" style="user-select:all">${esc(S.ui.tfaSetup.secret.replace(/(.{4})/g, '$1 ').trim())}</span></span>`}</div></div>`
+            : `<div class="panel" style="padding:18px" ><div class="row" style="gap:14px;align-items:flex-start"><span class="ftype" style="--c:var(--amber);width:36px;height:36px">${ic('shield-alert', 18)}</span><div class="grow"><b>Two-factor authentication is off</b><p class="muted" style="margin:4px 0 12px;font-size:13px">Protect your account with a code from an authenticator app in addition to your password.</p>${
+                S.ui.tfaAsk
+                  ? `<form data-submit="setup2fa" class="col" style="gap:10px;max-width:400px"><div class="field"><label class="label" for="tfa-pw">Your current password</label><input type="password" class="input ${S.ui.errors.tfaPw ? 'is-error' : ''}" id="tfa-pw" autocomplete="current-password" autofocus>${S.ui.errors.tfaPw ? `<span class="err">${ic('circle-alert', 12)}${esc(S.ui.errors.tfaPw)}</span>` : ''}</div><div class="row"><button class="btn btn-primary" data-a="setup2fa" id="tfa-setup">Continue</button><button type="button" class="btn btn-ghost" data-a="cancel2fa">Cancel</button></div></form>`
+                  : `<button class="btn btn-primary" data-a="ask2fa" id="tfa-setup">Set up two-factor authentication</button>`
+              }</div></div></div>`)
       );
+    case 'account': {
+      const e = S.ui.errors;
+      const owner = me().role === 'Owner';
+      return (
+        H('Your sign-in email, your data, and closing your account.') +
+        `<div class="sblock"><h2>Email</h2>${
+          S.ui.emailSent
+            ? `<div class="alert info">${ic('mail', 15)}<span>We sent a confirmation link to <b>${esc(S.ui.emailSent)}</b>. You keep signing in with ${esc(me().email)} until you open it.${S.ui.devLink ? ` <button class="link" data-a="openDevLink" id="dev-link">Open the link</button>` : ''}</span></div>`
+            : `<form data-submit="requestEmailChange" class="col" style="gap:14px;max-width:400px"><p class="muted" style="margin:0;font-size:13px">You sign in with <b>${esc(me().email)}</b>. We'll send a link to the new address to confirm it, and sign you out everywhere else.</p>
+        <div class="field"><label class="label" for="em-new">New email</label><input type="email" class="input ${e.emNew ? 'is-error' : ''}" id="em-new" autocomplete="email">${e.emNew ? `<span class="err">${ic('circle-alert', 12)}${esc(e.emNew)}</span>` : ''}</div>
+        <div class="field"><label class="label" for="em-pw">Current password</label><input type="password" class="input ${e.emPw ? 'is-error' : ''}" id="em-pw" autocomplete="current-password">${e.emPw ? `<span class="err">${ic('circle-alert', 12)}${esc(e.emPw)}</span>` : ''}</div>
+        <div><button class="btn btn-primary" data-a="requestEmailChange" id="em-save">Change email</button></div></form>`
+        }</div>
+        <div class="sblock"><h2>Your data</h2><p class="muted" style="font-size:13px">Download your profile, preferences, notifications, the tasks assigned to you and your comments as JSON.${owner ? ' As the owner, the file also includes the whole workspace.' : ''}</p><a class="btn btn-secondary" href="/api/me/export" download id="export-btn">${ic('download', 14)}Download my data</a></div>
+        <div class="sblock"><h2>Delete account</h2>${
+          owner
+            ? `<p class="muted" style="font-size:13px">Owners can't delete their account. Make another member an Owner in <button class="link" data-a="go" data-r="members">Members</button>, then ask them to change your role.</p>`
+            : `<form data-submit="deleteAccount" class="col" style="gap:14px;max-width:400px"><p class="muted" style="margin:0;font-size:13px">This removes you from ${esc(D().ws.name)} straight away. Your tasks become unassigned; your comments stay. This can't be undone.</p>
+        <div class="field"><label class="label" for="del-pw">Current password</label><input type="password" class="input ${e.delPw ? 'is-error' : ''}" id="del-pw" autocomplete="current-password">${e.delPw ? `<span class="err">${ic('circle-alert', 12)}${esc(e.delPw)}</span>` : ''}</div>
+        <div><button class="btn btn-danger" data-a="deleteAccount" id="del-btn">Delete my account</button></div></form>`
+        }</div>`
+      );
+    }
   }
   return page404();
 }

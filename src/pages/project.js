@@ -4,9 +4,9 @@
 import { esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { PSTAT } from '../core/constants.js';
-import { D, S, canSee, proj, tasksOf } from '../core/store.js';
+import { D, S, canComment, canEdit, canSee, proj, roAttr, tasksOf } from '../core/store.js';
 import { avStack, empty, pIcon } from '../ui/helpers.js';
-import { applyView, groupTasks, viewOf, viewToolbar } from '../shell/view-engine.js';
+import { applyView, groupTasks, validFilter, viewOf, viewToolbar } from '../shell/view-engine.js';
 import { listHtml } from '../components/task-list.js';
 import { page404, stateDenied } from './errors.js';
 import { projActivity, projOverview } from '../views/project-overview.js';
@@ -43,7 +43,7 @@ export function pageProject() {
       const k = 'sv:' + sv.id;
       if (!S.views[k]) {
         viewOf(k);
-        S.views[k].filters = JSON.parse(JSON.stringify(sv.filters));
+        S.views[k].filters = JSON.parse(JSON.stringify(Array.isArray(sv.filters) ? sv.filters : [])).filter(validFilter);
       }
       body = taskViewBody(sv.type, applyView(ts, viewOf(k)), k, p);
     }
@@ -52,7 +52,10 @@ export function pageProject() {
   else if (tab === 'activity') body = projActivity(p);
   else body = taskViewBody(tab, applyView(ts, viewOf(key)), key, p);
 
-  return `<div class="page flush">
+  const ro = canEdit(p)
+    ? ''
+    : `<div class="alert info ro-note">${ic('eye', 14)}<span>${canComment(p) ? 'You can view this project and comment on its tasks.' : 'You can view this project.'} Ask the project lead if you need to edit it.</span></div>`;
+  return `<div class="page flush" ${roAttr(p)}>
     <div class="proj-h">
       <div class="t">
         ${pIcon(p, 'lg', 18)}
@@ -73,6 +76,7 @@ export function pageProject() {
         ${views.map(v => `<button ${tab === 'v:' + v.id ? 'aria-current="page"' : ''} class="tab ${tab === 'v:' + v.id ? 'on' : ''}" data-a="go" data-r="project" data-id="${p.id}" data-tab="v:${v.id}" data-ctx="savedview" data-vid="${v.id}">${ic('list-filter', 14)}${esc(v.name)}</button>`).join('')}
         <button class="tab" data-a="saveView" data-id="${p.id}" data-tip="Save current filters as a view" aria-label="Save view">${ic('plus', 14)}</button>
       </nav>
+      ${ro}
     </div>
     <div class="pbody${S.ui.fx.tab ? ' fx-tab' : ''}">${body}</div>
   </div>`;

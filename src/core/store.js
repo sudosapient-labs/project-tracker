@@ -1,9 +1,11 @@
 /* ---------- store ---------- */
 import { iso, isPast, setTimeZone, today, uid } from './utils.js';
 import { DEFAULT_TZ, PCOLORS, TEAMS_SEED, validTz } from './constants.js';
-import { seed } from '../data/seed.js';
+import { COMMENT, EDIT, canManageProject, projectLevel } from './access.js';
 
-export const STORE_KEY = 'gr8r.v3';
+/* Only display preferences are cached in the browser (so the theme applies before the first
+   request finishes). Workspace data always comes from the server. */
+export const PREFS_KEY = 'sudo-sapient.prefs';
 export const DEFAULT_PREFS = {
   theme: 'system',
   accent: 'indigo',
@@ -17,29 +19,44 @@ export const DEFAULT_PREFS = {
   motion: 'system',
   home: 'home',
   openTasks: 'drawer',
-  name: 'Tanjim Islam',
-  title: 'Head of Product',
+  name: '',
+  title: '',
 };
-export function load() {
+/* The shape of the workspace graph the server's /api/bootstrap returns, with nothing in it. */
+export const emptyData = () => ({
+  ws: { name: '', c: '#5A67D8' },
+  me: null,
+  members: [],
+  teams: [],
+  projects: [],
+  tasks: [],
+  comments: [],
+  activity: [],
+  notifs: [],
+  files: [],
+  events: [],
+  projOrder: [],
+  savedViews: [],
+  recentSearches: [],
+  sessions: [],
+  tfa: false,
+  notifPrefs: {},
+});
+function cachedPrefs() {
   try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (raw) {
-      const j = JSON.parse(raw);
-      if (j && j.data && j.data.tasks) return j;
-    }
+    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+    if (p && typeof p === 'object') return { ...p, tz: validTz(p.tz) };
   } catch {
-    /* storage blocked or corrupt: start from seed data */
+    /* storage blocked or corrupt: use defaults */
   }
-  return null;
+  return {};
 }
-export const saved = load();
-if (saved?.prefs) saved.prefs.tz = validTz(saved.prefs.tz);
-/* Seed data and the first calendar month are computed below, before the first render. */
-setTimeZone(saved?.prefs?.tz || DEFAULT_TZ);
+const cached = cachedPrefs();
+setTimeZone(cached.tz || DEFAULT_TZ);
 export const S = {
-  data: saved?.data || seed(),
-  prefs: Object.assign({}, DEFAULT_PREFS, saved?.prefs || {}),
-  views: saved?.views || {},
+  data: emptyData(),
+  prefs: Object.assign({}, DEFAULT_PREFS, cached),
+  views: {},
   ui: {
     fx: {},
     auth: null,
@@ -49,7 +66,7 @@ export const S = {
     route: 'home',
     params: {},
     history: [],
-    collapsed: !!saved?.collapsed,
+    collapsed: false,
     mnav: false,
     expanded: { p1: true },
     drawer: null,
@@ -86,22 +103,22 @@ export const S = {
     drafts: {},
   },
 };
+/* `save()` marks the store dirty. The sync layer (core/sync.js) registers the handler that diffs
+   S.data against what the server last confirmed and sends the changes. */
+export const saveHooks = { onSave: () => {} };
 export let _saveT;
 export function save() {
+  document.documentElement.dataset.sync = 'saving';
   clearTimeout(_saveT);
-  _saveT = setTimeout(() => {
-    try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ data: S.data, prefs: S.prefs, views: S.views, collapsed: S.ui.collapsed }));
-    } catch {
-      /* storage full or blocked: keep working in memory */
-    }
-  }, 150);
+  _saveT = setTimeout(() => saveHooks.onSave(), 150);
 }
 
 /* ---------- lookups ---------- */
 export const D = () => S.data;
 export const me = () => D().members.find(m => m.id === D().me);
 export const mem = id => D().members.find(m => m.id === id);
+/* A person's name; references to someone who has left the workspace read "Former member". */
+export const memName = id => mem(id)?.name || (id ? 'Former member' : '');
 export const proj = id => D().projects.find(p => p.id === id);
 export const task = id => D().tasks.find(t => t.id === id);
 export const pColor = p => PCOLORS[p?.color] || PCOLORS.slate;
@@ -110,7 +127,16 @@ export const visibleProjects = () =>
     .projOrder.map(proj)
     .filter(Boolean)
     .filter(p => !p.archived);
-export const canSee = p => !p.private || p.members.includes(D().me);
+/* What I may do in a project (core/access.js; the server enforces the same rules). Private projects
+   are visible to their members only; guests only see projects they're added to. Projects I can't
+   open arrive as stubs: id, key, name, icon, colour, lead (and, for admins, who has access). */
+export const projLevel = p => projectLevel(p, me());
+export const canSee = p => projLevel(p) > 0;
+export const canComment = p => projLevel(p) >= COMMENT;
+export const canEdit = p => projLevel(p) >= EDIT;
+export const canManage = p => canManageProject(p, me());
+/* `data-ro` for markup inside a project I can only view or comment in (styles hide edit controls). */
+export const roAttr = p => (canEdit(p) ? '' : `data-ro="${canComment(p) ? 'comment' : 'view'}"`);
 export const tasksOf = pid => D().tasks.filter(t => t.project === pid && !t.archived);
 export const allTasks = () => D().tasks.filter(t => !t.archived && canSee(proj(t.project)));
 export const isOver = t => t.status !== 'done' && isPast(t.due);

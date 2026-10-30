@@ -122,7 +122,7 @@ export function paletteItems() {
       items: r.projects.slice(0, lim).map(p => ({
         html: `<span class="pdot" style="--c:${pColor(p)}"></span>`,
         name: p.name,
-        sub: PSTAT[p.status].name,
+        sub: PSTAT[p.status]?.name || 'Restricted',
         run: () => go('project', { id: p.id }),
       })),
     });

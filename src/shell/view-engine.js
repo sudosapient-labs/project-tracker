@@ -55,7 +55,12 @@ export const FIELDS = {
     ],
   },
 };
+/* A filter this version understands; anything else (an old or hand-edited saved view) is ignored. */
+export const validFilter = f => !!f && Object.hasOwn(FIELDS, f.f) && Array.isArray(f.v);
 export function viewOf(key) {
+  const cur = S.views[key];
+  if (cur && Array.isArray(cur.filters) && !cur.filters.every(validFilter)) cur.filters = cur.filters.filter(validFilter);
+  else if (cur && !Array.isArray(cur.filters)) cur.filters = [];
   if (!S.views[key])
     S.views[key] = {
       filters: [],

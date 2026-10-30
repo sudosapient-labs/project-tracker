@@ -76,6 +76,12 @@ export const PICONS = [
   'sparkles',
 ];
 export const ROLES = ['Owner', 'Admin', 'Member', 'Guest'];
+/* Repeat choices for a task (the drawer's Repeat menu); the server accepts only these. */
+export const RECUR = ['Daily', 'Weekly', 'Every 2 weeks', 'Monthly'];
+/* The comment reaction picker; the server accepts only these as reaction keys. */
+export const REACTIONS = ['👍', '🎉', '❤️', '👀', '🚀', '✅'];
+/* Fields a task filter can test (shell/view-engine.js FIELDS); saved views are checked against them. */
+export const FILTER_FIELDS = ['status', 'assignee', 'priority', 'due', 'project', 'labels', 'created', 'updated'];
 export const TEAMS_SEED = [
   { id: 'design', name: 'Design', icon: 'palette', c: '#8662C9', desc: 'Product design, brand, and research' },
   { id: 'eng', name: 'Engineering', icon: 'code', c: '#3B82C4', desc: 'Web, mobile, and platform engineering' },

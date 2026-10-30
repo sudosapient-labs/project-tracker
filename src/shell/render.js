@@ -55,10 +55,53 @@ export const ROUTE_ICONS = {
   archive: 'archive',
 };
 
+/* ---------- URL ↔ route ----------
+   #home · #project/web/list · #member/<id> · #team/<id> · #settings/<section> */
+export function hashFor(route, params = {}) {
+  if (route === 'project') {
+    const p = proj(params.id);
+    return p ? `project/${p.key.toLowerCase()}${params.tab ? '/' + params.tab : ''}` : 'projects';
+  }
+  if ((route === 'member' || route === 'team') && params.id) return `${route}/${params.id}`;
+  if (route === 'settings' && params.sec) return `settings/${params.sec}`;
+  return route;
+}
+/* Route parameters come from a URL anyone can send, so only ids and known tab / section names pass. */
+const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const okTab = t => PTABS.some(x => x[0] === t) || /^v:[A-Za-z0-9_-]{1,64}$/.test(t);
+export function routeFromHash(h) {
+  let parts;
+  try {
+    parts = h.split('/').map(decodeURIComponent);
+  } catch {
+    return null;
+  }
+  const [r, a, b] = parts;
+  if (r === 'project') {
+    const p = D().projects.find(x => x.key.toLowerCase() === a);
+    return p ? { route: 'project', params: { id: p.id, tab: b && okTab(b) ? b : 'board' } } : null;
+  }
+  if (r === 'member' || r === 'team') return ID_RE.test(a || '') ? { route: r, params: { id: a } } : null;
+  if (r === 'settings') return { route: 'settings', params: /^[a-z0-9-]{1,40}$/.test(a || '') ? { sec: a } : {} };
+  return ROUTE_NAMES[r] && r !== 'member' && r !== 'team' ? { route: r, params: {} } : null;
+}
+function writeHash(route, params, replace) {
+  const h = '#' + hashFor(route, params);
+  if (location.hash === h) return;
+  history[replace ? 'replaceState' : 'pushState'](null, '', location.pathname + location.search + h);
+}
+// Browser back / forward: follow the URL without adding another history entry.
+addEventListener('popstate', () => {
+  if (S.ui.auth) return;
+  const r = routeFromHash(location.hash.slice(1));
+  if (r) go(r.route, r.params, { back: true, fromUrl: true });
+});
+
 export function go(route, params = {}, opt = {}) {
   if (route === 'project' && !params.tab) params.tab = 'board';
   if (!opt.back) S.ui.history.push({ route: S.ui.route, params: S.ui.params });
   const same = S.ui.route === route && JSON.stringify(S.ui.params) === JSON.stringify(params);
+  if (!opt.fromUrl) writeHash(route, params, opt.back || same);
   S.ui.route = route;
   S.ui.params = params;
   S.ui.mnav = false;
@@ -107,7 +150,7 @@ export function tryFocus(key) {
 }
 export function pageTitle() {
   const u = S.ui;
-  if (u.auth) return 'Gr8r Studio';
+  if (u.auth) return 'Sudo Sapient';
   let t = ROUTE_NAMES[u.route] || 'Not found';
   if (u.route === 'project' && proj(u.params.id)) t = `${(PTABS.find(x => x[0] === u.params.tab) || [0, 'Saved view'])[1]} · ${proj(u.params.id).name}`;
   if (u.route === 'member' && mem(u.params.id)) t = mem(u.params.id).name;

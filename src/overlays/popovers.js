@@ -1,8 +1,8 @@
 /* ---------------- POPOVERS ---------------- */
 import { $, MOD, MONL, WD, addD, dOff, dayKey, diffD, esc, fmtDate, fmtHM, fmtTime, hasTime, instant, iso, parse, timeOf, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { LABELS, PRIOS, PSTAT, STATUSES } from '../core/constants.js';
-import { D, S, allTasks, canSee, me, mem, pColor, proj, task, visibleProjects } from '../core/store.js';
+import { LABELS, PRIOS, PSTAT, REACTIONS, RECUR, STATUSES } from '../core/constants.js';
+import { D, S, allTasks, canEdit, me, mem, pColor, proj, task, visibleProjects } from '../core/store.js';
 import { av, avStack, prIcon, stIcon } from '../ui/helpers.js';
 import { focusKey, render } from '../shell/render.js';
 import { FIELDS, viewOf } from '../shell/view-engine.js';
@@ -164,14 +164,14 @@ export function popHtml(p) {
     case 'project':
       inner = popList(
         visibleProjects()
-          .filter(q => canSee(q) && q.status !== 'complete')
+          .filter(q => canEdit(q) && q.status !== 'complete')
           .map(q => ({ id: q.id, name: q.name, html: `<span class="pdot" style="--c:${pColor(q)}"></span>`, on: t?.project === q.id })),
         { search: 'Move to project…' },
       );
       break;
     case 'recur':
       inner = popList(
-        ['Does not repeat', 'Daily', 'Weekly', 'Every 2 weeks', 'Monthly'].map(x => ({
+        ['Does not repeat', ...RECUR].map(x => ({
           id: x,
           name: x,
           html: ic('repeat', 14),
@@ -259,7 +259,7 @@ export function popHtml(p) {
       break;
     case 'help':
       inner = `<div class="mh">Help & resources</div><button class="mi" data-a="shortcuts">${ic('keyboard', 15)}Keyboard shortcuts<span class="r"><kbd>?</kbd></span></button><button class="mi" data-a="openPalette">${ic('command', 15)}Command menu<span class="r"><kbd>${MOD}K</kbd></span></button><button class="mi" data-a="go" data-r="system">${ic('component', 15)}Design system</button><button class="mi" data-a="go" data-r="states">${ic('layers', 15)}System states</button>
-      <div class="msep"></div><div class="mh">Prototype</div><button class="mi" data-a="startOnboarding">${ic('sparkles', 15)}Replay onboarding</button><button class="mi" data-a="toggleOffline">${ic(S.ui.offline ? 'wifi' : 'wifi-off', 15)}${S.ui.offline ? 'Go back online' : 'Simulate offline'}</button><button class="mi" data-a="go" data-r="nowhere">${ic('file-question', 15)}Open a broken link</button><button class="mi" data-a="resetDemo">${ic('rotate-ccw', 15)}Reset demo data</button>`;
+`;
       style = 'width:260px';
       break;
     case 'sort': {
@@ -349,7 +349,7 @@ export function popHtml(p) {
         evs
           .map(
             e =>
-              `<button class="mi" data-a="go" data-r="project" data-id="${e.project}" data-tab="calendar">${ic('clock', 14)}${esc(e.title)}<span class="r">${e.time}</span></button>`,
+              `<button class="mi" ${e.project ? `data-a="go" data-r="project" data-id="${esc(e.project)}" data-tab="calendar"` : `data-a="pop" data-pop="event" data-id="${esc(e.id)}"`}>${ic('clock', 14)}${esc(e.title)}<span class="r">${esc(e.time)}</span></button>`,
           )
           .join('') +
         ts
@@ -363,13 +363,15 @@ export function popHtml(p) {
     }
     case 'event': {
       const e = D().events.find(x => x.id === p.id);
-      const pr = proj(e.project);
-      inner = `<div style="padding:10px 10px 6px"><div class="row" style="gap:8px;margin-bottom:6px"><span class="pdot" style="--c:${pColor(pr)};border-radius:50%"></span><b style="font-size:14px;font-weight:600">${esc(e.title)}</b></div><div class="muted" style="font-size:12.5px;display:flex;flex-direction:column;gap:4px"><span class="row" style="gap:6px">${ic('calendar', 13)}${fmtDate(e.date, true)} · ${e.time}</span><span class="row" style="gap:6px">${ic('folder', 13)}${esc(pr.name)}</span><span class="row" style="gap:6px">${ic('users', 13)}${avStack(pr.members, 5)}</span></div></div><div class="msep"></div><button class="mi" data-a="go" data-r="project" data-id="${pr.id}" data-tab="overview">${ic('arrow-up-right', 14)}Open project</button>`;
+      if (!e) break;
+      // Workspace-wide events have no project.
+      const pr = e.project ? proj(e.project) : null;
+      inner = `<div style="padding:10px 10px 6px"><div class="row" style="gap:8px;margin-bottom:6px"><span class="pdot" style="--c:${pColor(pr)};border-radius:50%"></span><b style="font-size:14px;font-weight:600">${esc(e.title)}</b></div><div class="muted" style="font-size:12.5px;display:flex;flex-direction:column;gap:4px"><span class="row" style="gap:6px">${ic('calendar', 13)}${fmtDate(e.date, true)}${e.time ? ` · ${esc(e.time)}` : ''}</span><span class="row" style="gap:6px">${ic('folder', 13)}${esc(pr ? pr.name : 'Whole workspace')}</span>${pr ? `<span class="row" style="gap:6px">${ic('users', 13)}${avStack(pr.members || [], 5)}</span>` : ''}</div></div>${pr ? `<div class="msep"></div><button class="mi" data-a="go" data-r="project" data-id="${pr.id}" data-tab="overview">${ic('arrow-up-right', 14)}Open project</button>` : ''}`;
       style = 'width:270px';
       break;
     }
     case 'emoji':
-      inner = `<div class="row" style="gap:2px;padding:2px">${['👍', '🎉', '❤️', '👀', '🚀', '✅'].map(e => `<button class="ibtn" data-a="react" data-id="${p.id}" data-e="${e}" style="font-size:16px" aria-label="React ${e}">${e}</button>`).join('')}</div>`;
+      inner = `<div class="row" style="gap:2px;padding:2px">${REACTIONS.map(e => `<button class="ibtn" data-a="react" data-id="${p.id}" data-e="${e}" style="font-size:16px" aria-label="React ${e}">${e}</button>`).join('')}</div>`;
       style = 'min-width:0';
       break;
     case 'ctx':

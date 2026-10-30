@@ -125,3 +125,50 @@
   color: var(--text-2);
   margin: 0 0 12px;
 }
+
+/* Projects I can only view or comment in (data-ro="view" | "comment", see roAttr in core/store.js).
+   The server refuses edits there; this keeps the UI from offering them. */
+[data-ro]
+  :is(
+    [data-a='newTask'],
+    [data-a='startComposer'],
+    [data-a='saveView'],
+    [data-a='editProject'],
+    [data-a='rmAttach'],
+    [data-a='bulkDelete'],
+    [data-a='rmSub'],
+    [data-a='promoteSub'],
+    .handle,
+    label:has([data-in='uploadFiles']),
+    .subt:has(#d-sub)
+  ) {
+  display: none !important;
+}
+[data-ro]
+  :is(
+    [data-pop='status'],
+    [data-pop='priority'],
+    [data-pop='assignee'],
+    [data-pop='date'],
+    [data-pop='labels'],
+    [data-pop='deps'],
+    [data-pop='project'],
+    [data-pop='recur'],
+    [data-pop='estimate'],
+    [data-pop='pstatus'],
+    [data-pop='subassignee'],
+    [data-a='toggleDone'],
+    [data-a='toggleSub'],
+    [data-dropzone]
+  ) {
+  pointer-events: none;
+}
+[data-ro='view'] :is(.cbox, [data-pop='emoji']) {
+  display: none !important;
+}
+[data-ro='view'] [data-a='react'] {
+  pointer-events: none;
+}
+.ro-note {
+  margin: 10px 0 0;
+}

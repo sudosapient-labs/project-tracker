@@ -1,0 +1,75 @@
+/* The full object graph one person may see, in the same shape the prototype's seed data had, so
+   the client swaps its data source without changing how anything renders. */
+import { listSessions } from '../auth.js';
+import { canSee, memberFor, projectFor } from './rules.js';
+import { DEFAULT_NOTIF_PREFS } from '../notify.js';
+
+const ACTIVITY_LIMIT = 1000;
+const NOTIF_LIMIT = 500;
+
+export function bootstrap({ db, repo }, auth) {
+  const uid = auth.member.id;
+  const favs = repo.favorites(uid);
+  const now = Date.now();
+  // `last`: minutes since anything happened in the project (activity, or an edit to the project).
+  const touched = new Map(
+    db.all('SELECT project_id, MAX(created_at) t FROM activity WHERE project_id IS NOT NULL GROUP BY project_id').map(r => [r.project_id, r.t]),
+  );
+  // Projects this person can't open arrive as stubs (see projectFor); Guests don't get them at all.
+  const rows = db.all('SELECT data, updated_at FROM projects ORDER BY created_at, rowid').map(r => ({ ...r, p: JSON.parse(r.data) }));
+  const projects = rows
+    .map(({ p, updated_at }) => {
+      const v = projectFor(p, auth.member);
+      if (v !== p) return v && { ...v, fav: favs.projects.has(p.id) };
+      const t = Math.max(updated_at, touched.get(p.id) || 0);
+      return { ...p, fav: favs.projects.has(p.id), last: Math.max(0, Math.round((now - t) / 60000)) };
+    })
+    .filter(Boolean);
+  const vis = JSON.stringify(rows.filter(r => canSee(r.p, auth.member)).map(r => r.p.id));
+  const IN = 'project_id IN (SELECT value FROM json_each(?))';
+  const OPT = `(project_id IS NULL OR ${IN})`;
+
+  const lastSeen = new Map(db.all('SELECT user_id, MAX(last_seen_at) t FROM sessions GROUP BY user_id').map(r => [r.user_id, r.t]));
+  const all = rows.map(r => r.p);
+  const members = repo.all('members', 'ORDER BY created_at, rowid').map(m => ({
+    ...memberFor(m, auth.member, all),
+    last: m.status === 'invited' ? null : lastSeen.has(m.id) ? Math.max(0, Math.round((now - lastSeen.get(m.id)) / 60000)) : null,
+  }));
+
+  const state = repo.userState(uid);
+  const ids = new Set(projects.map(p => p.id));
+  const known = state.projOrder.filter(id => ids.has(id));
+  // Projects this person hasn't placed yet go first, newest on top, like a fresh `unshift`.
+  const unplaced = projects
+    .filter(p => !known.includes(p.id))
+    .map(p => p.id)
+    .reverse();
+  const ws = repo.workspace();
+  const user = auth.user;
+
+  return {
+    data: {
+      ws: { name: ws?.name || '', c: ws?.c || '#5A67D8', ...(ws?.brand ? { brand: true } : {}) },
+      me: uid,
+      members,
+      teams: repo.all('teams', 'ORDER BY created_at, rowid'),
+      projects,
+      tasks: repo.all('tasks', `WHERE ${IN} ORDER BY created_at, rowid`, vis).map(t => ({ ...t, fav: favs.tasks.has(t.id) })),
+      comments: repo.all('comments', `WHERE ${IN} ORDER BY created_at, rowid`, vis),
+      activity: repo.all('activity', `WHERE ${OPT} ORDER BY created_at DESC, rowid DESC LIMIT ${ACTIVITY_LIMIT}`, vis),
+      notifs: db.all('SELECT data FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT ?', uid, NOTIF_LIMIT).map(r => JSON.parse(r.data)),
+      files: repo.all('files', `WHERE ${OPT} ORDER BY created_at DESC, rowid DESC`, vis),
+      events: repo.all('events', `WHERE ${OPT} ORDER BY created_at, rowid`, vis),
+      projOrder: [...unplaced, ...known],
+      savedViews: repo.all('savedViews', `WHERE ${IN} ORDER BY created_at, rowid`, vis),
+      recentSearches: state.recentSearches,
+      sessions: listSessions(db, uid, auth.session.id),
+      tfa: !!user.totp_enabled,
+      notifPrefs: { ...DEFAULT_NOTIF_PREFS, ...state.notifPrefs },
+    },
+    prefs: { ...state.prefs, name: auth.member.name, title: auth.member.title || '' },
+    views: state.views,
+    collapsed: state.collapsed,
+    workspace: { onboarded: !!ws?.onboarded },
+  };
+}

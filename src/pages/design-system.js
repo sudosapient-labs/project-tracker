@@ -15,7 +15,7 @@ export function pageSystem() {
   const states = ['', 'state-hover', 'state-active', 'state-focus', 'dis', 'is-loading'];
   const stN = ['Default', 'Hover', 'Active', 'Focus', 'Disabled', 'Loading'];
   return `<div class="page">
-    <div class="ph"><div><h1>Design system</h1><p>Tokens and components that make up Gr8r. Switch themes to see both palettes.</p></div><div class="acts"><div class="seg">${[
+    <div class="ph"><div><h1>Design system</h1><p>Tokens and components that make up Sudo Sapient. Switch themes to see both palettes.</p></div><div class="acts"><div class="seg">${[
       ['light', 'sun'],
       ['dark', 'moon'],
       ['system', 'monitor'],
@@ -99,7 +99,7 @@ export function pageSystem() {
         ['Text', `<input class="input" placeholder="Task name" id="ds-1">`],
         ['Focus', `<input class="input" value="Homepage wireframes" style="border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)" id="ds-2">`],
         ['Error', `<input class="input is-error" value="alex@" id="ds-3"><span class="err">${ic('circle-alert', 12)}Enter a valid email address</span>`],
-        ['Disabled', `<input class="input" value="hello@gr8rstudio.com" disabled id="ds-4">`],
+        ['Disabled', `<input class="input" value="hello@sudosapient.dev" disabled id="ds-4">`],
         ['Search', `<div class="inwrap">${ic('search', 13)}<input class="input" placeholder="Search tasks" id="ds-5"><span class="kbd">/</span></div>`],
         ['Select', `<select class="select" id="ds-6"><option>In Progress</option><option>Review</option></select>`],
         [
@@ -122,7 +122,7 @@ export function pageSystem() {
         .join('')}</div></div>
     <div class="ds-sec"><h2>Navigation</h2><div class="grid2" style="grid-template-columns:260px 1fr">
       <div class="side" style="border:1px solid var(--border);border-radius:var(--r-lg);padding:8px;height:auto">${sItem('home', 'Home', 'house')}<button class="sitem on">${ic('inbox', 16)}<span>Inbox (active)</span><span class="ct dotc">3</span></button><button class="sitem state-hover">${ic('circle-check', 16)}<span>My Tasks (hover)</span></button><div class="sitem"><span class="pico" style="--c:${PCOLORS.indigo}">${ic('globe', 12)}</span><span>Website Redesign</span><span class="sdot" style="background:var(--blue)"></span></div></div>
-      <div class="col" style="gap:14px"><nav class="crumbs" style="border:1px solid var(--border);border-radius:var(--r);padding:6px"><button>Gr8r Studio</button><span class="sep">/</span><button>Projects</button><span class="sep">/</span><button class="cur">Website Redesign</button></nav>
+      <div class="col" style="gap:14px"><nav class="crumbs" style="border:1px solid var(--border);border-radius:var(--r);padding:6px"><button>Sudo Sapient</button><span class="sep">/</span><button>Projects</button><span class="sep">/</span><button class="cur">Website Redesign</button></nav>
       <div class="tabs">${['Overview', 'Board', 'List', 'Table'].map((t, i) => `<button class="tab ${i === 1 ? 'on' : ''}">${t}</button>`).join('')}</div>
       <div class="row"><div class="seg"><button class="on">${ic('layout-grid', 13)}Grid</button><button>${ic('list', 13)}List</button><button>${ic('table-2', 13)}Table</button></div><span class="chip">${ic('circle-dot', 12)}<b>Status</b> is <span>In Progress</span><span class="ibtn">${ic('x', 12)}</span></span></div></div></div></div>
     <div class="ds-sec"><h2>Data display</h2><div class="grid2" style="grid-template-columns:300px 1fr">
@@ -145,7 +145,7 @@ export function pageSystem() {
 export function pageStates() {
   const card = (cap, icon, inner) => `<div class="panel"><div class="cap">${ic(icon, 13)}${cap}</div>${inner}</div>`;
   return `<div class="page wide" style="max-width:1240px">
-    <div class="ph"><div><h1>System states</h1><p>Empty, loading, error, and confirmation states used throughout Gr8r.</p></div><div class="acts"><button class="btn btn-secondary" data-a="toggleOffline">${ic(S.ui.offline ? 'wifi' : 'wifi-off', 14)}${S.ui.offline ? 'Go back online' : 'Simulate offline'}</button></div></div>
+    <div class="ph"><div><h1>System states</h1><p>Empty, loading, error, and confirmation states used throughout Sudo Sapient.</p></div><div class="acts"><button class="btn btn-secondary" data-a="toggleOffline">${ic(S.ui.offline ? 'wifi' : 'wifi-off', 14)}${S.ui.offline ? 'Go back online' : 'Simulate offline'}</button></div></div>
     <h2 class="sec" style="margin:8px 0 10px">Empty states</h2>
     <div class="states-grid">
       ${card('No projects', 'folder-kanban', empty('folder-kanban', 'No projects yet', 'Create your first project to start organizing your work.', `<button class="btn btn-primary btn-sm" data-a="newProject">${ic('plus', 14)}Create project</button>`))}
@@ -167,7 +167,7 @@ export function pageStates() {
       ${card('Failed to save', 'circle-alert', `<div style="padding:18px" class="col"><div class="alert danger" style="margin-bottom:10px">${ic('circle-alert', 15)}<div><b>Your changes couldn't be saved.</b><div class="muted">The server didn't respond in time.</div></div></div><button class="btn btn-secondary btn-sm" style="align-self:flex-start" data-a="demoToast" data-v="err">Show as toast</button></div>`)}
       ${card('Permission denied', 'lock', `<div class="empty-state sm"><div class="glyph">${ic('lock', 20)}</div><h3 class="es-h">You don't have access</h3><p>Customer Portal is private. Request access from Marcus Lee.</p><button class="btn btn-secondary btn-sm" data-a="go" data-r="project" data-id="p6">Open example</button></div>`)}
       ${card('Page not found', 'file-question', `<div class="empty-state sm"><div class="glyph">${ic('file-question', 20)}</div><h3 class="es-h">Page not found</h3><p>The page was moved, deleted, or never existed.</p><button class="btn btn-secondary btn-sm" data-a="go" data-r="nowhere">Open example</button></div>`)}
-      ${card('Form validation', 'text-cursor-input', `<div style="padding:18px" class="col"><div class="field"><label class="label" for="st-e">Email</label><input class="input is-error" id="st-e" value="hello@gr8rstudio" aria-invalid="true"><span class="err">${ic('circle-alert', 12)}Enter a valid email, like name@company.com</span></div></div>`)}
+      ${card('Form validation', 'text-cursor-input', `<div style="padding:18px" class="col"><div class="field"><label class="label" for="st-e">Email</label><input class="input is-error" id="st-e" value="hello@sudosapient" aria-invalid="true"><span class="err">${ic('circle-alert', 12)}Enter a valid email, like name@company.com</span></div></div>`)}
     </div>
     <h2 class="sec" style="margin:28px 0 10px">Confirmation dialogs</h2>
     <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn btn-secondary" data-a="delProject" data-id="p5" data-demo="1">${ic('trash-2', 14)}Delete project</button><button class="btn btn-secondary" data-a="delTask" data-id="t10" data-demo="1">${ic('trash-2', 14)}Delete task</button><button class="btn btn-secondary" data-a="removeMember" data-id="m8" data-demo="1">${ic('user-minus', 14)}Remove member</button><button class="btn btn-secondary" data-a="archiveProject" data-id="p7" data-demo="1">${ic('archive', 14)}Archive project</button></div>

@@ -3,12 +3,14 @@
    ===================================================================== */
 import { $, $$, addD, dOff, esc, fmtDateTime, fmtTime, instant, iso, parse, parseTime, shiftD, today, uid, withDay, withTime } from '../core/utils.js';
 import { PR, PSTAT, ST } from '../core/constants.js';
-import { seed } from '../data/seed.js';
-import { D, DEFAULT_PREFS, S, allTasks, canSee, commentsOf, logAct, me, mem, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
-import { fileType, fsize } from '../ui/helpers.js';
+import { D, S, allTasks, canSee, commentsOf, logAct, me, mem, memName, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
+import { fileType, fsize, richHtml } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
+import { post, upload } from '../core/api.js';
 import { autosize, focusKey, fxSet, go, render } from '../shell/render.js';
+import { applyRemote, commit, restoreSnapshot, retryNow, takeSnapshot } from '../shell/sync.js';
+import { enablePush } from './push.js';
 import { viewOf } from '../shell/view-engine.js';
 import { TEMPLATES, closeModal, openModal } from '../overlays/modals.js';
 import { closePop, dateDirty, dpHead, openPop, tgt } from '../overlays/popovers.js';
@@ -127,11 +129,10 @@ export function confirmDlg(o) {
   S.ui.confirmText = '';
   openModal({ type: 'confirm', ...o });
 }
-export function snapshot() {
-  return JSON.stringify(S.data);
-}
+/* Undo: snapshot before an action; restore rewinds only the records that action changed. */
+export const snapshot = takeSnapshot;
 export function restore(snap) {
-  S.data = JSON.parse(snap);
+  restoreSnapshot(snap);
   save();
   render();
 }
@@ -143,13 +144,18 @@ export async function copy(text, msg = 'Link copied') {
     toast("Copy isn't available here — " + text, { kind: 'info', ms: 6000 });
   }
 }
-export function loadingBtn(id, ms, fn) {
+/* Show a button as busy while `fn` (sync or async) runs. */
+export async function busy(id, fn) {
   const b = document.getElementById(id);
-  if (b) {
-    b.classList.add('is-loading');
-    b.setAttribute('aria-busy', 'true');
+  b?.classList.add('is-loading');
+  b?.setAttribute('aria-busy', 'true');
+  try {
+    return await fn();
+  } finally {
+    const n = document.getElementById(id);
+    n?.classList.remove('is-loading');
+    n?.removeAttribute('aria-busy');
   }
-  setTimeout(fn, ms);
 }
 export function curProjectId() {
   if (S.ui.route === 'project') return S.ui.params.id;
@@ -287,7 +293,7 @@ A.popPick = el => {
     S.ui.pop = null;
     mutate(() => {
       sb.assignee = v;
-      logAct('assigned a subtask on', t, v ? `to ${mem(v).name}` : '(unassigned)');
+      logAct('assigned a subtask on', t, v ? `to ${memName(v)}` : '(unassigned)');
     });
     return;
   }
@@ -652,7 +658,7 @@ IN.formMore = el => {
   S.ui.form.more = el.checked;
 };
 IN.formFiles = el => {
-  [...el.files].forEach(f => S.ui.form.files.push({ name: f.name, size: fsize(f.size), type: fileType(f.name) }));
+  [...el.files].forEach(f => S.ui.form.files.push({ name: f.name, size: fsize(f.size), type: fileType(f.name), file: f }));
   render();
 };
 KEY.formAddSub = el => {
@@ -683,7 +689,9 @@ A.submitTask = () => {
     return;
   }
   S.ui.errors = {};
-  const files = f.files.map(x => ({ id: uid('a'), name: x.name, type: x.type, size: x.size, by: D().me, at: Date.now() }));
+  // Attachments upload once the task exists on the server.
+  const files = f.files.map(x => x.file).filter(Boolean);
+  const attach = t => files.length && commit().then(errs => !errs.length && handleFiles(files, { project: t.project, task: t.id }));
   const base = {
     title,
     project: f.project,
@@ -709,10 +717,10 @@ A.submitTask = () => {
             .trim()
         )
           t.desc = f.desc ? `<p>${esc(f.desc)}</p>` : '';
-        t.attachments.push(...files);
       })
     )
       return;
+    attach(t);
     S.ui.modals.pop();
     render();
     toast('Changes saved');
@@ -721,11 +729,11 @@ A.submitTask = () => {
   let t;
   if (
     !mutate(() => {
-      t = createTask({ ...base, desc: f.desc ? `<p>${esc(f.desc)}</p>` : '', attachments: files });
-      files.forEach(x => D().files.unshift({ ...x, project: t.project, task: t.id }));
+      t = createTask({ ...base, desc: f.desc ? `<p>${esc(f.desc)}</p>` : '' });
     })
   )
     return;
+  attach(t);
   if (f.more) {
     Object.assign(f, { title: '', desc: '', subtasks: [], files: [] });
     render();
@@ -875,34 +883,38 @@ A.previewFile = el => {
 export function handleFiles(files, ctx) {
   if (!files || !files.length) return;
   if (S.ui.offline) {
-    toast("Upload failed — you're offline.", { kind: 'err', action: 'Try again', onAction: () => {} });
+    toast("Upload failed — you're offline.", { kind: 'err', action: 'Try again', onAction: () => handleFiles(files, ctx) });
     return;
   }
   S.ui.uploads = S.ui.uploads || [];
   [...files].forEach(file => {
     const up = { id: uid('u'), name: file.name, size: fsize(file.size), project: ctx.project, task: ctx.task, pct: 0 };
     S.ui.uploads.push(up);
-    const iv = setInterval(() => {
-      up.pct = Math.min(100, up.pct + 9 + Math.round(Math.random() * 22));
-      const bar = document.getElementById('upbar-' + up.id),
-        pc = document.getElementById('upct-' + up.id);
-      if (bar) bar.style.setProperty('--p', up.pct / 100);
+    const q = new URLSearchParams({ project: ctx.project, name: file.name, ...(ctx.task ? { task: ctx.task } : {}) });
+    const done = () => (S.ui.uploads = S.ui.uploads.filter(x => x !== up));
+    upload(`/api/files?${q}`, file, p => {
+      up.pct = Math.min(99, Math.round(p * 100));
+      document.getElementById('upbar-' + up.id)?.style.setProperty('--p', up.pct / 100);
+      const pc = document.getElementById('upct-' + up.id);
       if (pc) pc.textContent = up.pct + '%';
-      if (up.pct >= 100) {
-        clearInterval(iv);
-        S.ui.uploads = S.ui.uploads.filter(x => x !== up);
-        const rec = { id: uid('f'), name: up.name, type: fileType(up.name), size: up.size, by: D().me, at: Date.now() };
-        D().files.unshift({ ...rec, project: up.project, task: up.task || null });
-        if (up.task) {
-          const t = task(up.task);
-          t.attachments.push(rec);
-          logAct('added a file to', t, up.name);
-        }
-        save();
+    })
+      .then(r => {
+        done();
+        applyRemote(
+          [
+            { c: 'files', id: r.file.id, v: r.file },
+            r.task && { c: 'tasks', id: r.task.id, v: r.task },
+            r.activity && { c: 'activity', id: r.activity.id, v: r.activity },
+          ].filter(Boolean),
+        );
         render();
         toast(`Uploaded ${up.name}`);
-      }
-    }, 220);
+      })
+      .catch(e => {
+        done();
+        render();
+        toast(`Couldn't upload ${up.name}. ${e.message}`, { kind: 'err', action: 'Try again', onAction: () => handleFiles([file], ctx) });
+      });
   });
   render();
 }
@@ -1000,7 +1012,7 @@ document.addEventListener('mousedown', e => {
   const ed = $('#d-desc');
   if (ed) {
     const t = task(ed.dataset.rte);
-    t.desc = ed.innerHTML;
+    t.desc = richHtml(ed.innerHTML);
     save();
   }
 });
@@ -1009,10 +1021,18 @@ document.addEventListener('input', e => {
   if (!ed) return;
   const t = task(ed.dataset.rte);
   if (t) {
-    t.desc = ed.innerHTML;
+    t.desc = richHtml(ed.innerHTML);
     t.updated = Date.now();
     save();
   }
+});
+// Pasted HTML is cut down to what the editor itself produces before it reaches the page.
+document.addEventListener('paste', e => {
+  if (!e.target.closest?.('[data-rte]')) return;
+  const html = e.clipboardData?.getData('text/html');
+  if (!html) return;
+  e.preventDefault();
+  document.execCommand('insertHTML', false, richHtml(html));
 });
 
 /* selection & bulk */
@@ -1388,7 +1408,8 @@ A.submitProject = () => {
           team: f.team,
           lead: f.lead,
           due: f.due,
-          members: [...new Set([...p.members, f.lead])],
+          // A new lead joins the project; leaving it alone doesn't touch the member list.
+          members: f.lead === p.lead ? p.members : [...new Set([...p.members, f.lead])],
         }),
       )
     ) {
@@ -1479,9 +1500,13 @@ A.delProject = el => {
     },
   });
 };
-A.requestAccess = el => {
-  const p = proj(el.dataset.id);
-  toast(`Access requested. We'll notify you when ${mem(p?.lead)?.name || 'the owner'} responds.`);
+A.requestAccess = async el => {
+  try {
+    const r = await post(`/api/projects/${encodeURIComponent(el.dataset.id)}/request-access`);
+    toast(r.already ? 'You already have access.' : `Access requested. ${r.to || 'The project lead'} will get a notification.`);
+  } catch (e) {
+    toast(e.message, { kind: 'err' });
+  }
 };
 
 /* sharing & invites */
@@ -1503,7 +1528,7 @@ A.shareAdd = el => {
   });
   S.ui.shareQ = '';
   render();
-  toast(`${m.name} can now edit ${p.name}`);
+  toast(`${m.name} can now ${m.role === 'Guest' ? 'comment on' : 'edit'} ${p.name}`);
 };
 A.shareInvite = () => {
   const m = S.ui.modals[S.ui.modals.length - 1];
@@ -1514,7 +1539,7 @@ A.shareInvite = () => {
     $('#share-in')?.focus();
     return;
   }
-  const ex = D().members.find(x => x.email.toLowerCase() === v.toLowerCase() || x.name.toLowerCase() === v.toLowerCase());
+  const ex = D().members.find(x => (x.email || '').toLowerCase() === v.toLowerCase() || x.name.toLowerCase() === v.toLowerCase());
   if (ex) {
     if (!p.members.includes(ex.id))
       mutate(() => {
@@ -1554,19 +1579,20 @@ IN.sharePerm = el => {
     mutate(() => {
       p.members = p.members.filter(x => x !== mid);
     });
-    toast(`Removed ${mem(mid).name}`, { action: 'Undo', onAction: () => restore(snap) });
+    toast(`Removed ${memName(mid)}`, { action: 'Undo', onAction: () => restore(snap) });
   } else {
     mutate(() => {
       p.perms = p.perms || {};
       p.perms[mid] = el.value;
     });
-    toast(`${mem(mid).name}: ${el.value}`, { ms: 1800 });
+    toast(`${memName(mid)}: ${el.value}`, { ms: 1800 });
   }
 };
 IN.shareAccess = el => {
   const p = proj(el.dataset.id);
   mutate(() => {
-    p.access = el.value;
+    p.private = el.value === 'private';
+    p.access = p.private ? 'private' : 'workspace';
   });
 };
 A.invite = () => {
@@ -1595,7 +1621,7 @@ A.submitInvite = () => {
     render();
     return;
   }
-  loadingBtn('inv-submit', 600, () => {
+  busy('inv-submit', async () => {
     if (
       !mutate(() =>
         list.forEach(e => {
@@ -1619,17 +1645,60 @@ A.submitInvite = () => {
       )
     )
       return;
+    const errs = await commit();
+    if (errs.length) {
+      S.ui.errors.invite = errs[0];
+      render();
+      return;
+    }
     S.ui.modals.pop();
     S.ui.errors = {};
     render();
     toast(`${list.length} invitation${list.length > 1 ? 's' : ''} sent`);
   });
 };
-A.copyInviteLink = () => copy(`${location.origin}${location.pathname}#signup`, 'Invite link copied');
-A.resendInvite = el => {
+/* A reusable link anyone can use to join as a Member. Copying makes a new one and retires the last. */
+A.copyInviteLink = async () => {
+  try {
+    const { link } = await post('/api/workspace/invite-link');
+    copy(link, 'Invite link copied. Anyone with it can join as a member.');
+  } catch (e) {
+    toast(e.message, { kind: 'err' });
+  }
+};
+/* Owner only: turn off someone's two-factor (a lost phone). The server asks for the Owner's password,
+   emails the person and signs them out everywhere. */
+A.reset2fa = el => {
+  const m = mem(el.dataset.id);
+  S.ui.pop = null;
+  if (!m) return;
+  openModal({
+    type: 'prompt',
+    title: `Reset two-factor for ${m.name}`,
+    label: 'Your password',
+    sub: `${m.name} is signed out everywhere and gets an email. They sign in with their password and can set up two-factor again.`,
+    password: true,
+    ok: 'Reset two-factor',
+    run: async pw => {
+      if (!pw) return;
+      try {
+        await post(`/api/members/${encodeURIComponent(m.id)}/reset-2fa`, { password: pw });
+        toast(`Two-factor turned off for ${m.name}`);
+      } catch (e) {
+        toast(e.message, { kind: 'err' });
+      }
+    },
+  });
+};
+A.resendInvite = async el => {
   S.ui.pop = null;
   render();
-  toast(`Invite resent to ${mem(el.dataset.id).email}`);
+  try {
+    await post(`/api/members/${encodeURIComponent(el.dataset.id)}/resend-invite`);
+    toast(`Invite resent to ${mem(el.dataset.id).email}`);
+  } catch (e) {
+    toast(e.message, { kind: 'err' });
+  }
 };
 A.viewProfile = el => go('member', { id: el.dataset.id });
 A.assignToMember = el => {
@@ -1812,58 +1881,22 @@ A.setSearch = el => {
 };
 
 /* workspace, account, prototype controls */
-A.signOut = () => {
-  S.ui.pop = null;
-  S.ui.palette = null;
-  S.ui.drawer = null;
-  S.ui.modals = [];
-  S.ui.auth = 'login';
-  S.ui.errors = {};
-  render();
-};
 A.shortcuts = () => {
   S.ui.pop = null;
   S.ui.palette = null;
   openModal({ type: 'shortcuts' });
 };
-A.startOnboarding = () => {
-  S.ui.pop = null;
-  S.ui.auth = 'onboarding';
-  S.ui.onb = 0;
-  render();
-};
 A.toggleOffline = () => {
   S.ui.offline = !S.ui.offline;
   S.ui.pop = null;
+  // Back online: send anything queued while "offline".
+  if (!S.ui.offline) retryNow();
   render();
   toast(S.ui.offline ? 'Offline mode on — edits will fail to save' : 'Back online', { kind: S.ui.offline ? 'err' : 'ok' });
 };
 A.retryOnline = el => {
   el.classList.add('is-loading');
-  setTimeout(() => {
-    S.ui.offline = false;
-    render();
-    toast('Reconnected. All changes are synced.');
-  }, 700);
-};
-A.resetDemo = () => {
-  S.ui.pop = null;
-  confirmDlg({
-    title: 'Reset demo data?',
-    body: 'All projects, tasks, and settings in this browser go back to the original sample workspace.',
-    ok: 'Reset data',
-    danger: true,
-    icon: 'rotate-ccw',
-    run: () => {
-      S.data = seed();
-      S.views = {};
-      S.prefs = { ...DEFAULT_PREFS, theme: S.prefs.theme };
-      S.ui.drawer = null;
-      save();
-      go('home');
-      toast('Demo data restored');
-    },
-  });
+  retryNow();
 };
 A.demoToast = el => {
   const v = el.dataset.v;
@@ -1918,7 +1951,7 @@ IN.confirmText = el => {
 };
 A.promptSubmit = () => {
   const m = S.ui.modals[S.ui.modals.length - 1];
-  const v = $('#prompt-in').value.trim();
+  const v = m.password ? $('#prompt-in').value : $('#prompt-in').value.trim();
   S.ui.modals.pop();
   render();
   m.run(v);
@@ -1934,6 +1967,13 @@ IN.npToggle = el => {
   D().notifPrefs[el.dataset.k] = el.checked;
   save();
   toast('Notification preferences saved', { ms: 1500 });
+  // Push toggles deliver through this browser's push subscription, which needs permission.
+  if (el.checked && el.dataset.k.startsWith('push_'))
+    enablePush({ prompt: true }).then(state => {
+      if (state === 'denied') toast('Notifications are blocked for this site. Allow them in your browser settings.', { kind: 'err', ms: 6000 });
+      else if (state === 'failed') toast("Couldn't turn on push notifications in this browser.", { kind: 'err' });
+      render();
+    });
 };
 IN.prefSel = el => {
   const k = el.dataset.k;
@@ -1953,13 +1993,10 @@ A.saveWorkspace = () => {
     toast("Workspace name can't be empty", { kind: 'err' });
     return;
   }
-  loadingBtn('ws-save', 600, () => {
-    if (
-      mutate(() => {
-        D().ws.name = n;
-      })
-    )
-      toast('Workspace settings saved');
+  busy('ws-save', async () => {
+    if (!mutate(() => (D().ws.name = n))) return;
+    const errs = await commit();
+    toast(errs[0] || 'Workspace settings saved', errs.length ? { kind: 'err' } : {});
   });
 };
 A.avColor = el => {
@@ -1976,16 +2013,18 @@ A.saveProfile = () => {
   }
   S.ui.errors.pname2 = null;
   const tt = $('#pf-title').value.trim();
-  loadingBtn('pf-save', 600, () => {
+  busy('pf-save', async () => {
     if (
-      mutate(() => {
+      !mutate(() => {
         S.prefs.name = n;
         S.prefs.title = tt;
         me().name = n;
         me().title = tt;
       })
     )
-      toast('Profile updated');
+      return;
+    const errs = await commit();
+    toast(errs[0] || 'Profile updated', errs.length ? { kind: 'err' } : {});
   });
 };
 IN.pwStrength = el => {
@@ -1996,84 +2035,6 @@ IN.pwStrength = el => {
   if (m) m.replaceWith(tmp.firstElementChild || document.createTextNode(''));
   else if (tmp.firstElementChild) el.after(tmp.firstElementChild);
 };
-A.savePassword = () => {
-  const e = (S.ui.errors = {});
-  const cur = $('#pw-cur').value,
-    nw = $('#pw-new').value,
-    cf = $('#pw-conf').value;
-  S.ui.pwDone = false;
-  if (!cur) e.pwCur = 'Enter your current password';
-  if (nw.length < 10 || !/[0-9\W]/.test(nw)) e.pwNew = 'Use at least 10 characters, including a number or symbol';
-  if (nw !== cf) e.pwConf = "Passwords don't match";
-  if (Object.keys(e).length) {
-    render();
-    return;
-  }
-  loadingBtn('pw-save', 800, () => {
-    S.ui.pwDone = true;
-    S.ui.pwNew = '';
-    render();
-    toast('Password updated');
-  });
-};
-A.revokeSession = el => {
-  mutate(() => {
-    D().sessions = D().sessions.filter(s => s.id !== el.dataset.id);
-  });
-  toast('Session signed out');
-};
-A.revokeAll = () =>
-  confirmDlg({
-    title: 'Sign out of all other sessions?',
-    body: "You'll stay signed in on this device. Other devices will need to sign in again.",
-    ok: 'Sign out others',
-    danger: true,
-    icon: 'log-out',
-    run: () => {
-      mutate(() => {
-        D().sessions = D().sessions.filter(s => s.cur);
-      });
-      toast('Signed out of other sessions');
-    },
-  });
-A.setup2fa = () => {
-  S.ui.tfaSetup = true;
-  S.ui.errors = {};
-  render();
-};
-A.cancel2fa = () => {
-  S.ui.tfaSetup = false;
-  render();
-};
-A.verify2fa = () => {
-  const v = $('#tfa-code').value.trim();
-  if (!/^\d{6}$/.test(v)) {
-    S.ui.errors.tfa = 'Enter the 6-digit code from your app';
-    render();
-    return;
-  }
-  S.ui.errors = {};
-  mutate(() => {
-    D().tfa = true;
-    S.ui.tfaSetup = false;
-  });
-  toast('Two-factor authentication enabled');
-};
-A.disable2fa = () =>
-  confirmDlg({
-    title: 'Turn off two-factor authentication?',
-    body: 'Your account will be protected by your password only.',
-    ok: 'Turn off',
-    danger: true,
-    icon: 'shield-off',
-    run: () => {
-      mutate(() => {
-        D().tfa = false;
-      });
-      toast('Two-factor authentication turned off');
-    },
-  });
-
 /* auth */
 A.auth = el => {
   S.ui.auth = el.dataset.v;
@@ -2093,109 +2054,6 @@ A.toggleShowPw = () => {
   }
 };
 export const EMAIL_RE = /^\S+@\S+\.\S+$/;
-export function enterApp(msg) {
-  S.ui.auth = null;
-  S.ui.errors = {};
-  go(S.prefs.home || 'home');
-  toast(msg);
-}
-A.doLogin = () => {
-  const e = (S.ui.errors = {});
-  const em = $('#l-email').value.trim(),
-    pw = $('#l-pw').value;
-  S.ui.af.email = em;
-  if (!em) e.email = 'Enter your email address';
-  else if (!EMAIL_RE.test(em)) e.email = 'Enter a valid email, like name@company.com';
-  if (!pw) e.pw = 'Enter your password';
-  if (Object.keys(e).length) {
-    render();
-    (e.email ? $('#l-email') : $('#l-pw'))?.focus();
-    if (!e.email) $('#l-pw').value = pw;
-    return;
-  }
-  loadingBtn('login-btn', 750, () => enterApp(`Signed in as ${em}`));
-};
-A.socialAuth = el => {
-  el.classList.add('is-loading');
-  setTimeout(() => enterApp(`Signed in with ${el.dataset.v}`), 800);
-};
-A.doSignup = () => {
-  const e = (S.ui.errors = {});
-  const nm = $('#s-name').value.trim(),
-    em = $('#s-email').value.trim(),
-    pw = $('#s-pw').value;
-  S.ui.af.name = nm;
-  S.ui.af.email = em;
-  if (!nm) e.name = 'Enter your name';
-  if (!EMAIL_RE.test(em)) e.email = 'Enter a valid work email';
-  if (pw.length < 10 || !/[0-9\W]/.test(pw)) e.pw = 'Use at least 10 characters, including a number or symbol';
-  if (Object.keys(e).length) {
-    render();
-    $('#s-email').value = em;
-    return;
-  }
-  loadingBtn('signup-btn', 800, () => {
-    S.ui.auth = 'verify';
-    startResend();
-    render();
-  });
-};
-export function startResend() {
-  S.ui.resendT = 30;
-  clearInterval(startResend._i);
-  startResend._i = setInterval(() => {
-    S.ui.resendT--;
-    const el = $('#resend-t');
-    if (el) el.textContent = S.ui.resendT;
-    if (S.ui.resendT <= 0) {
-      clearInterval(startResend._i);
-      if (S.ui.auth === 'verify') render();
-    }
-  }, 1000);
-}
-A.resend = el => {
-  if (el.dataset.v === 'verify') {
-    startResend();
-    render();
-    toast(`Verification email sent to ${S.ui.af.email}`);
-  } else toast(`Reset link sent to ${S.ui.af.email}`);
-};
-A.verified = () => {
-  S.ui.auth = 'onboarding';
-  S.ui.onb = 0;
-  S.ui.onbData.ws = '';
-  render();
-};
-A.doForgot = () => {
-  const em = $('#f-email').value.trim();
-  S.ui.af.email = em;
-  S.ui.errors = {};
-  if (!EMAIL_RE.test(em)) {
-    S.ui.errors.email = 'Enter the email you use to sign in';
-    render();
-    return;
-  }
-  loadingBtn('forgot-btn', 700, () => {
-    S.ui.auth = 'forgot-sent';
-    render();
-  });
-};
-A.doReset = () => {
-  const a = $('#r-pw').value,
-    b = $('#r-pw2').value;
-  const e = (S.ui.errors = {});
-  if (a.length < 10 || !/[0-9\W]/.test(a)) e.pw = 'Use at least 10 characters, including a number or symbol';
-  if (a !== b) e.pw2 = "Passwords don't match";
-  if (Object.keys(e).length) {
-    render();
-    return;
-  }
-  loadingBtn('reset-btn', 700, () => {
-    S.ui.auth = 'reset-done';
-    S.ui.pwNew = '';
-    render();
-  });
-};
 
 /* onboarding */
 A.onbSet = el => {
