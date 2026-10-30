@@ -3,7 +3,7 @@ import { iso, isPast, setTimeZone, today, uid } from './utils.js';
 import { DEFAULT_TZ, PCOLORS, TEAMS_SEED, validTz } from './constants.js';
 import { seed } from '../data/seed.js';
 
-export const STORE_KEY = 'gr8r.v2';
+export const STORE_KEY = 'gr8r.v3';
 export const DEFAULT_PREFS = {
   theme: 'system',
   accent: 'indigo',
