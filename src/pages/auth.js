@@ -101,8 +101,7 @@ export function renderOnboarding() {
   if (st === 1) {
     const e = S.ui.errors.ws;
     body = `<h1>Create your workspace</h1><p class="sub">A workspace is where your team's projects live.</p>
-    <div class="field"><label class="label" for="o-ws">Workspace name</label><input class="input input-lg ${e ? 'is-error' : ''}" id="o-ws" data-in="onbWs" value="${esc(o.ws)}" placeholder="e.g. Gr8r Studio" autofocus>${e ? `<span class="err">${ic('circle-alert', 12)}${e}</span>` : ''}</div>
-    <div class="field"><label class="label" for="o-url">Workspace URL</label><div class="row" style="gap:0"><span class="input input-lg" style="width:auto;background:var(--surface-2);border-right:0;border-radius:6px 0 0 6px;display:flex;align-items:center;color:var(--text-2)">gr8rstudio.com/</span><input class="input input-lg" id="o-url" value="${esc(o.url || '')}" data-in="onbUrl" style="border-radius:0 6px 6px 0" placeholder="gr8rstudio"></div>${o.url ? `<span class="hint" style="color:var(--green);display:flex;gap:4px;align-items:center">${ic('check', 12)}gr8rstudio.com/${esc(o.url)} is available</span>` : ''}</div>${nav()}`;
+    <div class="field"><label class="label" for="o-ws">Workspace name</label><input class="input input-lg ${e ? 'is-error' : ''}" id="o-ws" data-in="onbWs" value="${esc(o.ws)}" placeholder="e.g. Gr8r Studio" autofocus>${e ? `<span class="err">${ic('circle-alert', 12)}${e}</span>` : ''}</div>${nav()}`;
   }
   if (st === 2)
     body = `<h1>How does your team work?</h1><p class="sub">We'll set your default project view.</p><div class="opts" role="radiogroup" style="grid-template-columns:repeat(2,minmax(0,1fr))">${[
@@ -126,7 +125,7 @@ export function renderOnboarding() {
     const n = (o.invites || '').split(',').filter(x => x.includes('@')).length;
     body = `<div style="display:flex;justify-content:center"><span class="ftype ready-badge" style="--c:var(--green);width:48px;height:48px;border-radius:12px">${ic('circle-check', 22)}</span></div><h1>Your workspace is ready</h1><p class="sub">Here's what we set up for you.</p>
     <div class="panel">${[
-      ['building-2', `Workspace “${esc(o.ws || 'My Workspace')}”`, 'gr8rstudio.com/' + esc(o.url || 'workspace')],
+      ['building-2', `Workspace “${esc(o.ws || 'My Workspace')}”`, 'Your projects, tasks, and files live here'],
       [
         TEMPLATES.find(t => t.id === o.tmpl)?.icon || 'folder',
         `Project “${esc(o.proj)}”`,

@@ -1,6 +1,6 @@
 /* ---------------- COMMAND PALETTE ---------------- */
 import { MOD, clamp, esc } from '../core/utils.js';
-import { LOGO, ic, wsLogo } from '../core/icons.js';
+import { LOGO, ic } from '../core/icons.js';
 import { PSTAT } from '../core/constants.js';
 import { D, S, allTasks, pColor, proj, save, task } from '../core/store.js';
 import { FT, av, hl, stIcon } from '../ui/helpers.js';
@@ -35,15 +35,6 @@ export function commands() {
     { id: 'c-set', name: 'Open settings', icon: 'settings', kbd: 'G S', run: () => go('settings') },
     { id: 'c-app', name: 'Appearance settings', icon: 'palette', run: () => go('settings', { sec: 'appearance' }) },
     {
-      id: 'c-ws',
-      name: 'Switch workspace…',
-      icon: 'arrow-left-right',
-      run: () => {
-        S.ui.palette = { q: '', mode: 'ws', hl: 0 };
-        render();
-      },
-    },
-    {
       id: 'c-dark',
       name: effectiveDark() ? 'Switch to light mode' : 'Switch to dark mode',
       icon: effectiveDark() ? 'sun' : 'moon',
@@ -61,15 +52,6 @@ export function paletteItems() {
   const q = pl.q.trim();
   const ql = q.toLowerCase();
   const groups = [];
-  if (pl.mode === 'ws') {
-    groups.push({
-      name: 'Switch workspace',
-      items: D()
-        .workspaces.filter(w => !q || w.name.toLowerCase().includes(ql))
-        .map(w => ({ html: `${wsLogo(w, 20)}`, name: w.name, sub: w.plan + ' plan', run: () => A.switchWs({ dataset: { v: w.id } }) })),
-    });
-    return groups;
-  }
   if (pl.mode === 'cmd') {
     const cmds = commands().filter(c => !q || c.name.toLowerCase().includes(ql));
     if (!q) {
@@ -194,7 +176,7 @@ export function paletteHtml() {
   pl._flat = flat;
   pl.hl = clamp(pl.hl, 0, Math.max(flat.length - 1, 0));
   let idx = 0;
-  const ph = pl.mode === 'search' ? 'Search tasks, projects, people, files, comments…' : pl.mode === 'ws' ? 'Find a workspace…' : 'Type a command or search…';
+  const ph = pl.mode === 'search' ? 'Search tasks, projects, people, files, comments…' : 'Type a command or search…';
   return `<div class="palette" role="dialog" aria-modal="true" aria-label="Command menu">
     <div class="pal-in">${ic(pl.mode === 'search' ? 'search' : 'command', 17)}${pl.mode !== 'cmd' ? `<span class="badge" style="flex-shrink:0">${pl.mode === 'search' ? 'Search' : 'Workspace'}</span>` : ''}<input id="pal-in" data-in="palQ" value="${esc(pl.q)}" placeholder="${ph}" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="pal-list" aria-activedescendant="pi-${pl.hl}"><kbd>Esc</kbd></div>
     ${

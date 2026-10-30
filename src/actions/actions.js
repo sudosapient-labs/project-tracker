@@ -462,7 +462,7 @@ A.copyLink = el => {
           : d.id && proj(d.id)
             ? `project/${proj(d.id).key.toLowerCase()}`
             : '';
-  copy(`https://gr8rstudio.com/${D().ws.url}/${path}`);
+  copy(`${location.origin}${location.pathname}#${path}`);
 };
 A.copyText = el => copy(el.dataset.text, 'Copied to clipboard');
 A.copyEmail = el => {
@@ -1550,7 +1550,7 @@ A.submitInvite = () => {
     toast(`${list.length} invitation${list.length > 1 ? 's' : ''} sent`);
   });
 };
-A.copyInviteLink = () => copy(`https://gr8rstudio.com/join/${D().ws.url}-7f3k2`, 'Invite link copied');
+A.copyInviteLink = () => copy(`${location.origin}${location.pathname}#signup`, 'Invite link copied');
 A.resendInvite = el => {
   S.ui.pop = null;
   render();
@@ -1737,22 +1737,6 @@ A.setSearch = el => {
 };
 
 /* workspace, account, prototype controls */
-A.switchWs = el => {
-  const w = D().workspaces.find(x => x.id === el.dataset.v);
-  S.ui.pop = null;
-  D().ws = { name: w.name, url: w.name.toLowerCase().replace(/[^a-z0-9]+/g, ''), c: w.c, brand: !!w.brand };
-  save();
-  go('home');
-  toast(`Switched to ${w.name}`);
-};
-A.newWorkspace = () => {
-  S.ui.pop = null;
-  S.ui.auth = 'onboarding';
-  S.ui.onb = 1;
-  S.ui.onbData.ws = '';
-  S.ui.onbData.url = '';
-  render();
-};
 A.signOut = () => {
   S.ui.pop = null;
   S.ui.palette = null;
@@ -1891,10 +1875,6 @@ A.wsColor = el => {
 };
 A.saveWorkspace = () => {
   const n = $('#ws-name').value.trim();
-  const u = $('#ws-url')
-    .value.trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '-');
   if (!n) {
     toast("Workspace name can't be empty", { kind: 'err' });
     return;
@@ -1902,11 +1882,7 @@ A.saveWorkspace = () => {
   loadingBtn('ws-save', 600, () => {
     if (
       mutate(() => {
-        const old = D().ws.name;
         D().ws.name = n;
-        D().ws.url = u || D().ws.url;
-        const w = D().workspaces.find(x => x.name === old);
-        if (w) w.name = n;
       })
     )
       toast('Workspace settings saved');
@@ -2039,22 +2015,6 @@ A.disable2fa = () =>
       toast('Two-factor authentication turned off');
     },
   });
-A.changePlan = el => {
-  const v = el.dataset.v;
-  const price = { Free: 0, Team: 12, Business: 24 }[v];
-  confirmDlg({
-    title: `${v === 'Free' ? 'Downgrade' : 'Upgrade'} to ${v}?`,
-    body: `${D().members.length} members × $${price}/month = <b>$${D().members.length * price}/month</b>, prorated from today and billed to Visa ending 4242.`,
-    ok: v === 'Free' ? 'Downgrade' : `Upgrade to ${v}`,
-    icon: 'gem',
-    run: () => {
-      mutate(() => {
-        D().plan = v;
-      });
-      toast(`You're now on the ${v} plan`);
-    },
-  });
-};
 
 /* auth */
 A.auth = el => {
@@ -2192,18 +2152,7 @@ A.onbSet = el => {
 IN.onbWs = el => {
   const o = S.ui.onbData;
   o.ws = el.value;
-  if (!o.urlTouched)
-    o.url = el.value
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
   if (S.ui.errors.ws && el.value.trim()) S.ui.errors.ws = null;
-  render();
-};
-IN.onbUrl = el => {
-  S.ui.onbData.url = el.value.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
-  S.ui.onbData.urlTouched = true;
   render();
 };
 IN.onbProj = el => {
@@ -2252,9 +2201,7 @@ A.onbFinish = () => {
   let p;
   mutate(() => {
     if (o.ws.trim()) {
-      const c = ['#2F2E2A', '#5A67D8', '#23918A', '#C54B78'][D().workspaces.length % 4];
-      D().ws = { name: o.ws.trim(), url: o.url || 'workspace', c };
-      if (!D().workspaces.some(w => w.name === D().ws.name)) D().workspaces.push({ id: uid('w'), name: D().ws.name, c, plan: 'Free' });
+      D().ws = { name: o.ws.trim(), c: '#5A67D8' };
     }
     S.prefs.defaultTab = { kanban: 'board', list: 'list', timeline: 'timeline', table: 'table' }[o.team] || 'board';
     const tm = TEMPLATES.find(t => t.id === o.tmpl) || TEMPLATES[2];

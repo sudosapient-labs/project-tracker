@@ -62,7 +62,6 @@ export function permsTable() {
     ['Invite members', 1, 1, 0, 0],
     ['Manage roles', 1, 1, 0, 0],
     ['Workspace settings', 1, 1, 0, 0],
-    ['Billing', 1, 0, 0, 0],
     ['Delete workspace', 1, 0, 0, 0],
   ];
   return `<div class="panel" style="overflow-x:auto"><table class="perm-t" style="min-width:560px"><thead><tr><th style="padding-left:14px">Permission</th>${ROLES.map(r => `<th>${r}</th>`).join('')}</tr></thead><tbody>${rows
