@@ -500,7 +500,7 @@ export function seed() {
   const tmp = tk('t3');
   tmp.updated = minsAgo(38);
   return {
-    ws: { name: 'Gr8r Studio', c: '#1D1C1A', brand: true },
+    ws: { name: 'Sudo Sapient', c: '#1D1C1A', brand: true },
     me: 'm1',
     members,
     projects,
@@ -515,7 +515,7 @@ export function seed() {
     recentSearches: ['homepage', 'Sarah', 'wireframes'],
     sessions: [
       { id: 'se1', dev: 'MacBook Pro · Chrome', loc: 'San Francisco, US', at: 'Active now', cur: true },
-      { id: 'se2', dev: 'iPhone 15 · Gr8r app', loc: 'San Francisco, US', at: '2 hours ago' },
+      { id: 'se2', dev: 'iPhone 15 · Sudo Sapient app', loc: 'San Francisco, US', at: '2 hours ago' },
       { id: 'se3', dev: 'Windows · Edge', loc: 'Oakland, US', at: 'Sep 12' },
     ],
     tfa: false,

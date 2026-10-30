@@ -119,12 +119,13 @@ export const RULES = {
 
   projects: {
     personal: ['fav'],
-    serverOwned: ['key'],
+    serverOwned: ['key', 'last'],
     create(ctx, p) {
       notGuest(ctx, 'create projects');
       needMember(ctx, p.lead, 'project lead');
       while (ctx.db.get("SELECT 1 FROM projects WHERE json_extract(data, '$.key') = ?", p.key)) p.key += 'X';
       p.members = [...new Set([ctx.uid, ...(p.members || [])])].filter(m => ctx.repo.get('members', m));
+      p.last = 0;
       return p;
     },
     update(ctx, before, p, keys) {
@@ -229,8 +230,8 @@ export const RULES = {
       const link = issueToken(ctx.db, ctx.config, 'invite', m.email);
       ctx.mailer.queue({
         to: m.email,
-        subject: `${ctx.me.name} invited you to ${ws?.name || 'Gr8r Studio'}`,
-        intro: `${ctx.me.name} invited you to join ${ws?.name || 'their workspace'} on Gr8r Studio.`,
+        subject: `${ctx.me.name} invited you to ${ws?.name || 'Sudo Sapient'}`,
+        intro: `${ctx.me.name} invited you to join ${ws?.name || 'their workspace'} on Sudo Sapient.`,
         action: 'Accept invite',
         link,
         outro: 'The invite expires in 14 days.',

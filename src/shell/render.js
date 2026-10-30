@@ -147,7 +147,7 @@ export function tryFocus(key) {
 }
 export function pageTitle() {
   const u = S.ui;
-  if (u.auth) return 'Gr8r Studio';
+  if (u.auth) return 'Sudo Sapient';
   let t = ROUTE_NAMES[u.route] || 'Not found';
   if (u.route === 'project' && proj(u.params.id)) t = `${(PTABS.find(x => x[0] === u.params.tab) || [0, 'Saved view'])[1]} · ${proj(u.params.id).name}`;
   if (u.route === 'member' && mem(u.params.id)) t = mem(u.params.id).name;

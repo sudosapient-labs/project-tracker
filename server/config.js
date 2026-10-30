@@ -3,7 +3,7 @@
 export function loadConfig(env = process.env) {
   const nodeEnv = env.NODE_ENV || 'development';
   const prod = nodeEnv === 'production';
-  const smtpUrl = env.SMTP_URL || '';
+  const resendApiKey = env.RESEND_API_KEY || '';
   return {
     env: nodeEnv,
     prod,
@@ -15,8 +15,8 @@ export function loadConfig(env = process.env) {
     staticDir: env.STATIC_DIR || 'dist',
     serveStatic: env.SERVE_STATIC ? env.SERVE_STATIC === 'true' : prod,
     appUrl: (env.APP_URL || 'http://localhost:5173').replace(/\/$/, ''),
-    smtpUrl,
-    mailFrom: env.MAIL_FROM || 'Gr8r Studio <no-reply@localhost>',
+    resendApiKey,
+    mailFrom: env.MAIL_FROM || 'Sudo Sapient <no-reply@localhost>',
     // After the first account creates the workspace, new accounts need an invite unless this is on.
     allowOpenSignup: env.ALLOW_OPEN_SIGNUP === 'true',
     requireVerification: env.REQUIRE_EMAIL_VERIFICATION !== 'false',
@@ -25,7 +25,7 @@ export function loadConfig(env = process.env) {
     maxUploadBytes: (Number(env.MAX_UPLOAD_MB) || 250) * 1024 * 1024,
     // Without a mail transport, non-production API responses include the emailed link so the
     // verify / reset screens can offer it directly. Never on in production.
-    exposeEmailLinks: !prod && !smtpUrl,
+    exposeEmailLinks: !prod && !resendApiKey,
     rateLimit: env.DISABLE_RATE_LIMIT !== 'true',
   };
 }

@@ -1,4 +1,4 @@
-/* Development only: fill an empty database with the original demo workspace (Gr8r Studio) so the
+/* Development only: fill an empty database with the original demo workspace (Sudo Sapient) so the
    UI has realistic data to look at. Every active demo person can sign in with DEMO_PASSWORD.
 
    pnpm db:seed            seeds data/gr8r.db (or DATABASE_PATH)            */

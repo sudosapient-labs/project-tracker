@@ -4,6 +4,7 @@ import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import { requireAuth } from '../auth.js';
 import { parseBody } from '../lib/http.js';
+import { TIMEZONES } from '../../src/core/constants.js';
 import { bootstrap } from '../sync/bootstrap.js';
 
 const MAX_OPS = 500;
@@ -35,7 +36,16 @@ export function dataRoutes() {
     }
     if (views) patch.views = views;
     if (collapsed != null) patch.collapsed = collapsed;
-    c.var.repo.saveUserState(c.var.auth.member.id, patch);
+    const { repo, engine } = c.var;
+    repo.saveUserState(c.var.auth.member.id, patch);
+    // Show the person's local city on their profile, from their time-zone preference.
+    const city = TIMEZONES.some(z => z.id === prefs?.tz) && prefs.tz.split('/').pop().replace(/_/g, ' ');
+    const m = repo.get('members', c.var.auth.member.id);
+    if (city && m && m.tz !== city) {
+      m.tz = city;
+      repo.put('members', m);
+      engine.publish([{ c: 'members', id: m.id, v: m }]);
+    }
     return c.json({ ok: true });
   });
 

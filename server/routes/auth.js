@@ -127,8 +127,8 @@ export function authRoutes({ limit }) {
         if (link)
           mailer.queue({
             to: em,
-            subject: 'Verify your email for Gr8r Studio',
-            intro: `Hi ${name}, confirm this is your email address to finish setting up your Gr8r Studio account.`,
+            subject: 'Verify your email for Sudo Sapient',
+            intro: `Hi ${name}, confirm this is your email address to finish setting up your Sudo Sapient account.`,
             action: 'Verify email',
             link,
             outro: 'The link expires in 48 hours. If you didn’t create an account, you can ignore this email.',
@@ -181,8 +181,8 @@ export function authRoutes({ limit }) {
     const link = issueToken(db, config, 'verify', user.email, user.id);
     mailer.queue({
       to: user.email,
-      subject: 'Verify your email for Gr8r Studio',
-      intro: `Hi ${member.name}, confirm this is your email address to finish setting up your Gr8r Studio account.`,
+      subject: 'Verify your email for Sudo Sapient',
+      intro: `Hi ${member.name}, confirm this is your email address to finish setting up your Sudo Sapient account.`,
       action: 'Verify email',
       link,
       outro: 'The link expires in 48 hours.',
@@ -246,8 +246,8 @@ export function authRoutes({ limit }) {
     const link = issueToken(db, config, 'reset', user.email, user.id);
     mailer.queue({
       to: user.email,
-      subject: 'Reset your Gr8r Studio password',
-      intro: 'We got a request to reset the password for your Gr8r Studio account.',
+      subject: 'Reset your Sudo Sapient password',
+      intro: 'We got a request to reset the password for your Sudo Sapient account.',
       action: 'Choose a new password',
       link,
       outro: 'The link expires in 30 minutes. If you didn’t ask for this, you can ignore this email.',
@@ -321,8 +321,8 @@ export function authRoutes({ limit }) {
     if (user.totp_enabled) return c.json({ error: 'Two-factor authentication is already on.' }, 400);
     const secret = newTotpSecret();
     db.run('UPDATE users SET totp_secret = ? WHERE id = ?', secret, user.id);
-    const label = encodeURIComponent(`Gr8r Studio:${user.email}`);
-    const otpauth = `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent('Gr8r Studio')}&algorithm=SHA1&digits=6&period=30`;
+    const label = encodeURIComponent(`Sudo Sapient:${user.email}`);
+    const otpauth = `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent('Sudo Sapient')}&algorithm=SHA1&digits=6&period=30`;
     const qr = await QRCode.toString(otpauth, { type: 'svg', margin: 0, errorCorrectionLevel: 'M' });
     return c.json({ secret, otpauth, qr });
   });

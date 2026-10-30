@@ -92,7 +92,7 @@ export function settingsBody(sec, title) {
       );
     case 'appearance':
       return (
-        H('Customize how Gr8r looks on this device.') +
+        H('Customize how Sudo Sapient looks on this device.') +
         `
       <div class="sblock" style="margin-top:0"><h2>Theme</h2><div class="themecards" style="margin-top:12px" role="radiogroup" aria-label="Theme">${[
         ['light', 'Light'],
@@ -253,7 +253,7 @@ export function settingsBody(sec, title) {
     case 'notif-push':
       return (
         H(
-          `Desktop notifications while Gr8r Studio is open in a browser tab.${
+          `Desktop notifications while Sudo Sapient is open in a browser tab.${
             !window.Notification
               ? ' This browser doesn’t support them.'
               : Notification.permission === 'denied'
@@ -299,7 +299,7 @@ export function settingsBody(sec, title) {
         H('Personal defaults for how you work.') +
         srow(
           'Open on launch',
-          'The page you see when Gr8r opens.',
+          'The page you see when Sudo Sapient opens.',
           sel(
             'home',
             [

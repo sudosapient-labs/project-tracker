@@ -1854,6 +1854,8 @@ A.shortcuts = () => {
 A.toggleOffline = () => {
   S.ui.offline = !S.ui.offline;
   S.ui.pop = null;
+  // Back online: send anything queued while "offline".
+  if (!S.ui.offline) retryNow();
   render();
   toast(S.ui.offline ? 'Offline mode on — edits will fail to save' : 'Back online', { kind: S.ui.offline ? 'err' : 'ok' });
 };

@@ -12,7 +12,7 @@ const { app, mailer } = deps;
 
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, info => {
   console.info(`[api] listening on http://${info.address}:${info.port} (${config.env})`);
-  if (!config.smtpUrl) console.info('[api] SMTP_URL not set: emails are logged to this console instead of sent');
+  if (!config.resendApiKey) console.info('[api] RESEND_API_KEY not set: emails are logged to this console instead of sent');
 });
 
 const housekeeping = setInterval(() => {

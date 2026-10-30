@@ -100,7 +100,7 @@ describe('scheduled jobs', () => {
     await ada.sync([{ c: 'tasks', id: 't1', k: 'put', v: T('t1', { assignee: 'mbob' }) }]);
     const thu9 = Date.parse('2026-11-05T03:30:00Z'); // Thursday 09:00 in Kolkata
     t.db.run("UPDATE notifications SET created_at = ? WHERE user_id = 'mbob'", thu9 - 3_600_000);
-    const digests = () => mails('bob@example.com').filter(m => m.subject.startsWith('Your Gr8r Studio digest'));
+    const digests = () => mails('bob@example.com').filter(m => m.subject.startsWith('Your Sudo Sapient digest'));
 
     expect(runDigests(t, thu9 - 2.5 * 3_600_000)).toBe(0); // 06:30: too early
     expect(runDigests(t, thu9)).toBe(1);

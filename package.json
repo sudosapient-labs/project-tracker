@@ -2,7 +2,7 @@
   "name": "gr8r-studio",
   "version": "1.0.0",
   "private": true,
-  "description": "Gr8r Studio: a calm, structured project management workspace.",
+  "description": "Sudo Sapient: a calm, structured project management workspace.",
   "type": "module",
   "packageManager": "pnpm@12.16.1",
   "scripts": {
@@ -26,7 +26,6 @@
   "dependencies": {
     "@hono/node-server": "^1.19.0",
     "hono": "^4.9.0",
-    "nodemailer": "^7.0.0",
     "qrcode": "^1.5.4",
     "zod": "^4.1.0"
   },

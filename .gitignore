@@ -4,7 +4,9 @@ dist/
 .DS_Store
 __MACOSX/
 *.log
-.env*
+.env
+.env.*
+!.env.example
 data/
 test-results/
 playwright-report/

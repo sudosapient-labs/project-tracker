@@ -1,12 +1,14 @@
 /* Email: messages are queued in `outbox` inside the caller's transaction, then delivered.
-   With SMTP_URL set they go out through nodemailer; otherwise they are logged (and, outside
-   production, the link is handed back to the API caller so local flows still complete). */
-import nodemailer from 'nodemailer';
+   With RESEND_API_KEY set they go out through Resend's HTTP API; otherwise they are logged (and,
+   outside production, the link is handed back to the API caller so local flows still complete). */
 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const RESEND_URL = 'https://api.resend.com/emails';
+const MAX_ATTEMPTS = 5;
 
-export function createMailer(db, config, log = console) {
-  const transport = config.smtpUrl ? nodemailer.createTransport(config.smtpUrl) : null;
+/* `fetchImpl` is injectable so tests can stand in for Resend. */
+export function createMailer(db, config, log = console, fetchImpl = globalThis.fetch) {
+  const configured = !!config.resendApiKey;
   let draining = false;
 
   function queue({ to, subject, intro, action, link, outro = '' }) {
@@ -26,18 +28,39 @@ export function createMailer(db, config, log = console) {
     );
   }
 
+  /* Resend's Idempotency-Key makes a retried row (e.g. after a timeout) send at most once. */
+  async function sendViaResend(m) {
+    const res = await fetchImpl(RESEND_URL, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${config.resendApiKey}`,
+        'content-type': 'application/json',
+        'idempotency-key': `outbox-${m.id}-${m.created_at}`,
+      },
+      body: JSON.stringify({ from: config.mailFrom, to: [m.to_addr], subject: m.subject, text: m.body_text, html: m.body_html }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.ok) return;
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(`Resend ${res.status}: ${body.message || res.statusText}`);
+    // Rate limits and server errors are worth retrying; other 4xx (bad sender, unverified domain,
+    // invalid address) won't fix themselves.
+    err.permanent = res.status >= 400 && res.status < 500 && res.status !== 429;
+    throw err;
+  }
+
   async function drain() {
     if (draining) return;
     draining = true;
     try {
-      const rows = db.all('SELECT * FROM outbox WHERE sent_at IS NULL AND attempts < 5 ORDER BY id LIMIT 50');
+      const rows = db.all('SELECT * FROM outbox WHERE sent_at IS NULL AND attempts < ? ORDER BY id LIMIT 50', MAX_ATTEMPTS);
       for (const m of rows) {
         try {
-          if (transport) await transport.sendMail({ from: config.mailFrom, to: m.to_addr, subject: m.subject, text: m.body_text, html: m.body_html });
+          if (configured) await sendViaResend(m);
           else if (!config.test) log.info?.(`[mail] to=${m.to_addr} subject="${m.subject}" link=${m.link}`);
           db.run('UPDATE outbox SET sent_at = ?, attempts = attempts + 1, error = NULL WHERE id = ?', Date.now(), m.id);
         } catch (e) {
-          db.run('UPDATE outbox SET attempts = attempts + 1, error = ? WHERE id = ?', String(e.message || e), m.id);
+          db.run('UPDATE outbox SET attempts = ?, error = ? WHERE id = ?', e.permanent ? MAX_ATTEMPTS : m.attempts + 1, String(e.message || e), m.id);
           log.error?.(`[mail] failed to send to ${m.to_addr}: ${e.message}`);
         }
       }
@@ -46,5 +69,5 @@ export function createMailer(db, config, log = console) {
     }
   }
 
-  return { queue, drain, configured: !!transport };
+  return { queue, drain, configured };
 }

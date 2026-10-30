@@ -297,3 +297,17 @@ describe('collaboration endpoints', () => {
     expect((await bob.get('/api/bootstrap')).body.data.tasks).toHaveLength(1);
   });
 });
+
+describe('derived fields', () => {
+  it("reports how long ago a project changed and shows a member's city from their time zone", async () => {
+    const { t, owner, ownerId } = await team();
+    await owner.sync([put('projects', project('p1', { last: 999 }))]);
+    t.db.run("UPDATE projects SET updated_at = ? WHERE id = 'p1'", Date.now() - 90 * 60_000);
+    expect((await owner.get('/api/bootstrap')).body.data.projects[0].last).toBe(90);
+    await owner.sync([put('activity', { id: 'a1', by: ownerId, verb: 'created', task: null, project: 'p1', at: Date.now(), extra: '' })]);
+    expect((await owner.get('/api/bootstrap')).body.data.projects[0].last).toBe(0);
+
+    await owner.put('/api/me/state', { prefs: { tz: 'America/Los_Angeles' } });
+    expect((await owner.get('/api/bootstrap')).body.data.members.find(m => m.id === ownerId).tz).toBe('Los Angeles');
+  });
+});

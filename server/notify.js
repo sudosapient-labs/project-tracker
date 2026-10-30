@@ -58,13 +58,13 @@ export function notify(ctx, to, reason, n, task = null) {
 
   if (ctx.mailer && EMAIL[reason] && prefs[EMAIL[reason]]) {
     const t = task || (n.task && repo.get('tasks', n.task));
-    const who = ctx.uid ? repo.get('members', ctx.uid)?.name || 'Someone' : 'Gr8r Studio';
+    const who = ctx.uid ? repo.get('members', ctx.uid)?.name || 'Someone' : 'Sudo Sapient';
     const subject = t ? `${who} ${n.text} ${t.key}: ${t.title}` : `${who} ${n.text}`;
     ctx.mailer.queue({
       to: m.email,
       subject: subject.slice(0, 200),
       intro: n.snippet ? `${subject}\n\n“${n.snippet}”` : subject,
-      action: t ? 'Open task' : 'Open Gr8r Studio',
+      action: t ? 'Open task' : 'Open Sudo Sapient',
       link: `${ctx.config.appUrl}/#${t ? `task/${t.key}` : 'inbox'}`,
       outro: 'You can change which emails you get in Settings → Notifications.',
     });

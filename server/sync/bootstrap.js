@@ -10,13 +10,21 @@ const NOTIF_LIMIT = 500;
 export function bootstrap({ db, repo }, auth) {
   const uid = auth.member.id;
   const favs = repo.favorites(uid);
-  const projects = repo.all('projects', 'ORDER BY created_at, rowid').map(p => ({ ...p, fav: favs.projects.has(p.id) }));
+  const now = Date.now();
+  // `last`: minutes since anything happened in the project (activity, or an edit to the project).
+  const touched = new Map(
+    db.all('SELECT project_id, MAX(created_at) t FROM activity WHERE project_id IS NOT NULL GROUP BY project_id').map(r => [r.project_id, r.t]),
+  );
+  const projects = db.all('SELECT data, updated_at FROM projects ORDER BY created_at, rowid').map(r => {
+    const p = JSON.parse(r.data);
+    const t = Math.max(r.updated_at, touched.get(p.id) || 0);
+    return { ...p, fav: favs.projects.has(p.id), last: Math.max(0, Math.round((now - t) / 60000)) };
+  });
   const vis = JSON.stringify(projects.filter(p => canSee(p, auth.member)).map(p => p.id));
   const IN = 'project_id IN (SELECT value FROM json_each(?))';
   const OPT = `(project_id IS NULL OR ${IN})`;
 
   const lastSeen = new Map(db.all('SELECT user_id, MAX(last_seen_at) t FROM sessions GROUP BY user_id').map(r => [r.user_id, r.t]));
-  const now = Date.now();
   const members = repo.all('members', 'ORDER BY created_at, rowid').map(m => ({
     ...m,
     last: m.status === 'invited' ? null : lastSeen.has(m.id) ? Math.max(0, Math.round((now - lastSeen.get(m.id)) / 60000)) : null,

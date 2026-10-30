@@ -44,8 +44,8 @@ export function workspaceRoutes() {
       const l = issueToken(db, config, 'invite', m.email);
       mailer.queue({
         to: m.email,
-        subject: `${me.name} invited you to ${ws?.name || 'Gr8r Studio'}`,
-        intro: `${me.name} invited you to join ${ws?.name || 'their workspace'} on Gr8r Studio.`,
+        subject: `${me.name} invited you to ${ws?.name || 'Sudo Sapient'}`,
+        intro: `${me.name} invited you to join ${ws?.name || 'their workspace'} on Sudo Sapient.`,
         action: 'Accept invite',
         link: l,
         outro: 'The invite expires in 14 days.',

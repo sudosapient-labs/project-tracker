@@ -70,7 +70,7 @@ export function runDigests({ db, repo, mailer, config }, now = Date.now()) {
     };
     mailer.queue({
       to: m.email,
-      subject: `Your Gr8r Studio digest: ${unread.length} update${unread.length > 1 ? 's' : ''}`,
+      subject: `Your Sudo Sapient digest: ${unread.length} update${unread.length > 1 ? 's' : ''}`,
       intro: `Here's what you missed in the last day:\n\n${unread.slice(0, 15).map(line).join('\n')}${unread.length > 15 ? `\n…and ${unread.length - 15} more` : ''}`,
       action: 'Open your inbox',
       link: `${config.appUrl}/#inbox`,

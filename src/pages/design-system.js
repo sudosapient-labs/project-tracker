@@ -15,7 +15,7 @@ export function pageSystem() {
   const states = ['', 'state-hover', 'state-active', 'state-focus', 'dis', 'is-loading'];
   const stN = ['Default', 'Hover', 'Active', 'Focus', 'Disabled', 'Loading'];
   return `<div class="page">
-    <div class="ph"><div><h1>Design system</h1><p>Tokens and components that make up Gr8r. Switch themes to see both palettes.</p></div><div class="acts"><div class="seg">${[
+    <div class="ph"><div><h1>Design system</h1><p>Tokens and components that make up Sudo Sapient. Switch themes to see both palettes.</p></div><div class="acts"><div class="seg">${[
       ['light', 'sun'],
       ['dark', 'moon'],
       ['system', 'monitor'],
@@ -122,7 +122,7 @@ export function pageSystem() {
         .join('')}</div></div>
     <div class="ds-sec"><h2>Navigation</h2><div class="grid2" style="grid-template-columns:260px 1fr">
       <div class="side" style="border:1px solid var(--border);border-radius:var(--r-lg);padding:8px;height:auto">${sItem('home', 'Home', 'house')}<button class="sitem on">${ic('inbox', 16)}<span>Inbox (active)</span><span class="ct dotc">3</span></button><button class="sitem state-hover">${ic('circle-check', 16)}<span>My Tasks (hover)</span></button><div class="sitem"><span class="pico" style="--c:${PCOLORS.indigo}">${ic('globe', 12)}</span><span>Website Redesign</span><span class="sdot" style="background:var(--blue)"></span></div></div>
-      <div class="col" style="gap:14px"><nav class="crumbs" style="border:1px solid var(--border);border-radius:var(--r);padding:6px"><button>Gr8r Studio</button><span class="sep">/</span><button>Projects</button><span class="sep">/</span><button class="cur">Website Redesign</button></nav>
+      <div class="col" style="gap:14px"><nav class="crumbs" style="border:1px solid var(--border);border-radius:var(--r);padding:6px"><button>Sudo Sapient</button><span class="sep">/</span><button>Projects</button><span class="sep">/</span><button class="cur">Website Redesign</button></nav>
       <div class="tabs">${['Overview', 'Board', 'List', 'Table'].map((t, i) => `<button class="tab ${i === 1 ? 'on' : ''}">${t}</button>`).join('')}</div>
       <div class="row"><div class="seg"><button class="on">${ic('layout-grid', 13)}Grid</button><button>${ic('list', 13)}List</button><button>${ic('table-2', 13)}Table</button></div><span class="chip">${ic('circle-dot', 12)}<b>Status</b> is <span>In Progress</span><span class="ibtn">${ic('x', 12)}</span></span></div></div></div></div>
     <div class="ds-sec"><h2>Data display</h2><div class="grid2" style="grid-template-columns:300px 1fr">
@@ -145,7 +145,7 @@ export function pageSystem() {
 export function pageStates() {
   const card = (cap, icon, inner) => `<div class="panel"><div class="cap">${ic(icon, 13)}${cap}</div>${inner}</div>`;
   return `<div class="page wide" style="max-width:1240px">
-    <div class="ph"><div><h1>System states</h1><p>Empty, loading, error, and confirmation states used throughout Gr8r.</p></div><div class="acts"><button class="btn btn-secondary" data-a="toggleOffline">${ic(S.ui.offline ? 'wifi' : 'wifi-off', 14)}${S.ui.offline ? 'Go back online' : 'Simulate offline'}</button></div></div>
+    <div class="ph"><div><h1>System states</h1><p>Empty, loading, error, and confirmation states used throughout Sudo Sapient.</p></div><div class="acts"><button class="btn btn-secondary" data-a="toggleOffline">${ic(S.ui.offline ? 'wifi' : 'wifi-off', 14)}${S.ui.offline ? 'Go back online' : 'Simulate offline'}</button></div></div>
     <h2 class="sec" style="margin:8px 0 10px">Empty states</h2>
     <div class="states-grid">
       ${card('No projects', 'folder-kanban', empty('folder-kanban', 'No projects yet', 'Create your first project to start organizing your work.', `<button class="btn btn-primary btn-sm" data-a="newProject">${ic('plus', 14)}Create project</button>`))}
