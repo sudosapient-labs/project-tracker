@@ -1790,7 +1790,6 @@ A.resetDemo = () => {
     },
   });
 };
-A.toastInfo = el => toast(el.dataset.msg, { kind: 'info' });
 A.demoToast = el => {
   const v = el.dataset.v;
   if (v === 'err') toast("Your changes couldn't be saved.", { kind: 'err', action: 'Try again', onAction: () => toast('Saved') });
@@ -2090,7 +2089,6 @@ A.verified = () => {
   S.ui.auth = 'onboarding';
   S.ui.onb = 0;
   S.ui.onbData.ws = '';
-  S.ui.onbData.url = '';
   render();
 };
 A.doForgot = () => {

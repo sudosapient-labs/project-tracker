@@ -54,7 +54,7 @@ import './features/archive.js';
 import './actions/teams.js';
 import './actions/subtasks.js';
 import './actions/archive.js';
-import { S, D, allTasks } from './core/store.js';
+import { S, D, allTasks, canSee, proj } from './core/store.js';
 import { A } from './actions/actions.js';
 import { ROUTE_NAMES, render, go } from './shell/render.js';
 
@@ -73,7 +73,12 @@ import { ROUTE_NAMES, render, go } from './shell/render.js';
   else if (h && ROUTE_NAMES[h]) S.ui.route = h;
   else S.ui.route = S.prefs.home || 'home';
   // Deep links written by A.copyLink: #task/KEY, #project/key, #file/id
-  const [kind, ref] = h.split('/').map(decodeURIComponent);
+  let kind, ref;
+  try {
+    [kind, ref] = h.split('/').map(decodeURIComponent);
+  } catch {
+    /* malformed escape in the hash: boot normally */
+  }
   const p = kind === 'project' && D().projects.find(x => x.key.toLowerCase() === ref);
   if (p) {
     S.ui.route = 'project';
@@ -82,7 +87,8 @@ import { ROUTE_NAMES, render, go } from './shell/render.js';
   render();
   const t = kind === 'task' && allTasks().find(x => x.key === ref);
   if (t) A.openTask({ dataset: { id: t.id } });
-  if (kind === 'file' && ref) A.previewFile({ dataset: { id: ref } });
+  const f = kind === 'file' && D().files.find(x => x.id === ref);
+  if (f && canSee(proj(f.project))) A.previewFile({ dataset: { id: f.id } });
 })();
 
 // Dev-only handle for debugging and screenshot tooling; stripped from production builds.
