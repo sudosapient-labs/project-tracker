@@ -38,7 +38,7 @@ db.tx(() => {
       db.run('INSERT INTO users (id, email, password_hash, email_verified_at, created_at) VALUES (?, ?, ?, ?, ?)', m.id, email, hash, now, now);
   }
   for (const { fav, ...p } of d.projects) {
-    repo.put('projects', { ...p, seq: 300 });
+    repo.put('projects', { ...p, private: !!p.private, access: p.private ? 'private' : 'workspace', seq: 300 });
     if (fav) repo.setFavorite(d.me, 'projects', p.id, true);
   }
   for (const { fav, ...t } of d.tasks) {

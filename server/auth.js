@@ -4,7 +4,9 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { newId, sha256, token } from './lib/crypto.js';
 
 export const COOKIE = 'gr8r_sid';
+export const DEVICE_COOKIE = 'gr8r_dev';
 const DAY = 86_400_000;
+const DEVICE_MS = 365 * DAY;
 const REMEMBER_MS = 30 * DAY;
 const SESSION_MS = DAY;
 const TOUCH_MS = 60_000;
@@ -36,6 +38,33 @@ export function createSession(c, db, userId, { remember = true, pending2fa = fal
   });
   return id;
 }
+
+/* Device cookies (OWASP "device cookie" lockout): a random token per browser that has signed in to
+   an account, stored hashed. Sign-ins carrying one skip the per-email lockout. Signing out keeps it;
+   changing or resetting the password forgets every device of the account. */
+export function readDevice(c, db, userId) {
+  const raw = getCookie(c, DEVICE_COOKIE);
+  if (!raw || !userId) return null;
+  const d = db.get('SELECT * FROM devices WHERE token_hash = ?', sha256(raw));
+  return d && d.user_id === userId && d.expires_at > Date.now() ? { ...d, raw } : null;
+}
+export function rememberDevice(c, db, userId) {
+  const now = Date.now();
+  const cur = readDevice(c, db, userId);
+  const raw = cur?.raw || token();
+  if (cur) db.run('UPDATE devices SET last_used_at = ?, expires_at = ? WHERE token_hash = ?', now, now + DEVICE_MS, cur.token_hash);
+  else
+    db.run(
+      'INSERT INTO devices (token_hash, user_id, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?, ?)',
+      sha256(raw),
+      userId,
+      now,
+      now,
+      now + DEVICE_MS,
+    );
+  setCookie(c, DEVICE_COOKIE, raw, { httpOnly: true, sameSite: 'Lax', secure: c.get('config').secureCookies, path: '/api/auth', maxAge: DEVICE_MS / 1000 });
+}
+export const forgetDevices = (db, userId) => db.run('DELETE FROM devices WHERE user_id = ?', userId);
 
 export function clearSessionCookie(c) {
   c.set('sessionToken', '');

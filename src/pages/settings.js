@@ -52,6 +52,7 @@ export const SET_NAV = [
       ['password', 'Password', 'key-round'],
       ['sessions', 'Sessions', 'monitor-smartphone'],
       ['2fa', 'Two-factor authentication', 'shield-check'],
+      ['account', 'Account', 'user-cog'],
     ],
   ],
 ];
@@ -290,7 +291,7 @@ export function settingsBody(sec, title) {
       <div class="row" style="gap:14px">${av(d.me, 'xl', false)}<div><div class="label" style="margin-bottom:6px">Avatar color</div><div class="swatches">${['#5A67D8', '#C54B78', '#3B82C4', '#23918A', '#C48A1E', '#8662C9'].map(c => `<button type="button" class="sw ${me().c === c ? 'on' : ''}" style="--c:${c};width:22px;height:22px" data-a="avColor" data-v="${c}" aria-label="Color"></button>`).join('')}</div></div></div>
       <div class="field"><label class="label" for="pf-name">Full name</label><input class="input ${err ? 'is-error' : ''}" id="pf-name" value="${esc(P.name)}">${err ? `<span class="err">${ic('circle-alert', 12)}${err}</span>` : ''}</div>
       <div class="field"><label class="label" for="pf-title">Title</label><input class="input" id="pf-title" value="${esc(P.title)}"></div>
-      <div class="field"><label class="label" for="pf-email">Email</label><input class="input" id="pf-email" value="${esc(me().email)}" disabled><span class="hint">Contact a workspace owner to change your sign-in email.</span></div>
+      <div class="field"><label class="label" for="pf-email">Email</label><input class="input" id="pf-email" value="${esc(me().email)}" disabled><span class="hint">Change your sign-in email in <button type="button" class="link" data-a="go" data-r="settings" data-sec="account">Account</button>.</span></div>
       <div><button class="btn btn-primary" data-a="saveProfile" id="pf-save">Save profile</button></div></form>`
       );
     }
@@ -337,7 +338,7 @@ export function settingsBody(sec, title) {
       const pw = S.ui.pwNew || '';
       return (
         H("Use a long password you don't use anywhere else.") +
-        `${S.ui.pwDone ? `<div class="alert ok" style="margin-bottom:14px">${ic('circle-check', 15)}<span>Password updated. Other sessions stay signed in.</span></div>` : ''}<form data-submit="savePassword" class="col" style="gap:14px;max-width:400px">
+        `${S.ui.pwDone ? `<div class="alert ok" style="margin-bottom:14px">${ic('circle-check', 15)}<span>Password updated. Your other sessions were signed out.</span></div>` : ''}<form data-submit="savePassword" class="col" style="gap:14px;max-width:400px">
       <div class="field"><label class="label" for="pw-cur">Current password</label><input type="password" class="input ${e.pwCur ? 'is-error' : ''}" id="pw-cur" autocomplete="current-password">${e.pwCur ? `<span class="err">${ic('circle-alert', 12)}${e.pwCur}</span>` : ''}</div>
       <div class="field"><label class="label" for="pw-new">New password</label><input type="password" class="input ${e.pwNew ? 'is-error' : ''}" id="pw-new" data-in="pwStrength" value="${esc(pw)}" autocomplete="new-password">${strengthMeter(pw)}${e.pwNew ? `<span class="err">${ic('circle-alert', 12)}${e.pwNew}</span>` : '<span class="hint">At least 10 characters with a number or symbol.</span>'}</div>
       <div class="field"><label class="label" for="pw-conf">Confirm new password</label><input type="password" class="input ${e.pwConf ? 'is-error' : ''}" id="pw-conf" autocomplete="new-password">${e.pwConf ? `<span class="err">${ic('circle-alert', 12)}${e.pwConf}</span>` : ''}</div>
@@ -366,12 +367,43 @@ export function settingsBody(sec, title) {
               S.ui.recoveryCodes
                 ? `<p class="muted" style="font-size:13px">Store these somewhere safe. Each code works once, and they won't be shown again.</p><div style="display:grid;grid-template-columns:repeat(2,max-content);gap:6px 28px;font-family:var(--mono);font-size:13px;padding:14px;border:1px solid var(--border);border-radius:var(--r);background:var(--sunken);user-select:all" id="tfa-codes">${S.ui.recoveryCodes.map(c => `<span>${esc(c)}</span>`).join('')}</div>`
                 : `<p class="muted" style="font-size:13px">Your recovery codes were shown when you turned this on. To get new ones, turn two-factor authentication off and on again.</p>`
-            }<div style="margin-top:14px"><button class="btn btn-danger-ghost" data-a="disable2fa">Turn off two-factor authentication</button></div></div>`
+            }<div style="margin-top:14px">${
+              S.ui.tfaOff
+                ? `<form data-submit="confirmDisable2fa" class="col" style="gap:10px;max-width:400px"><div class="field"><label class="label" for="tfa-off">Your password, or a code from your authenticator app</label><input type="password" class="input ${S.ui.errors.tfaOff ? 'is-error' : ''}" id="tfa-off" autocomplete="current-password" autofocus>${S.ui.errors.tfaOff ? `<span class="err">${ic('circle-alert', 12)}${esc(S.ui.errors.tfaOff)}</span>` : ''}</div><div class="row"><button class="btn btn-danger" data-a="confirmDisable2fa" id="tfa-off-btn">Turn off</button><button type="button" class="btn btn-ghost" data-a="cancelDisable2fa">Cancel</button></div></form>`
+                : `<button class="btn btn-danger-ghost" data-a="disable2fa">Turn off two-factor authentication</button>`
+            }</div></div>`
           : S.ui.tfaSetup
             ? `<div class="panel" style="padding:18px;display:flex;gap:20px;flex-wrap:wrap"><div style="width:148px;height:148px;padding:8px;background:#fff;border-radius:8px;border:1px solid var(--border);flex:none" role="img" aria-label="QR code for your authenticator app">${S.ui.tfaSetup.qr.replace('<svg', '<svg width="130" height="130"')}</div>
         <div class="grow col" style="gap:10px;min-width:220px"><div><b>1. Scan the QR code</b><div class="muted" style="font-size:13px">Use 1Password, Authy, or Google Authenticator.</div></div><div><b>2. Enter the 6-digit code</b></div><form data-submit="verify2fa" class="row"><input class="input mono ${S.ui.errors.tfa ? 'is-error' : ''}" id="tfa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" style="width:130px;letter-spacing:.2em;font-size:15px" autofocus><button class="btn btn-primary" data-a="verify2fa" id="tfa-verify">Verify</button><button type="button" class="btn btn-ghost" data-a="cancel2fa">Cancel</button></form>${S.ui.errors.tfa ? `<span class="err">${ic('circle-alert', 12)}${esc(S.ui.errors.tfa)}</span>` : `<span class="hint">Can't scan it? Enter this key instead: <span class="mono" style="user-select:all">${esc(S.ui.tfaSetup.secret.replace(/(.{4})/g, '$1 ').trim())}</span></span>`}</div></div>`
-            : `<div class="panel" style="padding:18px" ><div class="row" style="gap:14px;align-items:flex-start"><span class="ftype" style="--c:var(--amber);width:36px;height:36px">${ic('shield-alert', 18)}</span><div class="grow"><b>Two-factor authentication is off</b><p class="muted" style="margin:4px 0 12px;font-size:13px">Protect your account with a code from an authenticator app in addition to your password.</p><button class="btn btn-primary" data-a="setup2fa" id="tfa-setup">Set up two-factor authentication</button></div></div></div>`)
+            : `<div class="panel" style="padding:18px" ><div class="row" style="gap:14px;align-items:flex-start"><span class="ftype" style="--c:var(--amber);width:36px;height:36px">${ic('shield-alert', 18)}</span><div class="grow"><b>Two-factor authentication is off</b><p class="muted" style="margin:4px 0 12px;font-size:13px">Protect your account with a code from an authenticator app in addition to your password.</p>${
+                S.ui.tfaAsk
+                  ? `<form data-submit="setup2fa" class="col" style="gap:10px;max-width:400px"><div class="field"><label class="label" for="tfa-pw">Your current password</label><input type="password" class="input ${S.ui.errors.tfaPw ? 'is-error' : ''}" id="tfa-pw" autocomplete="current-password" autofocus>${S.ui.errors.tfaPw ? `<span class="err">${ic('circle-alert', 12)}${esc(S.ui.errors.tfaPw)}</span>` : ''}</div><div class="row"><button class="btn btn-primary" data-a="setup2fa" id="tfa-setup">Continue</button><button type="button" class="btn btn-ghost" data-a="cancel2fa">Cancel</button></div></form>`
+                  : `<button class="btn btn-primary" data-a="ask2fa" id="tfa-setup">Set up two-factor authentication</button>`
+              }</div></div></div>`)
       );
+    case 'account': {
+      const e = S.ui.errors;
+      const owner = me().role === 'Owner';
+      return (
+        H('Your sign-in email, your data, and closing your account.') +
+        `<div class="sblock"><h2>Email</h2>${
+          S.ui.emailSent
+            ? `<div class="alert info">${ic('mail', 15)}<span>We sent a confirmation link to <b>${esc(S.ui.emailSent)}</b>. You keep signing in with ${esc(me().email)} until you open it.${S.ui.devLink ? ` <button class="link" data-a="openDevLink" id="dev-link">Open the link</button>` : ''}</span></div>`
+            : `<form data-submit="requestEmailChange" class="col" style="gap:14px;max-width:400px"><p class="muted" style="margin:0;font-size:13px">You sign in with <b>${esc(me().email)}</b>. We'll send a link to the new address to confirm it, and sign you out everywhere else.</p>
+        <div class="field"><label class="label" for="em-new">New email</label><input type="email" class="input ${e.emNew ? 'is-error' : ''}" id="em-new" autocomplete="email">${e.emNew ? `<span class="err">${ic('circle-alert', 12)}${esc(e.emNew)}</span>` : ''}</div>
+        <div class="field"><label class="label" for="em-pw">Current password</label><input type="password" class="input ${e.emPw ? 'is-error' : ''}" id="em-pw" autocomplete="current-password">${e.emPw ? `<span class="err">${ic('circle-alert', 12)}${esc(e.emPw)}</span>` : ''}</div>
+        <div><button class="btn btn-primary" data-a="requestEmailChange" id="em-save">Change email</button></div></form>`
+        }</div>
+        <div class="sblock"><h2>Your data</h2><p class="muted" style="font-size:13px">Download your profile, preferences, notifications, the tasks assigned to you and your comments as JSON.${owner ? ' As the owner, the file also includes the whole workspace.' : ''}</p><a class="btn btn-secondary" href="/api/me/export" download id="export-btn">${ic('download', 14)}Download my data</a></div>
+        <div class="sblock"><h2>Delete account</h2>${
+          owner
+            ? `<p class="muted" style="font-size:13px">Owners can't delete their account. Make another member an Owner in <button class="link" data-a="go" data-r="members">Members</button>, then ask them to change your role.</p>`
+            : `<form data-submit="deleteAccount" class="col" style="gap:14px;max-width:400px"><p class="muted" style="margin:0;font-size:13px">This removes you from ${esc(D().ws.name)} straight away. Your tasks become unassigned; your comments stay. This can't be undone.</p>
+        <div class="field"><label class="label" for="del-pw">Current password</label><input type="password" class="input ${e.delPw ? 'is-error' : ''}" id="del-pw" autocomplete="current-password">${e.delPw ? `<span class="err">${ic('circle-alert', 12)}${esc(e.delPw)}</span>` : ''}</div>
+        <div><button class="btn btn-danger" data-a="deleteAccount" id="del-btn">Delete my account</button></div></form>`
+        }</div>`
+      );
+    }
   }
   return page404();
 }

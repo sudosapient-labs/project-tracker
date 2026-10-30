@@ -283,7 +283,8 @@ describe('collaboration endpoints', () => {
   it('asking for access to a private project notifies its lead', async () => {
     const { owner, bob, ownerId } = await team();
     await owner.sync([put('projects', project('p1', { private: true, members: [ownerId], lead: ownerId }))]);
-    expect((await bob.post('/api/projects/p1/request-access')).body.to).toBe('Ada Owner');
+    // The answer doesn't name the lead (L5b: see security.test.js).
+    expect((await bob.post('/api/projects/p1/request-access')).body).toEqual({ ok: true });
     const n = (await owner.get('/api/bootstrap')).body.data.notifs[0];
     expect(n).toMatchObject({ project: 'p1', by: 'mbob', text: 'requested access to Website' });
   });

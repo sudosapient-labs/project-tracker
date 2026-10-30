@@ -2,7 +2,8 @@
    unknown fields pass through (the UI keeps small flags like `prevStatus` on records), bounded by
    the per-record size limit in the engine. */
 import { z } from 'zod';
-import { PCOLORS, PRIOS, PSTAT, ROLES, STATUSES } from '../../src/core/constants.js';
+import { FILTER_FIELDS, PCOLORS, PRIOS, PSTAT, REACTIONS, RECUR, ROLES, STATUSES } from '../../src/core/constants.js';
+import { FILE_TYPES } from '../../src/core/file-types.js';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Invalid id');
 const ref = id.nullable().optional();
@@ -15,9 +16,17 @@ const date = z
   .nullable()
   .optional();
 const color = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid colour');
+// A team reference: a team id, or '' for none.
+const teamRef = z.string().regex(/^[A-Za-z0-9_-]{0,64}$/, 'Invalid team');
+// Attachment and file URLs only ever point at this server's own files (routes/files.js).
+const fileUrl = z
+  .string()
+  .max(300)
+  .regex(/^\/api\/files\/[A-Za-z0-9_-]{1,64}\/\S*$/, 'Invalid file link');
+const filter = z.object({ f: z.enum(FILTER_FIELDS), op: z.enum(['is', 'not']), v: z.array(z.string().max(64)).max(200) });
 
 const subtask = z.looseObject({ id, title: text(500), done: z.boolean(), assignee: ref, due: date, note: text(10000).optional() });
-const attachment = z.looseObject({ id, name: text(255), type: text(20), size: text(20), by: ref, at: ts, url: text(300).optional() });
+const attachment = z.looseObject({ id, name: text(255), type: z.enum(FILE_TYPES), size: text(20), by: ref, at: ts, url: fileUrl.optional() });
 
 export const SCHEMAS = {
   tasks: z.looseObject({
@@ -39,7 +48,7 @@ export const SCHEMAS = {
     created: ts,
     updated: ts,
     order: z.number().finite(),
-    recur: text(30).nullable().optional(),
+    recur: z.enum(RECUR).nullable().optional(),
     archived: z.boolean().optional(),
     archivedAt: ts.nullable().optional(),
     completedAt: ts.nullable().optional(),
@@ -51,7 +60,7 @@ export const SCHEMAS = {
     icon: text(40),
     color: z.enum(Object.keys(PCOLORS)),
     status: z.enum(Object.keys(PSTAT)),
-    team: z.string().max(64),
+    team: teamRef,
     lead: ref,
     due: date,
     start: date,
@@ -73,19 +82,43 @@ export const SCHEMAS = {
       .max(254)
       .regex(/^\S+@\S+\.\S+$/, 'Enter a valid email address'),
     role: z.enum(ROLES),
-    team: z.string().max(64),
+    team: teamRef,
     title: text(80),
     c: color,
     status: z.enum(['active', 'invited']),
     tz: text(80),
   }),
   teams: z.looseObject({ id, name: text(60).min(1, 'Give the team a name'), icon: text(40), c: color, desc: text(500) }),
-  comments: z.looseObject({ id, task: id, by: id, at: ts, text: text(10_000).min(1), re: z.record(z.string().max(16), z.array(id)).optional() }),
+  comments: z.looseObject({
+    id,
+    task: id,
+    by: id,
+    at: ts,
+    text: text(10_000).min(1),
+    re: z.partialRecord(z.enum(REACTIONS), z.array(id).max(1000)).optional(),
+  }),
   activity: z.looseObject({ id, by: id, verb: text(80), task: ref, project: ref, at: ts, extra: text(500).optional() }),
   notifs: z.looseObject({ id, read: z.boolean() }),
-  files: z.looseObject({ id, project: id, name: text(255).min(1), type: text(20), size: text(20), by: ref, at: ts, task: ref }),
-  events: z.looseObject({ id, title: text(200).min(1), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), time: text(10), project: ref }),
-  savedViews: z.looseObject({ id, project: id, name: text(80).min(1), type: z.enum(['list', 'board', 'table']), filters: z.array(z.looseObject({})).max(50) }),
+  files: z.looseObject({
+    id,
+    project: id,
+    name: text(255).min(1),
+    type: z.enum(FILE_TYPES),
+    size: text(20),
+    by: ref,
+    at: ts,
+    task: ref,
+    url: fileUrl.optional(),
+  }),
+  // `time` is the event's start, 'HH:MM', or '' for all day.
+  events: z.looseObject({
+    id,
+    title: text(200).min(1),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    time: z.string().regex(/^(\d{2}:\d{2})?$/, 'Invalid time'),
+    project: ref,
+  }),
+  savedViews: z.looseObject({ id, project: id, name: text(80).min(1), type: z.enum(['list', 'board', 'table']), filters: z.array(filter).max(50) }),
 };
 
 export const DOC_SCHEMAS = {

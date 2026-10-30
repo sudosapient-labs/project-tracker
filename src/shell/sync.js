@@ -30,11 +30,16 @@ const hooks = { signedOut: () => {}, resync: () => {} };
 export const onSync = h => Object.assign(hooks, h);
 
 const fields = o => new Map(Object.keys(o).map(k => [k, JSON.stringify(o[k])]));
+/* Projects I can't open come as stubs; give them the empty fields pages read, in the record and its
+   shadow alike, so nothing is sent back for them. */
+const fill = (c, v) =>
+  c === 'projects' && v && !('desc' in v) ? Object.assign(v, { members: [], desc: '', milestones: [], team: '', due: null, start: null, ...v }) : v;
 const clone = v => (v === undefined ? null : JSON.parse(JSON.stringify(v)));
 
 /* ---------- lifecycle ---------- */
 export function prime(data) {
   shadow = { docs: {} };
+  (data.projects || []).forEach(p => fill('projects', p));
   for (const c of COLLS) shadow[c] = new Map((data[c] || []).map(e => [e.id, fields(e)]));
   for (const d of DOCS) shadow.docs[d] = JSON.stringify(data[d] ?? null);
   queue = [];
@@ -134,6 +139,7 @@ function adopt(c, id, v) {
     return true;
   }
   if (!COLLS.includes(c)) return false;
+  v = fill(c, v);
   const arr = d[c];
   const i = arr.findIndex(e => e.id === id);
   const pend = pendingKeys(c, id);

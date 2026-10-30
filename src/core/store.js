@@ -1,6 +1,7 @@
 /* ---------- store ---------- */
 import { iso, isPast, setTimeZone, today, uid } from './utils.js';
 import { DEFAULT_TZ, PCOLORS, TEAMS_SEED, validTz } from './constants.js';
+import { COMMENT, EDIT, canManageProject, projectLevel } from './access.js';
 
 /* Only display preferences are cached in the browser (so the theme applies before the first
    request finishes). Workspace data always comes from the server. */
@@ -116,6 +117,8 @@ export function save() {
 export const D = () => S.data;
 export const me = () => D().members.find(m => m.id === D().me);
 export const mem = id => D().members.find(m => m.id === id);
+/* A person's name; references to someone who has left the workspace read "Former member". */
+export const memName = id => mem(id)?.name || (id ? 'Former member' : '');
 export const proj = id => D().projects.find(p => p.id === id);
 export const task = id => D().tasks.find(t => t.id === id);
 export const pColor = p => PCOLORS[p?.color] || PCOLORS.slate;
@@ -124,8 +127,16 @@ export const visibleProjects = () =>
     .projOrder.map(proj)
     .filter(Boolean)
     .filter(p => !p.archived);
-/* Private projects are visible to their members only; guests only see projects they're added to. */
-export const canSee = p => !!p && ((!p.private && me()?.role !== 'Guest') || p.members.includes(D().me));
+/* What I may do in a project (core/access.js; the server enforces the same rules). Private projects
+   are visible to their members only; guests only see projects they're added to. Projects I can't
+   open arrive as stubs: id, key, name, icon, colour, lead (and, for admins, who has access). */
+export const projLevel = p => projectLevel(p, me());
+export const canSee = p => projLevel(p) > 0;
+export const canComment = p => projLevel(p) >= COMMENT;
+export const canEdit = p => projLevel(p) >= EDIT;
+export const canManage = p => canManageProject(p, me());
+/* `data-ro` for markup inside a project I can only view or comment in (styles hide edit controls). */
+export const roAttr = p => (canEdit(p) ? '' : `data-ro="${canComment(p) ? 'comment' : 'view'}"`);
 export const tasksOf = pid => D().tasks.filter(t => t.project === pid && !t.archived);
 export const allTasks = () => D().tasks.filter(t => !t.archived && canSee(proj(t.project)));
 export const isOver = t => t.status !== 'done' && isPast(t.due);

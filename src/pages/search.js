@@ -1,8 +1,8 @@
 /* ---------- SEARCH RESULTS ---------- */
 import { ago, esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { D, S, allTasks, canSee, mem, pColor, proj, task, visibleProjects } from '../core/store.js';
-import { FT, av, empty, hl, pIcon, pStatus, stIcon } from '../ui/helpers.js';
+import { D, S, allTasks, canSee, memName, pColor, proj, task, visibleProjects } from '../core/store.js';
+import { av, empty, ftOf, hl, pIcon, pStatus, stIcon } from '../ui/helpers.js';
 
 export function searchAll(q) {
   q = (q || '').trim().toLowerCase();
@@ -80,7 +80,7 @@ export function pageSearch() {
               r.files
                 .map(
                   f =>
-                    `<div class="mini" data-a="go" data-r="project" data-id="${f.project}" data-tab="files"><span class="ftype" style="--c:${FT[f.type].c}">${ic(FT[f.type].i, 14)}</span><span class="tt">${hl(f.name, q)}</span><span class="faint" style="font-size:12px">${f.size} · ${esc(proj(f.project).name)}</span></div>`,
+                    `<div class="mini" data-a="go" data-r="project" data-id="${f.project}" data-tab="files"><span class="ftype" style="--c:${ftOf(f.type).c}">${ic(ftOf(f.type).i, 14)}</span><span class="tt">${hl(f.name, q)}</span><span class="faint" style="font-size:12px">${esc(f.size)} · ${esc(proj(f.project)?.name)}</span></div>`,
                 )
                 .join(''),
             ) +
@@ -90,7 +90,7 @@ export function pageSearch() {
               r.comments
                 .map(
                   c =>
-                    `<div class="mini" style="align-items:flex-start;padding-top:10px;padding-bottom:10px" data-a="openTask" data-id="${c.task}">${av(c.by, 'sm')}<div class="grow" style="min-width:0"><div style="font-size:12px" class="muted"><b style="color:var(--text);font-weight:500">${esc(mem(c.by).name)}</b> on ${esc(task(c.task).title)} · ${ago(c.at)}</div><div style="font-size:13px">${hl(c.text, q)}</div></div></div>`,
+                    `<div class="mini" style="align-items:flex-start;padding-top:10px;padding-bottom:10px" data-a="openTask" data-id="${c.task}">${av(c.by, 'sm')}<div class="grow" style="min-width:0"><div style="font-size:12px" class="muted"><b style="color:var(--text);font-weight:500">${esc(memName(c.by))}</b> on ${esc(task(c.task).title)} · ${ago(c.at)}</div><div style="font-size:13px">${hl(c.text, q)}</div></div></div>`,
                 )
                 .join(''),
             )

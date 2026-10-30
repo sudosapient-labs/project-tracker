@@ -8,11 +8,12 @@
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,magenta \"pnpm dev:server\" \"pnpm dev:web\"",
     "dev:web": "vite",
-    "dev:server": "node --watch-path=server server/index.js",
+    "dev:server": "NODE_ENV=development node --watch-path=server server/index.js",
     "build": "vite build",
     "start": "NODE_ENV=production node server/index.js",
     "preview": "pnpm build && pnpm start",
-    "db:seed": "node server/scripts/seed-demo.js",
+    "db:seed": "NODE_ENV=development node server/scripts/seed-demo.js",
+    "db:backup": "node server/scripts/backup.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "vite build && playwright test",
@@ -24,9 +25,10 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.0",
+    "@hono/node-server": "^2.1.5",
     "hono": "^4.9.0",
     "qrcode": "^1.5.4",
+    "sanitize-html": "^2.18.1",
     "web-push": "^3.6.7",
     "zod": "^4.1.0"
   },
@@ -34,6 +36,7 @@
     "@eslint/js": "^9.39.5",
     "@playwright/test": "^1.55.0",
     "concurrently": "^9.2.0",
+    "dompurify": "^3.4.17",
     "eslint": "^9.39.5",
     "globals": "^15.15.0",
     "lucide": "^0.460.0",

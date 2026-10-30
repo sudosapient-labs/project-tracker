@@ -3,8 +3,8 @@
    ===================================================================== */
 import { $, $$, addD, dOff, esc, fmtDateTime, fmtTime, instant, iso, parse, parseTime, shiftD, today, uid, withDay, withTime } from '../core/utils.js';
 import { PR, PSTAT, ST } from '../core/constants.js';
-import { D, S, allTasks, canSee, commentsOf, logAct, me, mem, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
-import { fileType, fsize } from '../ui/helpers.js';
+import { D, S, allTasks, canSee, commentsOf, logAct, me, mem, memName, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
+import { fileType, fsize, richHtml } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
 import { post, upload } from '../core/api.js';
@@ -293,7 +293,7 @@ A.popPick = el => {
     S.ui.pop = null;
     mutate(() => {
       sb.assignee = v;
-      logAct('assigned a subtask on', t, v ? `to ${mem(v).name}` : '(unassigned)');
+      logAct('assigned a subtask on', t, v ? `to ${memName(v)}` : '(unassigned)');
     });
     return;
   }
@@ -1012,7 +1012,7 @@ document.addEventListener('mousedown', e => {
   const ed = $('#d-desc');
   if (ed) {
     const t = task(ed.dataset.rte);
-    t.desc = ed.innerHTML;
+    t.desc = richHtml(ed.innerHTML);
     save();
   }
 });
@@ -1021,10 +1021,18 @@ document.addEventListener('input', e => {
   if (!ed) return;
   const t = task(ed.dataset.rte);
   if (t) {
-    t.desc = ed.innerHTML;
+    t.desc = richHtml(ed.innerHTML);
     t.updated = Date.now();
     save();
   }
+});
+// Pasted HTML is cut down to what the editor itself produces before it reaches the page.
+document.addEventListener('paste', e => {
+  if (!e.target.closest?.('[data-rte]')) return;
+  const html = e.clipboardData?.getData('text/html');
+  if (!html) return;
+  e.preventDefault();
+  document.execCommand('insertHTML', false, richHtml(html));
 });
 
 /* selection & bulk */
@@ -1400,7 +1408,8 @@ A.submitProject = () => {
           team: f.team,
           lead: f.lead,
           due: f.due,
-          members: [...new Set([...p.members, f.lead])],
+          // A new lead joins the project; leaving it alone doesn't touch the member list.
+          members: f.lead === p.lead ? p.members : [...new Set([...p.members, f.lead])],
         }),
       )
     ) {
@@ -1519,7 +1528,7 @@ A.shareAdd = el => {
   });
   S.ui.shareQ = '';
   render();
-  toast(`${m.name} can now edit ${p.name}`);
+  toast(`${m.name} can now ${m.role === 'Guest' ? 'comment on' : 'edit'} ${p.name}`);
 };
 A.shareInvite = () => {
   const m = S.ui.modals[S.ui.modals.length - 1];
@@ -1530,7 +1539,7 @@ A.shareInvite = () => {
     $('#share-in')?.focus();
     return;
   }
-  const ex = D().members.find(x => x.email.toLowerCase() === v.toLowerCase() || x.name.toLowerCase() === v.toLowerCase());
+  const ex = D().members.find(x => (x.email || '').toLowerCase() === v.toLowerCase() || x.name.toLowerCase() === v.toLowerCase());
   if (ex) {
     if (!p.members.includes(ex.id))
       mutate(() => {
@@ -1570,19 +1579,20 @@ IN.sharePerm = el => {
     mutate(() => {
       p.members = p.members.filter(x => x !== mid);
     });
-    toast(`Removed ${mem(mid).name}`, { action: 'Undo', onAction: () => restore(snap) });
+    toast(`Removed ${memName(mid)}`, { action: 'Undo', onAction: () => restore(snap) });
   } else {
     mutate(() => {
       p.perms = p.perms || {};
       p.perms[mid] = el.value;
     });
-    toast(`${mem(mid).name}: ${el.value}`, { ms: 1800 });
+    toast(`${memName(mid)}: ${el.value}`, { ms: 1800 });
   }
 };
 IN.shareAccess = el => {
   const p = proj(el.dataset.id);
   mutate(() => {
-    p.access = el.value;
+    p.private = el.value === 'private';
+    p.access = p.private ? 'private' : 'workspace';
   });
 };
 A.invite = () => {
@@ -1655,6 +1665,30 @@ A.copyInviteLink = async () => {
   } catch (e) {
     toast(e.message, { kind: 'err' });
   }
+};
+/* Owner only: turn off someone's two-factor (a lost phone). The server asks for the Owner's password,
+   emails the person and signs them out everywhere. */
+A.reset2fa = el => {
+  const m = mem(el.dataset.id);
+  S.ui.pop = null;
+  if (!m) return;
+  openModal({
+    type: 'prompt',
+    title: `Reset two-factor for ${m.name}`,
+    label: 'Your password',
+    sub: `${m.name} is signed out everywhere and gets an email. They sign in with their password and can set up two-factor again.`,
+    password: true,
+    ok: 'Reset two-factor',
+    run: async pw => {
+      if (!pw) return;
+      try {
+        await post(`/api/members/${encodeURIComponent(m.id)}/reset-2fa`, { password: pw });
+        toast(`Two-factor turned off for ${m.name}`);
+      } catch (e) {
+        toast(e.message, { kind: 'err' });
+      }
+    },
+  });
 };
 A.resendInvite = async el => {
   S.ui.pop = null;
@@ -1917,7 +1951,7 @@ IN.confirmText = el => {
 };
 A.promptSubmit = () => {
   const m = S.ui.modals[S.ui.modals.length - 1];
-  const v = $('#prompt-in').value.trim();
+  const v = m.password ? $('#prompt-in').value : $('#prompt-in').value.trim();
   S.ui.modals.pop();
   render();
   m.run(v);

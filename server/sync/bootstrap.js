@@ -1,7 +1,7 @@
 /* The full object graph one person may see, in the same shape the prototype's seed data had, so
    the client swaps its data source without changing how anything renders. */
 import { listSessions } from '../auth.js';
-import { canSee } from './rules.js';
+import { canSee, memberFor, projectFor } from './rules.js';
 import { DEFAULT_NOTIF_PREFS } from '../notify.js';
 
 const ACTIVITY_LIMIT = 1000;
@@ -15,18 +15,24 @@ export function bootstrap({ db, repo }, auth) {
   const touched = new Map(
     db.all('SELECT project_id, MAX(created_at) t FROM activity WHERE project_id IS NOT NULL GROUP BY project_id').map(r => [r.project_id, r.t]),
   );
-  const projects = db.all('SELECT data, updated_at FROM projects ORDER BY created_at, rowid').map(r => {
-    const p = JSON.parse(r.data);
-    const t = Math.max(r.updated_at, touched.get(p.id) || 0);
-    return { ...p, fav: favs.projects.has(p.id), last: Math.max(0, Math.round((now - t) / 60000)) };
-  });
-  const vis = JSON.stringify(projects.filter(p => canSee(p, auth.member)).map(p => p.id));
+  // Projects this person can't open arrive as stubs (see projectFor); Guests don't get them at all.
+  const rows = db.all('SELECT data, updated_at FROM projects ORDER BY created_at, rowid').map(r => ({ ...r, p: JSON.parse(r.data) }));
+  const projects = rows
+    .map(({ p, updated_at }) => {
+      const v = projectFor(p, auth.member);
+      if (v !== p) return v && { ...v, fav: favs.projects.has(p.id) };
+      const t = Math.max(updated_at, touched.get(p.id) || 0);
+      return { ...p, fav: favs.projects.has(p.id), last: Math.max(0, Math.round((now - t) / 60000)) };
+    })
+    .filter(Boolean);
+  const vis = JSON.stringify(rows.filter(r => canSee(r.p, auth.member)).map(r => r.p.id));
   const IN = 'project_id IN (SELECT value FROM json_each(?))';
   const OPT = `(project_id IS NULL OR ${IN})`;
 
   const lastSeen = new Map(db.all('SELECT user_id, MAX(last_seen_at) t FROM sessions GROUP BY user_id').map(r => [r.user_id, r.t]));
+  const all = rows.map(r => r.p);
   const members = repo.all('members', 'ORDER BY created_at, rowid').map(m => ({
-    ...m,
+    ...memberFor(m, auth.member, all),
     last: m.status === 'invited' ? null : lastSeen.has(m.id) ? Math.max(0, Math.round((now - lastSeen.get(m.id)) / 60000)) : null,
   }));
 

@@ -1,8 +1,8 @@
 /* ---------- FILES ---------- */
 import { ago, esc } from '../core/utils.js';
 import { ic } from '../core/icons.js';
-import { D, S, mem, task } from '../core/store.js';
-import { FT, av, empty, filePrev, fileType } from '../ui/helpers.js';
+import { D, S, memName, task } from '../core/store.js';
+import { FT, av, empty, filePrev, fileType, ftOf } from '../ui/helpers.js';
 
 export function filesHtml(pid) {
   const u = S.ui;
@@ -39,7 +39,7 @@ export function filesHtml(pid) {
     </div>
     <div class="page wide" style="padding-top:16px">
       <label class="dropzone" data-dropzone="${pid}" style="margin-bottom:16px">${ic('upload-cloud', 18)}<span>Drop files here or <span class="link">browse</span> — up to 250 MB each</span><input type="file" multiple hidden data-in="uploadFiles" data-project="${pid}"></label>
-      ${ups.length ? `<div class="col" style="gap:6px;margin-bottom:16px">${ups.map(x => `<div class="upl"><span class="ftype" style="--c:${FT[fileType(x.name)].c}">${ic(FT[fileType(x.name)].i, 14)}</span><div class="grow"><div class="row"><span class="trunc" style="font-weight:500">${esc(x.name)}</span><span class="sp"></span><span class="faint num" style="font-size:11.5px" id="upct-${x.id}">${x.pct}%</span></div><div class="prog" style="margin-top:6px"><i id="upbar-${x.id}" style="--p:${x.pct / 100}"></i></div></div></div>`).join('')}</div>` : ''}
+      ${ups.length ? `<div class="col" style="gap:6px;margin-bottom:16px">${ups.map(x => `<div class="upl"><span class="ftype" style="--c:${ftOf(fileType(x.name)).c}">${ic(ftOf(fileType(x.name)).i, 14)}</span><div class="grow"><div class="row"><span class="trunc" style="font-weight:500">${esc(x.name)}</span><span class="sp"></span><span class="faint num" style="font-size:11.5px" id="upct-${x.id}">${x.pct}%</span></div><div class="prog" style="margin-top:6px"><i id="upbar-${x.id}" style="--p:${x.pct / 100}"></i></div></div></div>`).join('')}</div>` : ''}
       ${
         !fs.length
           ? empty(
@@ -49,8 +49,8 @@ export function filesHtml(pid) {
               '',
             )
           : view === 'grid'
-            ? `<div class="fgrid">${fs.map(f => `<div class="fcard" data-ctx="file" data-id="${f.id}" data-a="previewFile" role="button" tabindex="0">${filePrev(f)}<div class="fi"><span class="fn trunc">${esc(f.name)}</span><span class="fm">${f.size} · ${esc(mem(f.by)?.name.split(' ')[0])} · ${ago(f.at)}</span></div><button class="ibtn ibtn-xs more" data-a="ctxBtn" data-ctx="file" data-id="${f.id}" aria-label="File options">${ic('ellipsis', 13)}</button></div>`).join('')}</div>`
-            : `<div class="panel" style="overflow-x:auto"><table class="perm-t" style="min-width:680px"><thead><tr><th style="padding-left:14px">Name</th><th style="text-align:left">Type</th><th style="text-align:left">Size</th><th style="text-align:left">Uploaded by</th><th style="text-align:left">Date</th><th></th></tr></thead><tbody>${fs.map(f => `<tr data-ctx="file" data-id="${f.id}"><td style="padding-left:14px"><span class="row"><span class="ftype" style="--c:${FT[f.type].c}">${ic(FT[f.type].i, 14)}</span><span style="font-weight:500">${esc(f.name)}</span>${f.task && task(f.task) ? `<button class="badge" data-a="openTask" data-id="${f.task}">${ic('link', 10)}${task(f.task).key}</button>` : ''}</span></td><td style="text-align:left" class="muted">${FT[f.type].n}</td><td style="text-align:left" class="num muted">${f.size}</td><td style="text-align:left"><span class="row">${av(f.by, 'sm', false)}${esc(mem(f.by)?.name)}</span></td><td style="text-align:left" class="muted">${ago(f.at)}</td><td><button class="ibtn ibtn-sm" data-a="ctxBtn" data-ctx="file" data-id="${f.id}" aria-label="File options">${ic('ellipsis', 14)}</button></td></tr>`).join('')}</tbody></table></div>`
+            ? `<div class="fgrid">${fs.map(f => `<div class="fcard" data-ctx="file" data-id="${f.id}" data-a="previewFile" role="button" tabindex="0">${filePrev(f)}<div class="fi"><span class="fn trunc">${esc(f.name)}</span><span class="fm">${esc(f.size)} · ${esc(memName(f.by).split(' ')[0])} · ${ago(f.at)}</span></div><button class="ibtn ibtn-xs more" data-a="ctxBtn" data-ctx="file" data-id="${f.id}" aria-label="File options">${ic('ellipsis', 13)}</button></div>`).join('')}</div>`
+            : `<div class="panel" style="overflow-x:auto"><table class="perm-t" style="min-width:680px"><thead><tr><th style="padding-left:14px">Name</th><th style="text-align:left">Type</th><th style="text-align:left">Size</th><th style="text-align:left">Uploaded by</th><th style="text-align:left">Date</th><th></th></tr></thead><tbody>${fs.map(f => `<tr data-ctx="file" data-id="${f.id}"><td style="padding-left:14px"><span class="row"><span class="ftype" style="--c:${ftOf(f.type).c}">${ic(ftOf(f.type).i, 14)}</span><span style="font-weight:500">${esc(f.name)}</span>${f.task && task(f.task) ? `<button class="badge" data-a="openTask" data-id="${f.task}">${ic('link', 10)}${task(f.task).key}</button>` : ''}</span></td><td style="text-align:left" class="muted">${ftOf(f.type).n}</td><td style="text-align:left" class="num muted">${esc(f.size)}</td><td style="text-align:left"><span class="row">${av(f.by, 'sm', false)}${esc(memName(f.by))}</span></td><td style="text-align:left" class="muted">${ago(f.at)}</td><td><button class="ibtn ibtn-sm" data-a="ctxBtn" data-ctx="file" data-id="${f.id}" aria-label="File options">${ic('ellipsis', 14)}</button></td></tr>`).join('')}</tbody></table></div>`
       }
     </div>`;
 }

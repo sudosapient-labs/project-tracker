@@ -1,6 +1,11 @@
 /* ---------- file types (shared with the server) ---------- */
+export const FILE_TYPES = ['fig', 'pdf', 'zip', 'img', 'sheet', 'doc', 'code', 'other'];
 export function fileType(name) {
-  const e = (name.split('.').pop() || '').toLowerCase();
+  const e = (
+    String(name || '')
+      .split('.')
+      .pop() || ''
+  ).toLowerCase();
   if (e === 'fig') return 'fig';
   if (e === 'pdf') return 'pdf';
   if (['zip', 'rar', '7z'].includes(e)) return 'zip';

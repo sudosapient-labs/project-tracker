@@ -1,7 +1,9 @@
 /* Scheduled work, run every few minutes by server/index.js: due-date reminders, overdue alerts and
    the weekday morning email digest. Each takes `now` so tests can run it at any moment. */
 import { validTz } from '../src/core/constants.js';
+import { canSeeProject } from '../src/core/access.js';
 import { notify, notifPrefs } from './notify.js';
+import { MAX_ATTEMPTS } from './lib/mailer.js';
 
 const DAY = 86_400_000;
 /* The calendar date ('YYYY-MM-DD') and local wall clock of an instant in a time zone. */
@@ -63,8 +65,11 @@ export function runDigests({ db, repo, mailer, config }, now = Date.now()) {
     repo.saveUserState(m.id, {});
     db.run('UPDATE user_state SET last_digest = ? WHERE user_id = ?', l.date, m.id);
     if (!unread.length) continue;
+    // Tasks are read as they are now: one that has since moved somewhere this person can't see is
+    // mentioned without its key, title or what happened to it.
     const line = n => {
       const t = n.task && repo.get('tasks', n.task);
+      if (t && !canSeeProject(repo.get('projects', t.project), m)) return '• An update on work you no longer have access to';
       const who = n.by ? repo.get('members', n.by)?.name || 'Someone' : '';
       return `• ${[who, n.text, t ? `${t.key} ${t.title}` : ''].filter(Boolean).join(' ')}`;
     };
@@ -80,4 +85,16 @@ export function runDigests({ db, repo, mailer, config }, now = Date.now()) {
   }
   mailer.drain();
   return sent;
+}
+
+/* Every minute (server/index.js): drop expired sessions (and with them their push subscriptions)
+   and devices, old tokens, mail sent (or given up on) more than 30 days ago, read notifications older
+   than 180 days, and reminder records for tasks that are gone or done. */
+export function housekeep({ db }, now = Date.now()) {
+  db.run('DELETE FROM sessions WHERE expires_at < ?', now);
+  db.run('DELETE FROM devices WHERE expires_at < ?', now);
+  db.run("DELETE FROM notifications WHERE created_at < ? AND json_extract(data, '$.read')", now - 180 * DAY);
+  db.run('DELETE FROM auth_tokens WHERE expires_at < ?', now - 7 * DAY);
+  db.run('DELETE FROM outbox WHERE COALESCE(sent_at, CASE WHEN attempts >= ? THEN created_at END) < ?', MAX_ATTEMPTS, now - 30 * DAY);
+  db.run("DELETE FROM reminders WHERE NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id = reminders.task_id AND json_extract(t.data, '$.status') != 'done')");
 }

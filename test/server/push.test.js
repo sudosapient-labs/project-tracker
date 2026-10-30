@@ -4,7 +4,7 @@ import { openDb } from '../../server/db.js';
 import { createPusher } from '../../server/lib/push.js';
 import { account, setup } from './helpers.js';
 
-const sub = n => ({ endpoint: `https://push.example.com/send/${n}`, keys: { p256dh: 'BKey' + n, auth: 'auth' + n } });
+const sub = n => ({ endpoint: `https://fcm.googleapis.com/fcm/send/${n}`, keys: { p256dh: 'BKey' + n, auth: 'auth' + n } });
 
 /* Owner plus Bob (invited, signed up), with a push-service stand-in that records deliveries. */
 async function pair(statuses = []) {

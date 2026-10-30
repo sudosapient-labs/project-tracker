@@ -39,7 +39,8 @@ test('turning on push subscribes this browser on the server; signing out removes
   const errors = watchErrors(page);
   // Headless Chromium has no push service, so the browser's side is stood in for here: permission
   // is granted and PushManager returns a subscription. Everything after that (fetching the VAPID
-  // key, registering with the server, removal on sign-out) is the app's real code.
+  // key, registering with the server, removal on sign-out) is the app's real code. The endpoint is on
+  // a real push service's host because the server only accepts those.
   await page.addInitScript(() => {
     let sub = null;
     Object.defineProperty(Notification, 'permission', { get: () => 'granted' });
@@ -48,8 +49,8 @@ test('turning on push subscribes this browser on the server; signing out removes
     PushManager.prototype.subscribe = async opts => {
       window.__pushKeyBytes = opts.applicationServerKey.length;
       sub = {
-        endpoint: 'https://push.example.test/e2e-subscription',
-        toJSON: () => ({ endpoint: 'https://push.example.test/e2e-subscription', keys: { p256dh: 'BTestKey', auth: 'testauth' } }),
+        endpoint: 'https://fcm.googleapis.com/fcm/send/e2e-subscription',
+        toJSON: () => ({ endpoint: 'https://fcm.googleapis.com/fcm/send/e2e-subscription', keys: { p256dh: 'BTestKey', auth: 'testauth' } }),
         unsubscribe: async () => !(sub = null),
       };
       return sub;

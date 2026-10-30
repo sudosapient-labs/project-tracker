@@ -58,7 +58,8 @@ describe('sign up, verify, sign in, sign out', () => {
     expect((await c.get('/api/bootstrap')).status).toBe(200);
 
     await c.post('/api/auth/logout');
-    expect(c.cookie).toBe('');
+    // The session cookie goes; the device cookie stays (see M2 device cookies in security.test.js).
+    expect(c.session).toBe('');
     expect((await c.get('/api/auth/session')).body.user).toBeNull();
   });
 
@@ -162,7 +163,7 @@ describe('two-factor authentication', () => {
   it('enables TOTP, challenges at sign in, and accepts a recovery code once', async () => {
     const t = setup();
     const { c } = await account(t);
-    const s = await c.post('/api/auth/2fa/setup');
+    const s = await c.post('/api/auth/2fa/setup', { password: PW });
     expect(s.body.qr).toMatch(/^<svg/);
     expect(s.body.otpauth).toMatch(/^otpauth:\/\/totp\//);
     expect((await c.post('/api/auth/2fa/enable', { code: '000000' })).status).toBe(400);
@@ -176,7 +177,7 @@ describe('two-factor authentication', () => {
     expect(l.body.user.twoFactorPending).toBe(true);
     expect((await d.get('/api/bootstrap')).status).toBe(401);
     expect((await d.post('/api/auth/2fa/verify', { code: '123456' })).status).toBe(401);
-    expect((await d.post('/api/auth/2fa/verify', { code: code(s.body.secret) })).body.user.twoFactorPending).toBe(false);
+    expect((await d.post('/api/auth/2fa/verify', { code: code(s.body.secret, 1) })).body.user.twoFactorPending).toBe(false);
     expect((await d.get('/api/bootstrap')).status).toBe(200);
 
     const e = t.client();
@@ -186,7 +187,7 @@ describe('two-factor authentication', () => {
     await f.post('/api/auth/login', { email: 'ada@example.com', password: PW });
     expect((await f.post('/api/auth/2fa/verify', { code: en.body.recoveryCodes[0] })).status).toBe(401);
 
-    await c.post('/api/auth/2fa/disable');
+    await c.post('/api/auth/2fa/disable', { password: PW });
     expect((await t.client().post('/api/auth/login', { email: 'ada@example.com', password: PW })).body.twoFactor).toBe(false);
   });
 });

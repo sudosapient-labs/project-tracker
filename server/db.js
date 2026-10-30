@@ -2,10 +2,13 @@
    and every sync batch runs inside a single IMMEDIATE transaction. */
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
 const MIGRATIONS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
+// JS migrations (for data changes SQL can't express) load synchronously, like the .sql ones.
+const require = createRequire(import.meta.url);
 
 export function openDb(file) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
@@ -26,14 +29,16 @@ function migrate(db) {
   );
   const files = fs
     .readdirSync(MIGRATIONS)
-    .filter(f => f.endsWith('.sql'))
+    .filter(f => f.endsWith('.sql') || f.endsWith('.js'))
     .sort();
   for (const f of files) {
     if (done.has(f)) continue;
-    const sql = fs.readFileSync(path.join(MIGRATIONS, f), 'utf8');
+    const file = path.join(MIGRATIONS, f);
     db.exec('BEGIN');
     try {
-      db.exec(sql);
+      // A .js migration exports `default (db)` and gets the raw DatabaseSync inside the transaction.
+      if (f.endsWith('.js')) require(file).default(db);
+      else db.exec(fs.readFileSync(file, 'utf8'));
       db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(f, Date.now());
       db.exec('COMMIT');
     } catch (e) {

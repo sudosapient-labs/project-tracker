@@ -142,6 +142,22 @@ export async function boot() {
         S.ui.errors.email = e.message;
         return render();
       }
+    } else if (kind === 'setup' && token) {
+      // The setup link printed by a fresh production server: create the owner account with it.
+      clearHash();
+      if (!s.workspace) {
+        S.ui.setupToken = token;
+        return route(s, 'signup');
+      }
+    } else if (kind === 'email' && token) {
+      clearHash();
+      try {
+        s = await post('/api/auth/email/confirm', { token });
+        S.ui.emailSent = null;
+        toast(s.user ? `You now sign in with ${s.user.email}` : 'Email changed. Sign in with your new address.');
+      } catch (e) {
+        toast(e.message, { kind: 'err', ms: 7000 });
+      }
     } else if (kind === 'join' && token) {
       clearHash();
       if (!s.user) {
@@ -168,7 +184,7 @@ export async function boot() {
         }
       }
     }
-    await route(s, ['verify', 'reset', 'invite', 'join'].includes(kind) ? '' : hash);
+    await route(s, ['verify', 'reset', 'invite', 'join', 'setup', 'email'].includes(kind) ? '' : hash);
   } catch (e) {
     S.ui.auth = 'boot-error';
     S.ui.bootError = e.message;
@@ -235,6 +251,12 @@ A.doTfa = async () => {
     const s = await busy('tfa-btn', () => post('/api/auth/2fa/verify', { code }));
     await route(s, '', `Signed in as ${s.user.email}`);
   } catch (err) {
+    // Too many wrong codes end the sign-in; start again from the password.
+    if (err.code === 'unauthenticated') {
+      show('login');
+      S.ui.errors = { login: err.message };
+      return render();
+    }
     formError(err, {}, 'code');
     $('#t-code')?.focus();
   }
@@ -266,9 +288,10 @@ A.doSignup = async () => {
         password: pw,
         ...(S.ui.inviteToken ? { invite: S.ui.inviteToken } : {}),
         ...(S.ui.joinToken ? { join: S.ui.joinToken } : {}),
+        ...(S.ui.setupToken ? { setup: S.ui.setupToken } : {}),
       }),
     );
-    S.ui.inviteToken = S.ui.joinToken = S.ui.invite = null;
+    S.ui.inviteToken = S.ui.joinToken = S.ui.setupToken = S.ui.invite = null;
     S.ui.pwNew = '';
     S.ui.devLink = r.devLink || null;
     if (r.user.verified) return route(r, '', `Welcome, ${r.user.name.split(' ')[0]}`);
@@ -419,7 +442,7 @@ A.onbExit = async () => {
 
 /* An emailed link pasted into a tab that already has the app open only changes the hash. */
 addEventListener('hashchange', () => {
-  if (/^#(verify|reset|invite|join)\//.test(location.hash)) boot();
+  if (/^#(verify|reset|invite|join|setup|email)\//.test(location.hash)) boot();
 });
 
 /* A push notification was clicked while the app was open: go to what it's about. */

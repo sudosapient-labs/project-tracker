@@ -1,18 +1,29 @@
 /* ---------- small render helpers ---------- */
+import DOMPurify from 'dompurify';
 import { diffD, dueSoon, esc, hasTime, isPast, parse, relDate, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { LB, PR, PSTAT, ST } from '../core/constants.js';
 import { D, mem, pColor } from '../core/store.js';
+import { RICH_ATTRS, RICH_SCHEMES, RICH_TAGS } from '../core/rich-text.js';
+
+/* A task description (or pasted HTML) cut down to what the editor produces (core/rich-text.js). */
+const RICH = {
+  ALLOWED_TAGS: RICH_TAGS,
+  ALLOWED_ATTR: [...new Set(Object.values(RICH_ATTRS).flat())],
+  ALLOWED_URI_REGEXP: new RegExp(`^(?:${RICH_SCHEMES.join('|')}):`, 'i'),
+};
+export const richHtml = html => DOMPurify.sanitize(String(html ?? ''), RICH);
 
 export function av(id, cls = '', tip = true) {
   const m = mem(id);
-  if (!m) return `<span class="av empty ${cls}" ${tip ? 'data-tip="Unassigned"' : ''}>${ic('user', 11)}</span>`;
+  // An id that's no longer in the workspace belonged to someone who left.
+  if (!m) return `<span class="av empty ${cls}" ${tip ? `data-tip="${id ? 'Former member' : 'Unassigned'}"` : ''}>${ic('user', 11)}</span>`;
   const ini = m.name
     .split(' ')
     .map(x => x[0])
     .join('')
     .slice(0, 2);
-  return `<span class="av ${cls}" style="--c:${m.c}" ${tip ? `data-tip="${esc(m.name)}"` : ''} aria-label="${esc(m.name)}">${ini}</span>`;
+  return `<span class="av ${cls}" style="--c:${esc(m.c)}" ${tip ? `data-tip="${esc(m.name)}"` : ''} aria-label="${esc(m.name)}">${esc(ini)}</span>`;
 }
 export function avStack(ids, max = 4, cls = 'sm') {
   const v = ids.slice(0, max);
@@ -45,7 +56,7 @@ export const stPill = st => `${stIcon(st)}<span>${ST[st].name}</span>`;
 export const prPill = p => `${prIcon(p)}<span>${PR[p || 'none'].name}</span>`;
 export const lbl = id => (LB[id] ? `<span class="lbl" style="--c:${LB[id].c}"><i></i>${LB[id].name}</span>` : '');
 export const pIcon = (p, cls = '', s = 15) => `<span class="picon ${cls}" style="--c:${pColor(p)}">${ic(p.icon, s)}</span>`;
-export const pStatus = s => `<span class="pstatus" style="--c:${PSTAT[s].c}"><i></i>${PSTAT[s].name}</span>`;
+export const pStatus = s => (PSTAT[s] ? `<span class="pstatus" style="--c:${PSTAT[s].c}"><i></i>${PSTAT[s].name}</span>` : '');
 export function dueHtml(t, withIcon = true) {
   if (!t.due) return '';
   // Timed tasks are "soon" within 2 hours; all-day tasks when due today or tomorrow.
@@ -82,13 +93,17 @@ export const FT = {
   code: { c: '#C48A1E', i: 'file-code', n: 'Code' },
   other: { c: '#6B7280', i: 'file', n: 'File' },
 };
+/* A file type's look, falling back to a plain file for anything unknown. */
+export const ftOf = type => (Object.hasOwn(FT, type) ? FT[type] : FT.other);
+/* Uploaded bytes are only ever served from this origin's /api/files/; any other URL is ignored. */
+export const fileUrl = f => (typeof f?.url === 'string' && /^\/api\/files\/[A-Za-z0-9_-]+\//.test(f.url) ? f.url : '');
 export { fileType, fsize } from '../core/file-types.js';
 export function filePrev(f) {
-  const t = FT[f.type] || FT.other;
+  const t = ftOf(f.type);
   let art;
   // Uploaded images show the real picture; demo records without bytes keep the illustration.
-  if (f.type === 'img' && f.url)
-    art = `<div class="art" style="padding:0;overflow:hidden"><img src="${esc(f.url)}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover"></div>`;
+  if (f.type === 'img' && fileUrl(f))
+    art = `<div class="art" style="padding:0;overflow:hidden"><img src="${esc(fileUrl(f))}" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover"></div>`;
   else if (f.type === 'img')
     art = `<div class="art" style="padding:0;overflow:hidden;background:linear-gradient(135deg,color-mix(in srgb,${t.c} 35%,var(--surface)),color-mix(in srgb,${t.c} 10%,var(--surface)))"><svg viewBox="0 0 100 60" preserveAspectRatio="none" style="width:100%;height:100%"><path d="M0 60 L30 28 L52 46 L70 32 L100 58 L100 60Z" fill="color-mix(in srgb,${t.c} 45%,var(--surface))"/><circle cx="76" cy="16" r="7" fill="color-mix(in srgb,${t.c} 30%,var(--surface))"/></svg></div>`;
   else if (f.type === 'sheet') art = `<div class="art" style="display:grid;grid-template-columns:repeat(4,1fr);gap:3px">${'<i></i>'.repeat(20)}</div>`;
@@ -96,6 +111,10 @@ export function filePrev(f) {
     art = `<div class="art" style="flex-direction:row;gap:6px"><div style="flex:1;display:flex;flex-direction:column;gap:5px"><i class="h"></i><i></i><i style="width:70%"></i><i style="height:18px;background:color-mix(in srgb,${t.c} 20%,var(--surface))"></i></div><div style="width:34%;border-radius:3px;background:color-mix(in srgb,${t.c} 14%,var(--surface))"></div></div>`;
   else if (f.type === 'zip') art = `<div style="color:${t.c}">${ic('folder-archive', 30)}</div>`;
   else art = `<div class="art"><i class="h"></i><i></i><i></i><i style="width:80%"></i><i></i><i style="width:60%"></i></div>`;
-  const ext = (f.name.split('.').pop() || '').slice(0, 4);
+  const ext = (
+    String(f.name || '')
+      .split('.')
+      .pop() || ''
+  ).slice(0, 4);
   return `<div class="fprev">${art}<span class="ext" style="--c:${t.c}">${esc(ext)}</span></div>`;
 }

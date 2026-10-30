@@ -1,14 +1,19 @@
 /* Email: messages are queued in `outbox` inside the caller's transaction, then delivered.
-   With RESEND_API_KEY set they go out through Resend's HTTP API; otherwise they are logged (and,
-   outside production, the link is handed back to the API caller so local flows still complete). */
+   With RESEND_API_KEY set they go out through Resend's HTTP API; otherwise they are logged. In
+   development and test the log (and the API response, so local flows still complete) includes the
+   link; in production only the recipient and subject are logged, unless LOG_EMAIL_LINKS=true.
+   Once a message is sent or given up on, its link and bodies (which carry live sign-in, reset and
+   invite tokens) are wiped; only local development without a mail service keeps them, as its mailbox. */
 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const RESEND_URL = 'https://api.resend.com/emails';
-const MAX_ATTEMPTS = 5;
+export const MAX_ATTEMPTS = 5;
 
 /* `fetchImpl` is injectable so tests can stand in for Resend. */
 export function createMailer(db, config, log = console, fetchImpl = globalThis.fetch) {
   const configured = !!config.resendApiKey;
+  const scrub = configured || config.prod;
+  const DONE = scrub ? ", link = NULL, body_text = '', body_html = ''" : '';
   let draining = false;
 
   function queue({ to, subject, intro, action, link, outro = '' }) {
@@ -57,10 +62,14 @@ export function createMailer(db, config, log = console, fetchImpl = globalThis.f
       for (const m of rows) {
         try {
           if (configured) await sendViaResend(m);
-          else if (!config.test) log.info?.(`[mail] to=${m.to_addr} subject="${m.subject}" link=${m.link}`);
-          db.run('UPDATE outbox SET sent_at = ?, attempts = attempts + 1, error = NULL WHERE id = ?', Date.now(), m.id);
+          else if (!config.test)
+            log.info?.(
+              `[mail] to=${m.to_addr} subject="${m.subject}"${!config.prod || config.logEmailLinks ? ` link=${m.link}` : ' (not sent: RESEND_API_KEY is not set)'}`,
+            );
+          db.run(`UPDATE outbox SET sent_at = ?, attempts = attempts + 1, error = NULL${DONE} WHERE id = ?`, Date.now(), m.id);
         } catch (e) {
-          db.run('UPDATE outbox SET attempts = ?, error = ? WHERE id = ?', e.permanent ? MAX_ATTEMPTS : m.attempts + 1, String(e.message || e), m.id);
+          const attempts = e.permanent ? MAX_ATTEMPTS : m.attempts + 1;
+          db.run(`UPDATE outbox SET attempts = ?, error = ?${attempts >= MAX_ATTEMPTS ? DONE : ''} WHERE id = ?`, attempts, String(e.message || e), m.id);
           log.error?.(`[mail] failed to send to ${m.to_addr}: ${e.message}`);
         }
       }

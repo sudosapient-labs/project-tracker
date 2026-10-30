@@ -10,7 +10,7 @@ import path from 'node:path';
 import { COLLS } from '../repo.js';
 import { Reject } from '../lib/http.js';
 import { DOC_SCHEMAS, MAX_RECORD_BYTES, SCHEMAS } from './schemas.js';
-import { RULES, canSee, isAdmin } from './rules.js';
+import { RULES, canSee, isAdmin, memberFor, projectFor, removeMemberCascade } from './rules.js';
 
 const PROJECT_SCOPED = new Set(['tasks', 'comments', 'activity', 'files', 'events', 'savedViews']);
 const PERSONAL_DOCS = new Set(['projOrder', 'recentSearches', 'notifPrefs']);
@@ -18,7 +18,7 @@ const DOCS = new Set(['ws', ...PERSONAL_DOCS]);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 
-export function createEngine({ db, repo, config, mailer, pusher = null, log = console }) {
+export function createEngine({ db, repo, config, mailer, pusher = null, log = console, limit = () => true }) {
   const conns = new Set();
 
   /* Add the reader's own favourite flag to projects and tasks. */
@@ -42,11 +42,16 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
       blobGc: new Set(),
       links: [],
       afterPut: [],
-      emit(c, v) {
-        ctx.changes.push({ c, id: v.id, v, pid: scopeOf(c, v) });
+      // Check-and-count against a rate limit (see lib/rate-limit.js); false once it's used up.
+      limit,
+      /* `from`: the project a record just moved out of, so people who could only see that one drop it. */
+      emit(c, v, from) {
+        ctx.changes.push({ c, id: v.id, v, pid: scopeOf(c, v), ...(from ? { from } : {}) });
       },
+      /* The project as it was when the record went, so a delete only reaches people who could see it
+         (even when the project itself is being deleted in the same batch). */
       emitDel(c, id, pid) {
-        ctx.changes.push({ c, id, v: null, pid });
+        ctx.changes.push({ c, id, v: null, pid, ...(pid ? { proj: repo.get('projects', pid) } : {}) });
       },
     };
     return ctx;
@@ -55,6 +60,15 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
   /* Notifications are only ever visible to (and stored under) their recipient. */
   const getFor = (c, id, uid) =>
     c === 'notifs' ? JSON.parse(db.get('SELECT data FROM notifications WHERE id = ? AND user_id = ?', id, uid)?.data || 'null') : repo.get(c, id);
+  /* A record as person `m` may see it: projects may be a stub, and work in projects they can't see is null. */
+  function visible(c, v, m, projects = null) {
+    if (!v) return v;
+    if (c === 'projects') return projectFor(v, m);
+    if (c === 'members') return memberFor(v, m, projects ? projects.values() : repo.all('projects'));
+    const pid = PROJECT_SCOPED.has(c) && scopeOf(c, v);
+    if (pid && !canSee(projects ? projects.get(pid) : repo.get('projects', pid), m)) return null;
+    return v;
+  }
 
   function applyDoc(ctx, op) {
     const { c, k, v } = op;
@@ -130,7 +144,7 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
       repo.put(c, after, c === 'notifs' ? ctx.uid : scopeOf(c, after));
       ctx.afterPut.splice(0).forEach(f => f());
       if (c === 'notifs') ctx.changes.push({ c, id, v: after, uid: ctx.uid });
-      else ctx.emit(c, after);
+      else ctx.emit(c, after, before && scopeOf(c, before) !== scopeOf(c, after) ? scopeOf(c, before) : null);
     }
     if ('fav' in personal && (c === 'projects' || c === 'tasks')) {
       const on = !!personal.fav;
@@ -155,7 +169,7 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
         try {
           const v = applyOp(ctx, op, favs);
           db.exec('RELEASE op');
-          results.push({ ok: true, v: project(op.c, v, favs) });
+          results.push({ ok: true, v: project(op.c, visible(op.c, v, ctx.me), favs) });
         } catch (e) {
           db.exec('ROLLBACK TO op');
           db.exec('RELEASE op');
@@ -163,8 +177,8 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
           ctx.afterPut.length = 0;
           if (!(e instanceof Reject)) {
             log.error?.(`[sync] op ${i} (${op?.c}/${op?.k}) failed`, e);
-            results.push({ ok: false, error: 'Something went wrong saving this change.', v: current(op, favs, ctx.uid) });
-          } else results.push({ ok: false, error: e.message, status: e.status, v: current(op, favs, ctx.uid) });
+            results.push({ ok: false, error: 'Something went wrong saving this change.', v: current(op, favs, ctx.me) });
+          } else results.push({ ok: false, error: e.message, status: e.status, v: current(op, favs, ctx.me) });
         }
       });
     });
@@ -172,12 +186,23 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
     return { results, links: ctx.links };
   }
 
-  function current(op, favs, uid) {
+  function current(op, favs, me) {
     if (!op || typeof op !== 'object') return null;
     if (op.c === 'ws') return repo.workspace();
-    if (PERSONAL_DOCS.has(op.c)) return repo.userState(uid)[op.c];
+    if (PERSONAL_DOCS.has(op.c)) return repo.userState(me.id)[op.c];
     if (!COLLS[op.c] || typeof op.id !== 'string') return null;
-    return project(op.c, getFor(op.c, op.id, uid), favs);
+    return project(op.c, visible(op.c, getFor(op.c, op.id, me.id), me), favs);
+  }
+
+  /* Someone deleting their own account: the same cascade as an admin removing them. */
+  function removeAccount(auth) {
+    const ctx = makeCtx(auth);
+    db.tx(() => {
+      removeMemberCascade(ctx, auth.member);
+      repo.del('members', auth.member.id);
+      ctx.emitDel('members', auth.member.id, null);
+    });
+    afterCommit(ctx, null);
   }
 
   function afterCommit(ctx, clientId) {
@@ -197,10 +222,16 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
     // Web Push goes to every subscribed browser, whether or not the app is open.
     if (pusher) for (const ch of changes) if (ch.push && ch.uid) pusher.notify(ch.uid, ch.push);
     if (!changes.length || !conns.size) return;
-    // One batch can touch a record several times (e.g. a project's key counter); send its last state.
+    // One batch can touch a record several times (e.g. a project's key counter); send its last state,
+    // remembering the project it first moved out of.
     const last = new Map();
-    changes.forEach((ch, i) => last.set(`${ch.c}:${ch.id ?? ''}:${ch.onlyUser ?? ''}:${ch.uid ?? ''}`, i));
-    changes = changes.filter((ch, i) => last.get(`${ch.c}:${ch.id ?? ''}:${ch.onlyUser ?? ''}:${ch.uid ?? ''}`) === i);
+    for (const ch of changes) {
+      const k = `${ch.c}:${ch.id ?? ''}:${ch.onlyUser ?? ''}:${ch.uid ?? ''}`;
+      const prev = last.get(k);
+      last.delete(k);
+      last.set(k, prev?.from && !ch.from ? { ...ch, from: prev.from } : ch);
+    }
+    changes = [...last.values()];
     const projects = new Map(repo.all('projects').map(p => [p.id, p]));
     const members = new Map(repo.all('members').map(m => [m.id, m]));
     const favCache = new Map();
@@ -210,8 +241,15 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
       for (const ch of changes) {
         if (ch.onlyUser && ch.onlyUser !== k.uid) continue;
         if (ch.c === 'notifs' && ch.uid !== k.uid) continue;
-        if (PROJECT_SCOPED.has(ch.c) && ch.v && ch.pid && !canSee(projects.get(ch.pid), members.get(k.uid))) continue;
-        let v = ch.v;
+        const m = members.get(k.uid);
+        // Deletes in a project only go to people who could see that project.
+        if (!ch.v && ch.pid && PROJECT_SCOPED.has(ch.c) && !canSee(projects.get(ch.pid) || ch.proj, m)) continue;
+        let v = visible(ch.c, ch.v, m, projects);
+        if (ch.v && !v) {
+          // Gone from their view: moved into a project they can't see. Otherwise it was never theirs.
+          if (!(ch.from && canSee(projects.get(ch.from), m))) continue;
+          v = null;
+        }
         if (v && (ch.c === 'projects' || ch.c === 'tasks')) {
           if (!favCache.has(k.uid)) favCache.set(k.uid, repo.favorites(k.uid));
           v = project(ch.c, v, favCache.get(k.uid));
@@ -230,6 +268,8 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
   }
   const disconnect = k => conns.delete(k);
   const disconnectSession = sid => [...conns].filter(k => k.sessionId === sid).forEach(k => k.close());
+  /* Shutting down: end every live-update stream so the HTTP server can close. */
+  const closeAll = () => [...conns].forEach(k => k.close());
 
-  return { apply, publish, connect, disconnect, disconnectSession, connections: () => conns.size };
+  return { apply, removeAccount, publish, connect, disconnect, disconnectSession, closeAll, connections: () => conns.size };
 }

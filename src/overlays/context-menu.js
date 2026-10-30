@@ -1,7 +1,7 @@
 /* ---------------- CONTEXT MENUS ---------------- */
 import { ic } from '../core/icons.js';
 import { ST } from '../core/constants.js';
-import { D, mem, proj, task, visibleProjects } from '../core/store.js';
+import { D, canEdit, canManage, canSee, me, mem, proj, task, visibleProjects } from '../core/store.js';
 
 export function ctxMenu(p) {
   const I = (act, icon, label, extra = '', r = '') =>
@@ -10,6 +10,12 @@ export function ctxMenu(p) {
   if (p.ctx === 'task') {
     const t = task(p.id);
     if (!t) return '';
+    if (!canEdit(proj(t.project)))
+      return (
+        I('openTask', 'panel-right-open', 'Open') +
+        I('toggleFavTask', 'star', t.fav ? 'Remove from favorites' : 'Add to favorites') +
+        I('copyLink', 'link', 'Copy link')
+      );
     return (
       I('openTask', 'panel-right-open', 'Open') +
       I('editTask', 'pencil', 'Edit', '', 'E') +
@@ -31,19 +37,21 @@ export function ctxMenu(p) {
   if (p.ctx === 'project') {
     const pr = proj(p.id);
     if (!pr) return '';
+    const see = canSee(pr);
     return (
       I('openProject', 'arrow-up-right', 'Open') +
       I('toggleFavProj', 'star', pr.fav ? 'Remove from favorites' : 'Add to favorites') +
-      I('editProject', 'pencil', 'Rename & edit') +
-      I('share', 'share-2', 'Share') +
+      (canEdit(pr) ? I('editProject', 'pencil', 'Rename & edit') : '') +
+      (see || canManage(pr) ? I('share', 'share-2', see ? 'Share' : 'Manage access') : '') +
       I('copyLink', 'link', 'Copy link') +
-      I('dupProject', 'copy', 'Duplicate') +
+      (see && me()?.role !== 'Guest' ? I('dupProject', 'copy', 'Duplicate') : '') +
       sep +
       (visibleProjects().indexOf(pr) > 0 ? I('projUp', 'arrow-up', 'Move up in sidebar') : '') +
       (visibleProjects().indexOf(pr) < visibleProjects().length - 1 ? I('projDown', 'arrow-down', 'Move down in sidebar') : '') +
       sep +
-      I('archiveProject', 'archive', pr.status === 'complete' ? 'Archive' : 'Archive project') +
-      I('delProject', 'trash-2', 'Delete project', 'danger')
+      (canManage(pr)
+        ? I('archiveProject', 'archive', pr.status === 'complete' ? 'Archive' : 'Archive project') + I('delProject', 'trash-2', 'Delete project', 'danger')
+        : '')
     );
   }
   if (p.ctx === 'column') {
@@ -62,10 +70,11 @@ export function ctxMenu(p) {
     return (
       I('viewProfile', 'user', 'View profile') +
       I('assignToMember', 'plus', 'Assign a task') +
-      I('copyEmail', 'mail', 'Copy email') +
+      (m.email ? I('copyEmail', 'mail', 'Copy email') : '') +
       (canRm
         ? I('ctxRole', 'shield', 'Change role…') +
           (m.status === 'invited' ? I('resendInvite', 'send', 'Resend invite') : '') +
+          (me()?.role === 'Owner' && m.status === 'active' ? I('reset2fa', 'shield-off', 'Reset two-factor…') : '') +
           sep +
           I('removeMember', 'user-minus', 'Remove from workspace', 'danger')
         : '')

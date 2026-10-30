@@ -6,6 +6,11 @@ import { S } from '../core/store.js';
 import { render } from '../shell/render.js';
 import { A, BLUR, DBL, IN, saveDatePop } from './actions.js';
 
+/* Edits started by clicking or double-clicking inside a project I can only view or comment in
+   (data-ro, see core/store.js). The server would refuse them; don't start them. */
+const RO_EDITS = new Set(['editTask', 'editCell', 'toggleDone', 'toggleSub']);
+const readOnly = el => !!el.closest('[data-ro]');
+
 document.addEventListener(
   'click',
   e => {
@@ -34,7 +39,7 @@ document.addEventListener(
     }
     if (!el) return;
     if (el.tagName === 'BUTTON' || (el.tagName === 'INPUT' && el.type === 'checkbox' && el.dataset.a)) e.preventDefault();
-    const fn = A[el.dataset.a];
+    const fn = RO_EDITS.has(el.dataset.a) && readOnly(el) ? null : A[el.dataset.a];
     if (fn) {
       e.stopPropagation();
       fn(el, e);
@@ -44,7 +49,7 @@ document.addEventListener(
 );
 document.addEventListener('dblclick', e => {
   const el = e.target.closest('[data-dbl]');
-  if (el && DBL[el.dataset.dbl]) DBL[el.dataset.dbl](el, e);
+  if (el && DBL[el.dataset.dbl] && !readOnly(el)) DBL[el.dataset.dbl](el, e);
 });
 document.addEventListener('contextmenu', e => {
   const el = e.target.closest('[data-ctx]');

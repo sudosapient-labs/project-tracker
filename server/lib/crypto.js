@@ -79,17 +79,48 @@ export function totpAt(secret, t = Date.now()) {
   const n = ((h[o] & 127) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
   return String(n % 1e6).padStart(6, '0');
 }
-/* Accept the previous, current and next step to tolerate clock drift. */
-export function verifyTotp(secret, code, t = Date.now()) {
-  if (!secret || !/^\d{6}$/.test(code || '')) return false;
-  return [-1, 0, 1].some(d => {
-    const a = Buffer.from(totpAt(secret, t + d * 30000));
-    return crypto.timingSafeEqual(a, Buffer.from(code));
-  });
+/* The time step a code belongs to, or null. Accepts the previous, current and next step to tolerate
+   clock drift. Callers refuse steps at or before the last one accepted, so a code works once. */
+export function totpStep(secret, code, t = Date.now()) {
+  if (!secret || !/^\d{6}$/.test(code || '')) return null;
+  const now = Math.floor(t / 30000);
+  for (const d of [-1, 0, 1]) if (crypto.timingSafeEqual(Buffer.from(totpAt(secret, (now + d) * 30000)), Buffer.from(code))) return now + d;
+  return null;
 }
+export const verifyTotp = (secret, code, t) => totpStep(secret, code, t) != null;
 
 export function newRecoveryCodes(n = 8) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const part = () => Array.from(crypto.randomBytes(4), b => chars[b % chars.length]).join('');
   return Array.from({ length: n }, () => `${part()}-${part()}`);
+}
+
+/* ---------- secrets at rest ---------- */
+/* With SECRET_KEY set, TOTP secrets are stored as `enc:v1:<iv>.<tag>.<ciphertext>` (AES-256-GCM,
+   base64url), keyed by SHA-256 of SECRET_KEY. Without it they stay as they are. */
+const SEALED = 'enc:v1:';
+const aesKey = secretKey => crypto.createHash('sha256').update(secretKey).digest();
+export const isSealed = v => typeof v === 'string' && v.startsWith(SEALED);
+export function seal(plain, secretKey) {
+  if (!secretKey || plain == null || isSealed(plain)) return plain;
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', aesKey(secretKey), iv);
+  const body = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
+  return SEALED + [iv, c.getAuthTag(), body].map(b => b.toString('base64url')).join('.');
+}
+/* The plaintext, or null when it's sealed and SECRET_KEY is missing or wrong. */
+export function unseal(stored, secretKey) {
+  if (!isSealed(stored)) return stored ?? null;
+  if (!secretKey) return null;
+  try {
+    const [iv, tag, body] = stored
+      .slice(SEALED.length)
+      .split('.')
+      .map(s => Buffer.from(s, 'base64url'));
+    const d = crypto.createDecipheriv('aes-256-gcm', aesKey(secretKey), iv);
+    d.setAuthTag(tag);
+    return Buffer.concat([d.update(body), d.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
 }

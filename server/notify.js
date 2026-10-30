@@ -1,6 +1,7 @@
 /* Notifications: in-app records (pushed live to the recipient) plus email, both gated by the
    recipient's notification preferences (Settings → Notifications). */
 import { newId } from './lib/crypto.js';
+import { canSeeProject } from '../src/core/access.js';
 
 export const DEFAULT_NOTIF_PREFS = {
   email_mention: true,
@@ -45,6 +46,7 @@ const PUSH = {
 
 /* `reason` picks the preference; `n` is the record the inbox renders ({ type, task, project, text, snippet }).
    Pass the task itself as `task` when it may not be saved yet (e.g. while it's being created).
+   Nothing is sent about a project the recipient can't see, except an access request to its lead.
    ctx needs { repo, uid, now, changes } and, for email, { mailer, config }. */
 export function notify(ctx, to, reason, n, task = null) {
   if (!to || to === ctx.uid) return null;
@@ -53,6 +55,9 @@ export function notify(ctx, to, reason, n, task = null) {
   if (!m || m.status !== 'active') return null;
   const prefs = notifPrefs(repo, to);
   if (GATE[reason] && prefs[GATE[reason]] === false) return null;
+  const t = task || (n.task && repo.get('tasks', n.task));
+  const pid = t?.project || n.project;
+  if (pid && reason !== 'access' && !canSeeProject(repo.get('projects', pid), m)) return null;
   const row = {
     id: newId('n'),
     type: n.type,
@@ -65,7 +70,6 @@ export function notify(ctx, to, reason, n, task = null) {
     read: false,
   };
   repo.put('notifs', row, to);
-  const t = task || (n.task && repo.get('tasks', n.task));
   const who = ctx.uid ? repo.get('members', ctx.uid)?.name || 'Someone' : 'Sudo Sapient';
   const want = PUSH[reason];
   // Sent by engine.publish once the change is committed.

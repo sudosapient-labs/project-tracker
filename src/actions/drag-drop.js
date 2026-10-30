@@ -21,6 +21,8 @@ document.addEventListener('dragstart', e => {
     sp = e.target.closest?.('[data-drag-proj]');
   const el = card || row || cal || sp;
   if (!el) return;
+  // Nothing moves in a project I can only view or comment in.
+  if (el.closest('[data-ro]')) return e.preventDefault();
   DRAG = card
     ? { type: 'card', id: card.dataset.dragCard }
     : row

@@ -12,7 +12,7 @@ export function setup(env = {}, deps = {}) {
   const config = loadConfig({ NODE_ENV: 'test', DISABLE_RATE_LIMIT: 'true', UPLOAD_DIR: uploadDir, APP_URL: 'http://app.test', ...env });
   const db = openDb(':memory:');
   const quiet = { info() {}, error() {} };
-  const ctx = createApp({ db, config, log: quiet, pushSend: deps.pushSend || (async () => {}) });
+  const ctx = createApp({ db, config, log: deps.log || quiet, pushSend: deps.pushSend || (async () => {}) });
   return {
     ...ctx,
     db,
@@ -22,8 +22,10 @@ export function setup(env = {}, deps = {}) {
   };
 }
 
+/* Keeps every cookie the server sets (session and device), like a browser would. */
 export function client(app, { ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) Chrome/130.0', clientId } = {}) {
-  let cookie = '';
+  const jar = new Map();
+  const cookieHeader = () => [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
   async function req(method, url, body, headers = {}) {
     const isForm = body instanceof FormData;
     const res = await app.request(url, {
@@ -33,16 +35,16 @@ export function client(app, { ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)
         'x-requested-with': 'gr8r',
         'user-agent': ua,
         ...(clientId ? { 'x-client-id': clientId } : {}),
-        ...(cookie ? { cookie } : {}),
+        ...(jar.size ? { cookie: cookieHeader() } : {}),
         ...headers,
       },
       body: body == null ? undefined : isForm ? body : JSON.stringify(body),
     });
-    const sc = res.headers.get('set-cookie');
-    if (sc) {
+    for (const sc of res.headers.getSetCookie()) {
       const [pair] = sc.split(';');
-      const gone = /Max-Age=0/i.test(sc) || pair.endsWith('=');
-      cookie = gone ? '' : pair;
+      const [k, v = ''] = pair.split(/=(.*)/s);
+      if (/Max-Age=0/i.test(sc) || !v) jar.delete(k);
+      else jar.set(k, v);
     }
     const type = res.headers.get('content-type') || '';
     const data = type.includes('json') ? await res.json() : await res.text();
@@ -55,16 +57,26 @@ export function client(app, { ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)
     del: (u, h) => req('DELETE', u, null, h),
     sync: ops => req('POST', '/api/sync', { ops }),
     get cookie() {
-      return cookie;
+      return cookieHeader();
     },
     set cookie(v) {
-      cookie = v;
+      jar.clear();
+      for (const pair of v.split('; ').filter(Boolean)) {
+        const [k, val = ''] = pair.split(/=(.*)/s);
+        jar.set(k, val);
+      }
+    },
+    /* Just the session cookie's value ('' when signed out). */
+    get session() {
+      return jar.get('gr8r_sid') || '';
     },
   };
 }
 
 export const PW = 'correct-horse-9';
-export const code = secret => totpAt(secret);
+/* An authenticator code `steps` time steps from now. Each step's code is accepted once, and the
+   server tolerates one step of clock drift, so tests use 0 and then 1. */
+export const code = (secret, steps = 0) => totpAt(secret, Date.now() + steps * 30_000);
 
 /* Sign up and verify an account, returning its signed-in client. */
 export async function account(t, { name = 'Ada Owner', email = 'ada@example.com', invite } = {}) {

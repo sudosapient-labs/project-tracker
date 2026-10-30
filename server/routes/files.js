@@ -8,7 +8,8 @@ import { Hono } from 'hono';
 import { requireAuth } from '../auth.js';
 import { newId } from '../lib/crypto.js';
 import { fileType, fsize } from '../../src/core/file-types.js';
-import { canSee } from '../sync/rules.js';
+import { EDIT } from '../../src/core/access.js';
+import { canSee, projectLevel } from '../sync/rules.js';
 
 const INLINE = /^(image\/(png|jpeg|gif|webp)|application\/pdf|text\/plain)$/;
 const safeName = n =>
@@ -28,6 +29,7 @@ export function fileRoutes() {
     if (Number(c.req.header('content-length') || 0) > max) return c.json({ error: `Files can be up to ${fsize(max)}.` }, 413);
     const p = repo.get('projects', String(q.project || ''));
     if (!p || !canSee(p, member)) return c.json({ error: "You don't have access to that project." }, 403);
+    if (projectLevel(p, member) < EDIT) return c.json({ error: 'You can’t add files to this project.' }, 403);
     if (q.task && repo.get('tasks', String(q.task))?.project !== p.id) return c.json({ error: 'That task no longer exists.' }, 404);
     if (!q.name || !c.req.raw.body) return c.json({ error: 'Choose a file to upload.' }, 400);
 
@@ -58,23 +60,34 @@ export function fileRoutes() {
     const rec = { id, name, type: fileType(name), size: fsize(bytes), by: member.id, at: now, url: `/api/files/${id}/${encodeURIComponent(name)}` };
     const fileRow = { ...rec, project: p.id, task: q.task || null };
     const changes = [];
-    // Re-read the task inside the transaction so attachments added concurrently aren't lost.
-    const t = db.tx(() => {
-      repo.put('files', fileRow, p.id);
-      db.run('UPDATE files SET storage_key = ?, mime = ?, bytes = ? WHERE id = ?', rel, mime, bytes, id);
-      changes.push({ c: 'files', id, v: fileRow, pid: p.id });
-      const task = q.task ? repo.get('tasks', q.task) : null;
-      if (task) {
-        task.attachments = [...(task.attachments || []), rec];
-        task.updated = now;
-        repo.put('tasks', task, p.id);
-        changes.push({ c: 'tasks', id: task.id, v: task, pid: p.id });
-        const a = { id: newId('a'), by: member.id, verb: 'added a file to', task: task.id, project: p.id, at: now, extra: name };
-        repo.put('activity', a, p.id);
-        changes.push({ c: 'activity', id: a.id, v: a, pid: p.id });
-      }
-      return task;
-    });
+    // Re-read the project and task inside the transaction: either may have been deleted while the
+    // bytes streamed in (then nothing is recorded and the bytes go), and attachments added
+    // concurrently mustn't be lost.
+    let t;
+    try {
+      t = db.tx(() => {
+        if (!repo.get('projects', p.id)) throw Object.assign(new Error('gone'), { gone: 'That project no longer exists.' });
+        if (q.task && repo.get('tasks', String(q.task))?.project !== p.id) throw Object.assign(new Error('gone'), { gone: 'That task no longer exists.' });
+        repo.put('files', fileRow, p.id);
+        db.run('UPDATE files SET storage_key = ?, mime = ?, bytes = ? WHERE id = ?', rel, mime, bytes, id);
+        changes.push({ c: 'files', id, v: fileRow, pid: p.id });
+        const task = q.task ? repo.get('tasks', q.task) : null;
+        if (task) {
+          task.attachments = [...(task.attachments || []), rec];
+          task.updated = now;
+          repo.put('tasks', task, p.id);
+          changes.push({ c: 'tasks', id: task.id, v: task, pid: p.id });
+          const a = { id: newId('a'), by: member.id, verb: 'added a file to', task: task.id, project: p.id, at: now, extra: name };
+          repo.put('activity', a, p.id);
+          changes.push({ c: 'activity', id: a.id, v: a, pid: p.id });
+        }
+        return task;
+      });
+    } catch (e) {
+      await fs.promises.rm(full, { force: true });
+      if (!e.gone) throw e;
+      return c.json({ error: e.gone }, 404);
+    }
     engine.publish(changes, { exceptClient: c.req.header('x-client-id') });
     return c.json(
       {
@@ -97,7 +110,14 @@ export function fileRoutes() {
     c.header('Content-Type', inline ? row.mime : 'application/octet-stream');
     c.header('Content-Length', String(row.bytes));
     c.header('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(name)}`);
-    c.header('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
+    // Everything is sandboxed (no script, no same origin), except PDFs: Chromium refuses to render a
+    // PDF in a sandboxed document, so those get a CSP that still blocks scripts and other origins.
+    c.header(
+      'Content-Security-Policy',
+      inline && row.mime === 'application/pdf'
+        ? "default-src 'none'; object-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'"
+        : "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox",
+    );
     c.header('Cache-Control', 'private, max-age=3600');
     return c.body(Readable.toWeb(fs.createReadStream(full)));
   });
