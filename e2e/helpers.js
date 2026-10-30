@@ -1,6 +1,8 @@
 import { expect } from '@playwright/test';
 
 export const OWNER = { name: 'Ada Lovelace', email: 'ada@example.com', password: 'analytical-engine-1' };
+// 01-auth resets the owner's password to this; later journeys sign in with it.
+export const OWNER_AFTER_RESET = { ...OWNER, password: 'new-engine-pass-7' };
 export const MATE = { name: 'Grace Hopper', email: 'grace@example.com', password: 'compiler-nanosecond-2' };
 
 /* Collect uncaught page errors and error toasts (e.g. a change the server rejected), so every
@@ -38,3 +40,18 @@ export async function signOut(page) {
 
 /* Toast text appears in #toasts; wait for one containing `text`. */
 export const toastWith = (page, text) => expect(page.locator('#toasts .toast', { hasText: text }).first()).toBeVisible();
+
+/* Every local change has reached the server (see <html data-sync>). */
+export async function synced(page) {
+  await page.waitForTimeout(200);
+  await expect(page.locator('html')).toHaveAttribute('data-sync', 'saved');
+}
+
+/* Open a project from the sidebar and switch to one of its tabs. */
+export async function openProject(page, name, tab = 'list') {
+  await page
+    .locator('.side [data-drag-proj]')
+    .filter({ has: page.getByText(name, { exact: true }) })
+    .click();
+  await page.locator(`.tab[data-tab="${tab}"]`).click();
+}

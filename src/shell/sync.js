@@ -39,6 +39,7 @@ export function prime(data) {
   for (const d of DOCS) shadow.docs[d] = JSON.stringify(data[d] ?? null);
   queue = [];
   stateSent = JSON.stringify(stateBody());
+  syncState();
 }
 export function stopSync() {
   shadow = null;
@@ -47,6 +48,10 @@ export function stopSync() {
   disconnectLive();
 }
 export const pendingCount = () => queue.length + inflight.length;
+/* <html data-sync="saving|saved|offline"> reflects whether every local change has reached the server. */
+function syncState() {
+  document.documentElement.dataset.sync = S.ui.offline ? 'offline' : queue.length || inflight.length || flushing ? 'saving' : 'saved';
+}
 
 /* ---------- local → server ---------- */
 export function collect() {
@@ -96,6 +101,7 @@ export function collect() {
     }
   }
   if (queue.length && !S.ui.offline) flush();
+  else syncState();
 }
 
 /* Fields of a record that still have unconfirmed local edits. */
@@ -175,6 +181,7 @@ export async function flush() {
   if (flushing || !queue.length || !shadow) return;
   flushing = true;
   inflight = queue.splice(0, BATCH);
+  syncState();
   let ops = inflight;
   try {
     const res = await api('POST', '/api/sync', { ops });
@@ -205,6 +212,7 @@ export async function flush() {
     flushing = false;
   }
   if (queue.length && !S.ui.offline) flush();
+  else syncState();
 }
 
 /* Send everything now and wait for the server. Resolves with the errors of rejected changes, so
@@ -229,6 +237,7 @@ function offline() {
     S.ui.offline = true;
     render();
   }
+  syncState();
   clearTimeout(retryT);
   retryT = setTimeout(retryNow, retryMs);
   retryMs = Math.min(retryMs * 2, 30_000);

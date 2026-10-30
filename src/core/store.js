@@ -107,6 +107,7 @@ export const S = {
 export const saveHooks = { onSave: () => {} };
 export let _saveT;
 export function save() {
+  document.documentElement.dataset.sync = 'saving';
   clearTimeout(_saveT);
   _saveT = setTimeout(() => saveHooks.onSave(), 150);
 }

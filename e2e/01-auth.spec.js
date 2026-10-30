@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { OWNER, signIn, signOut, toastWith, watchErrors } from './helpers.js';
+import { OWNER, OWNER_AFTER_RESET, signIn, signOut, toastWith, watchErrors } from './helpers.js';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -75,17 +75,16 @@ test('a forgotten password is reset through the emailed link', async ({ page }) 
   await page.click('#dev-link');
 
   await expect(page.getByRole('heading', { name: 'Choose a new password' })).toBeVisible();
-  await page.fill('#r-pw', 'new-engine-pass-7');
+  await page.fill('#r-pw', OWNER_AFTER_RESET.password);
   await page.fill('#r-pw2', 'mismatch-pass-77');
   await page.click('#reset-btn');
   await expect(page.locator('#pw2-err')).toBeVisible();
-  await page.fill('#r-pw', 'new-engine-pass-7');
-  await page.fill('#r-pw2', 'new-engine-pass-7');
+  await page.fill('#r-pw', OWNER_AFTER_RESET.password);
+  await page.fill('#r-pw2', OWNER_AFTER_RESET.password);
   await page.click('#reset-btn');
   await expect(page.getByRole('heading', { name: 'Password updated' })).toBeVisible();
 
-  OWNER.password = 'new-engine-pass-7';
-  await signIn(page, OWNER);
+  await signIn(page, OWNER_AFTER_RESET);
   await expect(page.locator('.side')).toContainText('Difference Engine');
   expect(await errors()).toEqual([]);
 });

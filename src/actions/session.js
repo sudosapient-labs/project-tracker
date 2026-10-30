@@ -8,7 +8,7 @@ import { validTz } from '../core/constants.js';
 import { D, DEFAULT_PREFS, S, allTasks, canSee, emptyData, me, proj } from '../core/store.js';
 import { ApiError, get, post } from '../core/api.js';
 import { toast } from '../ui/toast.js';
-import { ROUTE_NAMES, render } from '../shell/render.js';
+import { hashFor, render, routeFromHash } from '../shell/render.js';
 import { commit, connectLive, onSync, prime, stopSync } from '../shell/sync.js';
 import { A, EMAIL_RE } from './actions.js';
 
@@ -59,26 +59,26 @@ async function enter(hash, msg) {
     return;
   }
   S.ui.auth = null;
-  openRoute(hash);
+  openRoute(hash || S.ui.returnTo || '');
+  S.ui.returnTo = null;
   if (msg) toast(msg);
 }
 
-/* Route from the URL hash: a page name, or a deep link written by A.copyLink (#task/KEY, #project/key, #file/id). */
+/* Route from the URL hash: a page (see hashFor in shell/render.js), or a deep link written by
+   A.copyLink (#task/KEY, #file/id). */
 function openRoute(h = '') {
-  S.ui.route = h && ROUTE_NAMES[h] ? h : S.prefs.home || 'home';
-  S.ui.params = {};
+  const r = routeFromHash(h);
+  S.ui.route = r?.route || S.prefs.home || 'home';
+  S.ui.params = r?.params || {};
+  S.ui.history = [];
+  history.replaceState(null, '', location.pathname + location.search + '#' + hashFor(S.ui.route, S.ui.params));
+  render();
   let kind, ref;
   try {
     [kind, ref] = h.split('/').map(decodeURIComponent);
   } catch {
     /* malformed escape in the hash: open normally */
   }
-  const p = kind === 'project' && D().projects.find(x => x.key.toLowerCase() === ref);
-  if (p) {
-    S.ui.route = 'project';
-    S.ui.params = { id: p.id, tab: 'board' };
-  }
-  render();
   const t = kind === 'task' && allTasks().find(x => x.key === ref);
   if (t) A.openTask({ dataset: { id: t.id } });
   const f = kind === 'file' && D().files.find(x => x.id === ref);
@@ -90,6 +90,8 @@ async function route(s, hash = '', msg) {
   S.ui.me = s.user;
   S.ui.wsName = s.workspace?.name || '';
   if (!s.user) {
+    // Remember a deep link opened while signed out, and go there after signing in.
+    if (hash && !AUTH_SCREENS.includes(hash)) S.ui.returnTo = hash;
     S.ui.auth = AUTH_SCREENS.includes(hash) ? hash : s.workspace ? 'login' : 'signup';
     render();
     return;
