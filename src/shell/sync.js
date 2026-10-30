@@ -279,7 +279,7 @@ addEventListener('pagehide', () => {
     method: 'POST',
     keepalive: true,
     credentials: 'same-origin',
-    headers: { 'content-type': 'application/json', 'x-requested-with': 'gr8r', 'x-client-id': CLIENT_ID },
+    headers: { 'content-type': 'application/json', 'x-requested-with': 'sudo-sapient', 'x-client-id': CLIENT_ID },
     body: JSON.stringify({ ops: queue.splice(0, BATCH) }),
   }).catch(() => {});
 });

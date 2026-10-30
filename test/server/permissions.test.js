@@ -66,7 +66,7 @@ const boot = async c => (await c.get('/api/bootstrap')).body.data;
 async function upload(t, c, q) {
   const res = await t.app.request(`/api/files?${new URLSearchParams(q)}`, {
     method: 'POST',
-    headers: { 'x-requested-with': 'gr8r', 'content-type': 'text/plain', cookie: c.cookie },
+    headers: { 'x-requested-with': 'sudo-sapient', 'content-type': 'text/plain', cookie: c.cookie },
     body: 'bytes',
   });
   return { status: res.status, body: await res.json() };
@@ -100,7 +100,7 @@ describe('A1 share-dialog privacy', () => {
   });
 
   it('the migration makes projects saved with access "private" actually private, and aligns access everywhere', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gr8r-mig-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-mig-'));
     const file = path.join(dir, 'db.sqlite');
     const migs = path.resolve('server/migrations');
     const raw = new DatabaseSync(file);

@@ -1,6 +1,6 @@
 {
-  "name": "gr8r-studio",
-  "version": "1.0.0",
+  "name": "sudo-sapient",
+  "version": "0.1.0",
   "private": true,
   "description": "Sudo Sapient: a calm, structured project management workspace.",
   "type": "module",
@@ -16,7 +16,7 @@
     "db:backup": "node server/scripts/backup.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "vite build && playwright test",
+    "test:e2e": "pnpm build && playwright test",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

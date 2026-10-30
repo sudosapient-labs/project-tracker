@@ -1,7 +1,7 @@
 /* Development only: fill an empty database with the original demo workspace (Sudo Sapient) so the
    UI has realistic data to look at. Every active demo person can sign in with DEMO_PASSWORD.
 
-   pnpm db:seed            seeds data/gr8r.db (or DATABASE_PATH)            */
+   pnpm db:seed            seeds data/sudo-sapient.db (or DATABASE_PATH)    */
 import { TEAMS_SEED } from '../../src/core/constants.js';
 import { loadConfig } from '../config.js';
 import { openDb } from '../db.js';
@@ -12,7 +12,7 @@ import { hashPassword } from '../lib/crypto.js';
 globalThis.document ??= { querySelectorAll: () => [] };
 const { seed } = await import('./demo-data.js');
 
-const DEMO_PASSWORD = process.env.DEMO_PASSWORD || 'gr8r-demo-123';
+const DEMO_PASSWORD = process.env.DEMO_PASSWORD || 'sapient-demo-123';
 const config = loadConfig();
 if (config.prod) {
   console.error('Refusing to seed demo data in production.');

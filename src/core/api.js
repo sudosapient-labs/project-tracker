@@ -24,7 +24,7 @@ export async function api(method, url, body) {
       method,
       credentials: 'same-origin',
       headers: {
-        'x-requested-with': 'gr8r',
+        'x-requested-with': 'sudo-sapient',
         'x-client-id': CLIENT_ID,
         ...(body != null && !form ? { 'content-type': 'application/json' } : {}),
       },
@@ -48,7 +48,7 @@ export function upload(url, file, onProgress) {
     const x = new XMLHttpRequest();
     x.open('POST', url);
     x.withCredentials = true;
-    x.setRequestHeader('x-requested-with', 'gr8r');
+    x.setRequestHeader('x-requested-with', 'sudo-sapient');
     x.setRequestHeader('x-client-id', CLIENT_ID);
     x.setRequestHeader('content-type', file.type || 'application/octet-stream');
     x.upload.onprogress = e => e.lengthComputable && onProgress?.(e.loaded / e.total);

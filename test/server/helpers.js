@@ -8,7 +8,7 @@ import { createApp } from '../../server/app.js';
 import { totpAt } from '../../server/lib/crypto.js';
 
 export function setup(env = {}, deps = {}) {
-  const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gr8r-up-'));
+  const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-up-'));
   const config = loadConfig({ NODE_ENV: 'test', DISABLE_RATE_LIMIT: 'true', UPLOAD_DIR: uploadDir, APP_URL: 'http://app.test', ...env });
   const db = openDb(':memory:');
   const quiet = { info() {}, error() {} };
@@ -32,7 +32,7 @@ export function client(app, { ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)
       method,
       headers: {
         ...(isForm ? {} : { 'content-type': 'application/json' }),
-        'x-requested-with': 'gr8r',
+        'x-requested-with': 'sudo-sapient',
         'user-agent': ua,
         ...(clientId ? { 'x-client-id': clientId } : {}),
         ...(jar.size ? { cookie: cookieHeader() } : {}),
@@ -68,7 +68,7 @@ export function client(app, { ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)
     },
     /* Just the session cookie's value ('' when signed out). */
     get session() {
-      return jar.get('gr8r_sid') || '';
+      return jar.get('ss_sid') || '';
     },
   };
 }

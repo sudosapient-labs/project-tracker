@@ -27,7 +27,7 @@ test.beforeAll(async ({ browser }) => {
 });
 test.afterAll(async () => page.context().close());
 
-const api = (method, url, data) => page.request.fetch(url, { method, headers: { 'x-requested-with': 'gr8r' }, ...(data ? { data } : {}) });
+const api = (method, url, data) => page.request.fetch(url, { method, headers: { 'x-requested-with': 'sudo-sapient' }, ...(data ? { data } : {}) });
 const sync = async ops => (await (await api('POST', '/api/sync', { ops })).json()).results;
 const put = (c, v) => ({ c, id: v.id, k: 'put', v });
 const today = new Date().toISOString().slice(0, 10);
@@ -152,7 +152,7 @@ test('hostile values in every user-controlled field render as text', async () =>
   // The server cleans the description on write (and the client would anyway).
   expect(res[2].v.desc).toBe('<p>Plan</p>"&gt;go');
   const up = await page.request.post(`/api/files?project=pxss&task=txss1&name=${encodeURIComponent(P1 + '.png')}`, {
-    headers: { 'x-requested-with': 'gr8r', 'content-type': 'image/png' },
+    headers: { 'x-requested-with': 'sudo-sapient', 'content-type': 'image/png' },
     data: Buffer.from('not really a png'),
   });
   expect(up.status()).toBe(201);

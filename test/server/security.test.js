@@ -59,7 +59,7 @@ describe('B8 setting up a fresh deployment', () => {
     const signup = body =>
       app.request('/api/auth/signup', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-requested-with': 'gr8r' },
+        headers: { 'content-type': 'application/json', 'x-requested-with': 'sudo-sapient' },
         body: JSON.stringify(body),
       });
     const body = { name: 'Ada', email: 'ada@example.com', password: PW };
@@ -197,7 +197,7 @@ describe('C14 request body limits', () => {
     const { c } = await account(t);
     const big = n => JSON.stringify({ email: 'a@b.co', password: 'x'.repeat(n) });
     const raw = (url, body, method = 'POST') =>
-      t.app.request(url, { method, headers: { 'content-type': 'application/json', 'x-requested-with': 'gr8r', cookie: c.cookie }, body });
+      t.app.request(url, { method, headers: { 'content-type': 'application/json', 'x-requested-with': 'sudo-sapient', cookie: c.cookie }, body });
     const login = await raw('/api/auth/login', big(100_000));
     expect(login.status).toBe(413);
     expect(await login.json()).toEqual({ error: 'This request is too large.' });
@@ -212,9 +212,9 @@ describe('C14 request body limits', () => {
         ctl.close();
       },
     });
-    expect((await t.app.request('/api/auth/login', { method: 'POST', headers: { 'x-requested-with': 'gr8r' }, body: stream, duplex: 'half' })).status).toBe(
-      413,
-    );
+    expect(
+      (await t.app.request('/api/auth/login', { method: 'POST', headers: { 'x-requested-with': 'sudo-sapient' }, body: stream, duplex: 'half' })).status,
+    ).toBe(413);
 
     await c.sync([
       {
@@ -226,7 +226,7 @@ describe('C14 request body limits', () => {
     ]);
     const up = await t.app.request('/api/files?project=p1&name=big.bin', {
       method: 'POST',
-      headers: { 'x-requested-with': 'gr8r', 'content-type': 'application/octet-stream', cookie: c.cookie },
+      headers: { 'x-requested-with': 'sudo-sapient', 'content-type': 'application/octet-stream', cookie: c.cookie },
       body: Buffer.alloc(2 * 1024 * 1024),
     });
     expect(up.status).toBe(201);
@@ -247,7 +247,7 @@ describe('C15 served files keep their own CSP', () => {
     ]);
     const up = await t.app.request('/api/files?project=p1&name=a.txt', {
       method: 'POST',
-      headers: { 'x-requested-with': 'gr8r', 'content-type': 'text/plain', cookie: c.cookie },
+      headers: { 'x-requested-with': 'sudo-sapient', 'content-type': 'text/plain', cookie: c.cookie },
       body: 'hi',
     });
     const f = (await up.json()).file;

@@ -1,12 +1,12 @@
 /* Backups. The database is copied with SQLite's VACUUM INTO: a consistent, compacted copy taken
-   while the app keeps running, named gr8r-<UTC timestamp>.db; only the newest `keep` are kept.
+   while the app keeps running, named sudo-sapient-<UTC timestamp>.db; only the newest `keep` are kept.
    Uploaded files are mirrored into <dir>/uploads: stored files never change (each has its own random
    key), so each run copies only the ones that are new, and none are removed, so every kept database
    copy still has its files. */
 import fs from 'node:fs';
 import path from 'node:path';
 
-const NAME = /^gr8r-\d{8}T\d{6}Z\.db$/;
+const NAME = /^sudo-sapient-\d{8}T\d{6}Z\.db$/;
 export const listBackups = dir =>
   fs.existsSync(dir)
     ? fs
@@ -22,7 +22,7 @@ export function backup(db, dir, keep = 14, now = new Date()) {
     .toISOString()
     .replace(/[-:]/g, '')
     .replace(/\.\d+Z$/, 'Z');
-  const file = path.resolve(dir, `gr8r-${stamp}.db`);
+  const file = path.resolve(dir, `sudo-sapient-${stamp}.db`);
   db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
   for (const old of listBackups(dir).slice(0, -keep)) fs.rmSync(path.join(dir, old), { force: true });
   return file;

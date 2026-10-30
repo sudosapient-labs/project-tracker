@@ -1,12 +1,15 @@
 node_modules/
 dist/
-.vercel/
 .DS_Store
 __MACOSX/
 *.log
 .env
 .env.*
 !.env.example
+# local database, uploads and the default backups next to them
 data/
+backups/
 test-results/
 playwright-report/
+# local CLI state
+.railway/

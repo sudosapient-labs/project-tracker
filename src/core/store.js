@@ -5,7 +5,7 @@ import { COMMENT, EDIT, canManageProject, projectLevel } from './access.js';
 
 /* Only display preferences are cached in the browser (so the theme applies before the first
    request finishes). Workspace data always comes from the server. */
-export const PREFS_KEY = 'gr8r.prefs';
+export const PREFS_KEY = 'sudo-sapient.prefs';
 export const DEFAULT_PREFS = {
   theme: 'system',
   accent: 'indigo',

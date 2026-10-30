@@ -70,7 +70,7 @@ async function people(env = {}, deps = {}) {
 async function upload(t, c, q, body = 'bytes', type = 'text/plain') {
   const r = await t.app.request(`/api/files?${new URLSearchParams(q)}`, {
     method: 'POST',
-    headers: { 'x-requested-with': 'gr8r', 'content-type': type, cookie: c.cookie },
+    headers: { 'x-requested-with': 'sudo-sapient', 'content-type': type, cookie: c.cookie },
     body,
     ...(body instanceof ReadableStream ? { duplex: 'half' } : {}),
   });
@@ -88,7 +88,7 @@ function listen(t, ...uids) {
 }
 /* A database file with the migrations before `upto` applied, ready for rows written the old way. */
 function oldDb(upto) {
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'gr8r-mig-')), 'db.sqlite');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ss-mig-')), 'db.sqlite');
   const migs = path.resolve('server/migrations');
   const raw = new DatabaseSync(file);
   raw.exec('CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)');
@@ -307,12 +307,12 @@ describe('M2 device cookies keep the owner signing in while someone else is lock
     await account(t);
     const home = t.client();
     expect((await login(home, PW, 50)).status).toBe(200);
-    expect(home.cookie).toMatch(/gr8r_dev=/);
-    const set = (await login(t.client(), PW, 51)).headers.getSetCookie().find(s => s.startsWith('gr8r_dev='));
+    expect(home.cookie).toMatch(/ss_dev=/);
+    const set = (await login(t.client(), PW, 51)).headers.getSetCookie().find(s => s.startsWith('ss_dev='));
     expect(set).toMatch(/HttpOnly/i);
     expect(set).toMatch(/Path=\/api\/auth/);
     await home.post('/api/auth/logout');
-    expect(home.cookie).toMatch(/gr8r_dev=/); // signing out keeps it
+    expect(home.cookie).toMatch(/ss_dev=/); // signing out keeps it
 
     await attack(t);
     expect((await login(t.client(), PW, 60)).status).toBe(429);
@@ -470,7 +470,7 @@ describe('M7 only development and test relax security', () => {
     expect(lines.join('\n')).toContain('#setup/');
     const r = await app.request('/api/auth/forgot', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-requested-with': 'gr8r' },
+      headers: { 'content-type': 'application/json', 'x-requested-with': 'sudo-sapient' },
       body: JSON.stringify({ email: 'anyone@example.com' }),
     });
     expect(await r.json()).toEqual({ ok: true });

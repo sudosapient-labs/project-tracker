@@ -48,7 +48,7 @@ async function withProject(env) {
 async function rawUpload(t, c, q, bytes, type = 'image/png') {
   const res = await t.app.request(`/api/files?${new URLSearchParams(q)}`, {
     method: 'POST',
-    headers: { 'x-requested-with': 'gr8r', 'content-type': type, cookie: c.cookie },
+    headers: { 'x-requested-with': 'sudo-sapient', 'content-type': type, cookie: c.cookie },
     body: bytes,
   });
   return { status: res.status, body: await res.json() };

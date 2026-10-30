@@ -2,6 +2,8 @@
    needs no .env file. Only NODE_ENV `development` and `test` relax security; any other value, or
    none at all, runs with production behaviour (Secure cookies, setup token, no emailed links in API
    responses), so a mistyped or unusual NODE_ENV fails closed. */
+import fs from 'node:fs';
+
 export function loadConfig(env = process.env) {
   const nodeEnv = env.NODE_ENV || 'production';
   const dev = nodeEnv === 'development' || nodeEnv === 'test';
@@ -15,7 +17,8 @@ export function loadConfig(env = process.env) {
     test: nodeEnv === 'test',
     port: Number(env.PORT) || 8787,
     host: env.HOST || (prod ? '0.0.0.0' : '127.0.0.1'),
-    dbPath: env.DATABASE_PATH || 'data/gr8r.db',
+    // Legacy default from before the rename: keep using an existing local data/gr8r.db.
+    dbPath: env.DATABASE_PATH || (!fs.existsSync('data/sudo-sapient.db') && fs.existsSync('data/gr8r.db') ? 'data/gr8r.db' : 'data/sudo-sapient.db'),
     uploadDir: env.UPLOAD_DIR || 'data/uploads',
     staticDir: env.STATIC_DIR || 'dist',
     serveStatic: env.SERVE_STATIC ? env.SERVE_STATIC === 'true' : prod,

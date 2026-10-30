@@ -3,8 +3,8 @@
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { newId, sha256, token } from './lib/crypto.js';
 
-export const COOKIE = 'gr8r_sid';
-export const DEVICE_COOKIE = 'gr8r_dev';
+export const COOKIE = 'ss_sid';
+export const DEVICE_COOKIE = 'ss_dev';
 const DAY = 86_400_000;
 const DEVICE_MS = 365 * DAY;
 const REMEMBER_MS = 30 * DAY;
@@ -109,7 +109,7 @@ export const requireAuth =
    preflight (which this API never approves), so together with SameSite cookies this blocks CSRF. */
 export const csrfGuard = async (c, next) => {
   const m = c.req.method;
-  if (m !== 'GET' && m !== 'HEAD' && c.req.header('x-requested-with') !== 'gr8r') return c.json({ error: 'Missing request header.' }, 403);
+  if (m !== 'GET' && m !== 'HEAD' && c.req.header('x-requested-with') !== 'sudo-sapient') return c.json({ error: 'Missing request header.' }, 403);
   return next();
 };
 
