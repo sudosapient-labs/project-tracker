@@ -7,9 +7,9 @@ import { D, S, allTasks, canSee, commentsOf, logAct, me, mem, proj, save, task, 
 import { fileType, fsize } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
-import { post } from '../core/api.js';
+import { post, upload } from '../core/api.js';
 import { autosize, focusKey, fxSet, go, render } from '../shell/render.js';
-import { commit, restoreSnapshot, retryNow, takeSnapshot } from '../shell/sync.js';
+import { applyRemote, commit, restoreSnapshot, retryNow, takeSnapshot } from '../shell/sync.js';
 import { viewOf } from '../shell/view-engine.js';
 import { TEMPLATES, closeModal, openModal } from '../overlays/modals.js';
 import { closePop, dateDirty, dpHead, openPop, tgt } from '../overlays/popovers.js';
@@ -657,7 +657,7 @@ IN.formMore = el => {
   S.ui.form.more = el.checked;
 };
 IN.formFiles = el => {
-  [...el.files].forEach(f => S.ui.form.files.push({ name: f.name, size: fsize(f.size), type: fileType(f.name) }));
+  [...el.files].forEach(f => S.ui.form.files.push({ name: f.name, size: fsize(f.size), type: fileType(f.name), file: f }));
   render();
 };
 KEY.formAddSub = el => {
@@ -688,7 +688,9 @@ A.submitTask = () => {
     return;
   }
   S.ui.errors = {};
-  const files = f.files.map(x => ({ id: uid('a'), name: x.name, type: x.type, size: x.size, by: D().me, at: Date.now() }));
+  // Attachments upload once the task exists on the server.
+  const files = f.files.map(x => x.file).filter(Boolean);
+  const attach = t => files.length && commit().then(errs => !errs.length && handleFiles(files, { project: t.project, task: t.id }));
   const base = {
     title,
     project: f.project,
@@ -714,10 +716,10 @@ A.submitTask = () => {
             .trim()
         )
           t.desc = f.desc ? `<p>${esc(f.desc)}</p>` : '';
-        t.attachments.push(...files);
       })
     )
       return;
+    attach(t);
     S.ui.modals.pop();
     render();
     toast('Changes saved');
@@ -726,11 +728,11 @@ A.submitTask = () => {
   let t;
   if (
     !mutate(() => {
-      t = createTask({ ...base, desc: f.desc ? `<p>${esc(f.desc)}</p>` : '', attachments: files });
-      files.forEach(x => D().files.unshift({ ...x, project: t.project, task: t.id }));
+      t = createTask({ ...base, desc: f.desc ? `<p>${esc(f.desc)}</p>` : '' });
     })
   )
     return;
+  attach(t);
   if (f.more) {
     Object.assign(f, { title: '', desc: '', subtasks: [], files: [] });
     render();
@@ -880,34 +882,38 @@ A.previewFile = el => {
 export function handleFiles(files, ctx) {
   if (!files || !files.length) return;
   if (S.ui.offline) {
-    toast("Upload failed — you're offline.", { kind: 'err', action: 'Try again', onAction: () => {} });
+    toast("Upload failed — you're offline.", { kind: 'err', action: 'Try again', onAction: () => handleFiles(files, ctx) });
     return;
   }
   S.ui.uploads = S.ui.uploads || [];
   [...files].forEach(file => {
     const up = { id: uid('u'), name: file.name, size: fsize(file.size), project: ctx.project, task: ctx.task, pct: 0 };
     S.ui.uploads.push(up);
-    const iv = setInterval(() => {
-      up.pct = Math.min(100, up.pct + 9 + Math.round(Math.random() * 22));
-      const bar = document.getElementById('upbar-' + up.id),
-        pc = document.getElementById('upct-' + up.id);
-      if (bar) bar.style.setProperty('--p', up.pct / 100);
+    const q = new URLSearchParams({ project: ctx.project, name: file.name, ...(ctx.task ? { task: ctx.task } : {}) });
+    const done = () => (S.ui.uploads = S.ui.uploads.filter(x => x !== up));
+    upload(`/api/files?${q}`, file, p => {
+      up.pct = Math.min(99, Math.round(p * 100));
+      document.getElementById('upbar-' + up.id)?.style.setProperty('--p', up.pct / 100);
+      const pc = document.getElementById('upct-' + up.id);
       if (pc) pc.textContent = up.pct + '%';
-      if (up.pct >= 100) {
-        clearInterval(iv);
-        S.ui.uploads = S.ui.uploads.filter(x => x !== up);
-        const rec = { id: uid('f'), name: up.name, type: fileType(up.name), size: up.size, by: D().me, at: Date.now() };
-        D().files.unshift({ ...rec, project: up.project, task: up.task || null });
-        if (up.task) {
-          const t = task(up.task);
-          t.attachments.push(rec);
-          logAct('added a file to', t, up.name);
-        }
-        save();
+    })
+      .then(r => {
+        done();
+        applyRemote(
+          [
+            { c: 'files', id: r.file.id, v: r.file },
+            r.task && { c: 'tasks', id: r.task.id, v: r.task },
+            r.activity && { c: 'activity', id: r.activity.id, v: r.activity },
+          ].filter(Boolean),
+        );
         render();
         toast(`Uploaded ${up.name}`);
-      }
-    }, 220);
+      })
+      .catch(e => {
+        done();
+        render();
+        toast(`Couldn't upload ${up.name}. ${e.message}`, { kind: 'err', action: 'Try again', onAction: () => handleFiles([file], ctx) });
+      });
   });
   render();
 }

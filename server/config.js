@@ -22,7 +22,7 @@ export function loadConfig(env = process.env) {
     requireVerification: env.REQUIRE_EMAIL_VERIFICATION !== 'false',
     trustProxy: env.TRUST_PROXY === 'true',
     secureCookies: env.SECURE_COOKIES ? env.SECURE_COOKIES === 'true' : prod,
-    maxUploadBytes: (Number(env.MAX_UPLOAD_MB) || 50) * 1024 * 1024,
+    maxUploadBytes: (Number(env.MAX_UPLOAD_MB) || 250) * 1024 * 1024,
     // Without a mail transport, non-production API responses include the emailed link so the
     // verify / reset screens can offer it directly. Never on in production.
     exposeEmailLinks: !prod && !smtpUrl,

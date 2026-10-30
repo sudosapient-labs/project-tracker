@@ -284,7 +284,11 @@ export function filePreviewModal(m, H) {
   const f = m.file;
   const t = FT[f.type] || FT.other;
   return `${H(esc(f.name), `${t.n} · ${f.size} · Uploaded by ${esc(mem(f.by)?.name || 'you')} ${ago(f.at)}`)}
-  <div class="modal-b"><div style="border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden">${filePrev(f).replace('class="fprev"', 'class="fprev" style="aspect-ratio:16/9"')}</div>
+  <div class="modal-b"><div style="border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden">${filePrev(f).replace('class="fprev"', 'class="fprev" style="aspect-ratio:16/9"').replace('object-fit:cover', 'object-fit:contain')}</div>
   ${m.tid ? `<div class="row faint" style="font-size:12.5px">${ic('link', 13)}Attached to <button class="link" data-a="openTask" data-id="${m.tid}">${esc(task(m.tid)?.title)}</button></div>` : ''}</div>
-  <div class="modal-f"><button class="btn btn-secondary" data-a="copyLink" data-fid="${f.id}">${ic('link', 14)}Copy link</button><span class="sp"></span><button class="btn btn-primary" data-a="closeModal">Close</button></div>`;
+  <div class="modal-f"><button class="btn btn-secondary" data-a="copyLink" data-fid="${f.id}">${ic('link', 14)}Copy link</button>${
+    f.url
+      ? `<a class="btn btn-secondary" href="${esc(f.url)}" target="_blank" rel="noopener">${ic('external-link', 14)}Open</a><a class="btn btn-secondary" href="${esc(f.url)}?download=1" download="${esc(f.name)}" id="file-download">${ic('download', 14)}Download</a>`
+      : ''
+  }<span class="sp"></span><button class="btn btn-primary" data-a="closeModal">Close</button></div>`;
 }

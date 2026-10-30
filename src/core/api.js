@@ -42,14 +42,15 @@ export const post = (url, body = {}) => api('POST', url, body);
 export const put = (url, body = {}) => api('PUT', url, body);
 export const del = url => api('DELETE', url);
 
-/* Upload with progress (fetch can't report upload progress). Resolves with the JSON body. */
-export function upload(url, form, onProgress) {
+/* Upload a file's raw bytes with progress (fetch can't report upload progress). Resolves with the JSON body. */
+export function upload(url, file, onProgress) {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
     x.open('POST', url);
     x.withCredentials = true;
     x.setRequestHeader('x-requested-with', 'gr8r');
     x.setRequestHeader('x-client-id', CLIENT_ID);
+    x.setRequestHeader('content-type', file.type || 'application/octet-stream');
     x.upload.onprogress = e => e.lengthComputable && onProgress?.(e.loaded / e.total);
     x.onload = () => {
       let data = null;
@@ -62,6 +63,6 @@ export function upload(url, form, onProgress) {
       else reject(new ApiError(x.status, data));
     };
     x.onerror = () => reject(new ApiError(0, null));
-    x.send(form);
+    x.send(file);
   });
 }

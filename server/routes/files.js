@@ -2,7 +2,8 @@
    people who can see that project. Bytes live under UPLOAD_DIR keyed by a random storage key. */
 import fs from 'node:fs';
 import path from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { Hono } from 'hono';
 import { requireAuth } from '../auth.js';
 import { newId } from '../lib/crypto.js';
@@ -18,59 +19,69 @@ const safeName = n =>
 export function fileRoutes() {
   const r = new Hono();
 
+  /* POST /api/files?project=&task=&name=  with the raw file as the body (streamed to disk). */
   r.post('/', requireAuth(), async c => {
     const { db, repo, config, engine } = c.var;
     const { member } = c.var.auth;
-    const len = Number(c.req.header('content-length') || 0);
-    if (len > config.maxUploadBytes + 64 * 1024) return c.json({ error: `Files can be up to ${fsize(config.maxUploadBytes)}.` }, 413);
-    let body;
-    try {
-      body = await c.req.parseBody();
-    } catch {
-      return c.json({ error: 'Upload a file as multipart form data.' }, 400);
-    }
-    const file = body.file;
-    if (!file || typeof file === 'string') return c.json({ error: 'Choose a file to upload.' }, 400);
-    if (file.size > config.maxUploadBytes) return c.json({ error: `Files can be up to ${fsize(config.maxUploadBytes)}.` }, 413);
-    const p = repo.get('projects', String(body.project || ''));
+    const q = c.req.query();
+    const max = config.maxUploadBytes;
+    if (Number(c.req.header('content-length') || 0) > max) return c.json({ error: `Files can be up to ${fsize(max)}.` }, 413);
+    const p = repo.get('projects', String(q.project || ''));
     if (!p || !canSee(p, member)) return c.json({ error: "You don't have access to that project." }, 403);
-    const t = body.task ? repo.get('tasks', String(body.task)) : null;
-    if (body.task && (!t || t.project !== p.id)) return c.json({ error: 'That task no longer exists.' }, 404);
+    if (q.task && repo.get('tasks', String(q.task))?.project !== p.id) return c.json({ error: 'That task no longer exists.' }, 404);
+    if (!q.name || !c.req.raw.body) return c.json({ error: 'Choose a file to upload.' }, 400);
 
     const key = newId('b');
-    const dir = path.join(config.uploadDir, key.slice(1, 3));
-    await fs.promises.mkdir(dir, { recursive: true });
-    await fs.promises.writeFile(path.join(dir, key), Buffer.from(await file.arrayBuffer()));
+    const rel = path.join(key.slice(1, 3), key);
+    const full = path.join(config.uploadDir, rel);
+    await fs.promises.mkdir(path.dirname(full), { recursive: true });
+    let bytes = 0;
+    const limit = new Transform({
+      transform(chunk, _enc, cb) {
+        bytes += chunk.length;
+        cb(bytes > max ? Object.assign(new Error('too large'), { tooLarge: true }) : null, chunk);
+      },
+    });
+    try {
+      await pipeline(Readable.fromWeb(c.req.raw.body), limit, fs.createWriteStream(full + '.part'));
+      await fs.promises.rename(full + '.part', full);
+    } catch (e) {
+      await fs.promises.rm(full + '.part', { force: true });
+      if (e.tooLarge) return c.json({ error: `Files can be up to ${fsize(max)}.` }, 413);
+      return c.json({ error: 'The upload was interrupted. Try again.' }, 400);
+    }
 
-    const name = safeName(file.name);
+    const name = safeName(q.name);
+    const mime = (c.req.header('content-type') || 'application/octet-stream').split(';')[0].slice(0, 100);
     const id = newId('f');
     const now = Date.now();
-    const rec = { id, name, type: fileType(name), size: fsize(file.size), by: member.id, at: now, url: `/api/files/${id}/${encodeURIComponent(name)}` };
-    const fileRow = { ...rec, project: p.id, task: t?.id || null };
+    const rec = { id, name, type: fileType(name), size: fsize(bytes), by: member.id, at: now, url: `/api/files/${id}/${encodeURIComponent(name)}` };
+    const fileRow = { ...rec, project: p.id, task: q.task || null };
     const changes = [];
-    db.tx(() => {
+    // Re-read the task inside the transaction so attachments added concurrently aren't lost.
+    const t = db.tx(() => {
       repo.put('files', fileRow, p.id);
-      db.run(
-        'UPDATE files SET storage_key = ?, mime = ?, bytes = ? WHERE id = ?',
-        path.join(key.slice(1, 3), key),
-        file.type || 'application/octet-stream',
-        file.size,
-        id,
-      );
+      db.run('UPDATE files SET storage_key = ?, mime = ?, bytes = ? WHERE id = ?', rel, mime, bytes, id);
       changes.push({ c: 'files', id, v: fileRow, pid: p.id });
-      if (t) {
-        t.attachments = [...(t.attachments || []), rec];
-        t.updated = now;
-        repo.put('tasks', t, p.id);
-        changes.push({ c: 'tasks', id: t.id, v: t, pid: p.id });
-        const a = { id: newId('a'), by: member.id, verb: 'added a file to', task: t.id, project: p.id, at: now, extra: name };
+      const task = q.task ? repo.get('tasks', q.task) : null;
+      if (task) {
+        task.attachments = [...(task.attachments || []), rec];
+        task.updated = now;
+        repo.put('tasks', task, p.id);
+        changes.push({ c: 'tasks', id: task.id, v: task, pid: p.id });
+        const a = { id: newId('a'), by: member.id, verb: 'added a file to', task: task.id, project: p.id, at: now, extra: name };
         repo.put('activity', a, p.id);
         changes.push({ c: 'activity', id: a.id, v: a, pid: p.id });
       }
+      return task;
     });
     engine.publish(changes, { exceptClient: c.req.header('x-client-id') });
     return c.json(
-      { file: fileRow, task: t ? { ...t, fav: repo.favorites(member.id).tasks.has(t.id) } : null, activity: changes.find(x => x.c === 'activity')?.v || null },
+      {
+        file: fileRow,
+        task: t ? { ...t, fav: repo.favorites(member.id).tasks.has(t.id) } : null,
+        activity: changes.find(x => x.c === 'activity')?.v || null,
+      },
       201,
     );
   });
