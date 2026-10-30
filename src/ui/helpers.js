@@ -11,6 +11,9 @@ const RICH = {
   ALLOWED_TAGS: RICH_TAGS,
   ALLOWED_ATTR: [...new Set(Object.values(RICH_ATTRS).flat())],
   ALLOWED_URI_REGEXP: new RegExp(`^(?:${RICH_SCHEMES.join('|')}):`, 'i'),
+  // DOMPurify keeps data-* and aria-* by default; data-a would turn pasted markup into app actions.
+  ALLOW_DATA_ATTR: false,
+  ALLOW_ARIA_ATTR: false,
 };
 export const richHtml = html => DOMPurify.sanitize(String(html ?? ''), RICH);
 

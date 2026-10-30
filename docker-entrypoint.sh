@@ -5,7 +5,9 @@ set -e
 if [ "$(id -u)" = "0" ]; then
   for d in "$(dirname "${DATABASE_PATH:-/data/sudo-sapient.db}")" "${UPLOAD_DIR:-/data/uploads}" ${BACKUP_DIR:+"$BACKUP_DIR"}; do
     mkdir -p "$d"
-    [ "$(stat -c %U "$d")" = "node" ] || chown -R node:node "$d"
+    # Anything left root-owned (a restored database, a backup run over `railway ssh`) would stop the
+    # app from writing, so fix every entry, not just the directory.
+    find "$d" ! -user node -exec chown node:node {} +
   done
   exec setpriv --reuid=node --regid=node --init-groups -- "$@"
 fi

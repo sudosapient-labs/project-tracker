@@ -15,7 +15,7 @@ export function teamModal(m, H) {
   <form class="modal-b" data-submit="submitTeam">
     <div class="row" style="gap:10px;align-items:flex-start">
       <span class="picon lg" style="--c:${PCOLORS[f.color]};margin-top:22px" aria-hidden="true">${ic(f.icon, 18)}</span>
-      <div class="field grow"><label class="label" for="tm-name">Team name</label><input class="input ${err ? 'is-error' : ''}" id="tm-name" data-in="tform" data-f="name" value="${esc(f.name)}" placeholder="e.g. Growth" autofocus aria-invalid="${!!err}" aria-describedby="tm-name-err">${err ? `<span class="err" id="tm-name-err" role="alert">${ic('circle-alert', 12)}${err}</span>` : ''}</div>
+      <div class="field grow"><label class="label" for="tm-name">Team name</label><input class="input ${err ? 'is-error' : ''}" id="tm-name" data-in="tform" data-f="name" value="${esc(f.name)}" placeholder="e.g. Growth" autofocus aria-invalid="${!!err}" aria-describedby="tm-name-err">${err ? `<span class="err" id="tm-name-err" role="alert">${ic('circle-alert', 12)}${esc(err)}</span>` : ''}</div>
     </div>
     <div class="field"><label class="label" for="tm-desc">What does this team own?</label><input class="input" id="tm-desc" data-in="tform" data-f="desc" value="${esc(f.desc)}" placeholder="e.g. Acquisition experiments and lifecycle email"></div>
     <div class="row" style="gap:16px;align-items:flex-start;flex-wrap:wrap">

@@ -66,6 +66,9 @@ export function hashFor(route, params = {}) {
   if (route === 'settings' && params.sec) return `settings/${params.sec}`;
   return route;
 }
+/* Route parameters come from a URL anyone can send, so only ids and known tab / section names pass. */
+const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const okTab = t => PTABS.some(x => x[0] === t) || /^v:[A-Za-z0-9_-]{1,64}$/.test(t);
 export function routeFromHash(h) {
   let parts;
   try {
@@ -76,10 +79,10 @@ export function routeFromHash(h) {
   const [r, a, b] = parts;
   if (r === 'project') {
     const p = D().projects.find(x => x.key.toLowerCase() === a);
-    return p ? { route: 'project', params: { id: p.id, tab: b || 'board' } } : null;
+    return p ? { route: 'project', params: { id: p.id, tab: b && okTab(b) ? b : 'board' } } : null;
   }
-  if ((r === 'member' || r === 'team') && a) return { route: r, params: { id: a } };
-  if (r === 'settings') return { route: 'settings', params: a ? { sec: a } : {} };
+  if (r === 'member' || r === 'team') return ID_RE.test(a || '') ? { route: r, params: { id: a } } : null;
+  if (r === 'settings') return { route: 'settings', params: /^[a-z0-9-]{1,40}$/.test(a || '') ? { sec: a } : {} };
   return ROUTE_NAMES[r] && r !== 'member' && r !== 'team' ? { route: r, params: {} } : null;
 }
 function writeHash(route, params, replace) {

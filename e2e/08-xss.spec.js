@@ -273,3 +273,16 @@ test('hostile values in every user-controlled field render as text', async () =>
 
   expect(await errors(['Executing inline event handler violates'])).toEqual([]);
 });
+
+test('hostile route parameters in a shared link are ignored, not rendered', async () => {
+  // A link like this, sent by a teammate, used to put a full-page button running an app action
+  // (here: share a private project) into the shell's data-keep attribute.
+  const BTN = '"><button id="planted" data-a="shareAdd" style="position:fixed;inset:0">x</button><x y="';
+  for (const hash of [`#member/${encodeURIComponent(BTN)}`, `#team/${encodeURIComponent(BTN)}`, `#settings/${encodeURIComponent(BTN)}`]) {
+    await visit(hash);
+    expect(await page.locator('#planted').count(), hash).toBe(0);
+    expect(await page.evaluate(() => [...document.querySelectorAll('[data-keep]')].map(e => e.getAttribute('data-keep')).join(' ')), hash).not.toContain(
+      '<button',
+    );
+  }
+});
