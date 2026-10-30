@@ -1,5 +1,5 @@
 /* ---------- seed data ---------- */
-import { dOff, minsAgo, uid, withTime } from '../core/utils.js';
+import { dOff, minsAgo, uid, withTime } from '../../src/core/utils.js';
 
 export function seed() {
   const members = [

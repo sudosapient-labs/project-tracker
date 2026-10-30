@@ -49,5 +49,6 @@ function lucideSubset() {
 
 export default defineConfig({
   plugins: [lucideSubset()],
-  server: { port: 5173 },
+  // In development the API runs separately (pnpm dev starts both); Vite forwards /api to it.
+  server: { port: 5173, proxy: { '/api': { target: `http://127.0.0.1:${process.env.API_PORT || 8787}`, changeOrigin: false } } },
 });

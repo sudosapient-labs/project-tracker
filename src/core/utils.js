@@ -8,7 +8,8 @@ document.querySelectorAll('link[data-font]').forEach(l => {
 export const $ = (s, r = document) => r.querySelector(s);
 export const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-export const uid = (p = 'x') => p + Math.random().toString(36).slice(2, 8);
+/* Ids are minted on the client and must stay unique across everyone's devices. */
+export const uid = (p = 'x') => p + crypto.randomUUID().replace(/-/g, '').slice(0, 14);
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 export const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 export const MOD = isMac ? '⌘' : 'Ctrl';

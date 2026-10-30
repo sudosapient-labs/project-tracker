@@ -5,3 +5,6 @@ dist/
 __MACOSX/
 *.log
 .env*
+data/
+test-results/
+playwright-report/

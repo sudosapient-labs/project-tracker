@@ -3,12 +3,12 @@
    ===================================================================== */
 import { $, $$, addD, dOff, esc, fmtDateTime, fmtTime, instant, iso, parse, parseTime, shiftD, today, uid, withDay, withTime } from '../core/utils.js';
 import { PR, PSTAT, ST } from '../core/constants.js';
-import { seed } from '../data/seed.js';
-import { D, DEFAULT_PREFS, S, allTasks, canSee, commentsOf, logAct, me, mem, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
+import { D, S, allTasks, canSee, commentsOf, logAct, me, mem, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
 import { fileType, fsize } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
 import { autosize, focusKey, fxSet, go, render } from '../shell/render.js';
+import { commit, restoreSnapshot, retryNow, takeSnapshot } from '../shell/sync.js';
 import { viewOf } from '../shell/view-engine.js';
 import { TEMPLATES, closeModal, openModal } from '../overlays/modals.js';
 import { closePop, dateDirty, dpHead, openPop, tgt } from '../overlays/popovers.js';
@@ -127,11 +127,10 @@ export function confirmDlg(o) {
   S.ui.confirmText = '';
   openModal({ type: 'confirm', ...o });
 }
-export function snapshot() {
-  return JSON.stringify(S.data);
-}
+/* Undo: snapshot before an action; restore rewinds only the records that action changed. */
+export const snapshot = takeSnapshot;
 export function restore(snap) {
-  S.data = JSON.parse(snap);
+  restoreSnapshot(snap);
   save();
   render();
 }
@@ -143,13 +142,18 @@ export async function copy(text, msg = 'Link copied') {
     toast("Copy isn't available here — " + text, { kind: 'info', ms: 6000 });
   }
 }
-export function loadingBtn(id, ms, fn) {
+/* Show a button as busy while `fn` (sync or async) runs. */
+export async function busy(id, fn) {
   const b = document.getElementById(id);
-  if (b) {
-    b.classList.add('is-loading');
-    b.setAttribute('aria-busy', 'true');
+  b?.classList.add('is-loading');
+  b?.setAttribute('aria-busy', 'true');
+  try {
+    return await fn();
+  } finally {
+    const n = document.getElementById(id);
+    n?.classList.remove('is-loading');
+    n?.removeAttribute('aria-busy');
   }
-  setTimeout(fn, ms);
 }
 export function curProjectId() {
   if (S.ui.route === 'project') return S.ui.params.id;
@@ -1595,7 +1599,7 @@ A.submitInvite = () => {
     render();
     return;
   }
-  loadingBtn('inv-submit', 600, () => {
+  busy('inv-submit', async () => {
     if (
       !mutate(() =>
         list.forEach(e => {
@@ -1619,6 +1623,12 @@ A.submitInvite = () => {
       )
     )
       return;
+    const errs = await commit();
+    if (errs.length) {
+      S.ui.errors.invite = errs[0];
+      render();
+      return;
+    }
     S.ui.modals.pop();
     S.ui.errors = {};
     render();
@@ -1812,25 +1822,10 @@ A.setSearch = el => {
 };
 
 /* workspace, account, prototype controls */
-A.signOut = () => {
-  S.ui.pop = null;
-  S.ui.palette = null;
-  S.ui.drawer = null;
-  S.ui.modals = [];
-  S.ui.auth = 'login';
-  S.ui.errors = {};
-  render();
-};
 A.shortcuts = () => {
   S.ui.pop = null;
   S.ui.palette = null;
   openModal({ type: 'shortcuts' });
-};
-A.startOnboarding = () => {
-  S.ui.pop = null;
-  S.ui.auth = 'onboarding';
-  S.ui.onb = 0;
-  render();
 };
 A.toggleOffline = () => {
   S.ui.offline = !S.ui.offline;
@@ -1840,30 +1835,7 @@ A.toggleOffline = () => {
 };
 A.retryOnline = el => {
   el.classList.add('is-loading');
-  setTimeout(() => {
-    S.ui.offline = false;
-    render();
-    toast('Reconnected. All changes are synced.');
-  }, 700);
-};
-A.resetDemo = () => {
-  S.ui.pop = null;
-  confirmDlg({
-    title: 'Reset demo data?',
-    body: 'All projects, tasks, and settings in this browser go back to the original sample workspace.',
-    ok: 'Reset data',
-    danger: true,
-    icon: 'rotate-ccw',
-    run: () => {
-      S.data = seed();
-      S.views = {};
-      S.prefs = { ...DEFAULT_PREFS, theme: S.prefs.theme };
-      S.ui.drawer = null;
-      save();
-      go('home');
-      toast('Demo data restored');
-    },
-  });
+  retryNow();
 };
 A.demoToast = el => {
   const v = el.dataset.v;
@@ -1953,13 +1925,10 @@ A.saveWorkspace = () => {
     toast("Workspace name can't be empty", { kind: 'err' });
     return;
   }
-  loadingBtn('ws-save', 600, () => {
-    if (
-      mutate(() => {
-        D().ws.name = n;
-      })
-    )
-      toast('Workspace settings saved');
+  busy('ws-save', async () => {
+    if (!mutate(() => (D().ws.name = n))) return;
+    const errs = await commit();
+    toast(errs[0] || 'Workspace settings saved', errs.length ? { kind: 'err' } : {});
   });
 };
 A.avColor = el => {
@@ -1976,16 +1945,18 @@ A.saveProfile = () => {
   }
   S.ui.errors.pname2 = null;
   const tt = $('#pf-title').value.trim();
-  loadingBtn('pf-save', 600, () => {
+  busy('pf-save', async () => {
     if (
-      mutate(() => {
+      !mutate(() => {
         S.prefs.name = n;
         S.prefs.title = tt;
         me().name = n;
         me().title = tt;
       })
     )
-      toast('Profile updated');
+      return;
+    const errs = await commit();
+    toast(errs[0] || 'Profile updated', errs.length ? { kind: 'err' } : {});
   });
 };
 IN.pwStrength = el => {
@@ -1996,84 +1967,6 @@ IN.pwStrength = el => {
   if (m) m.replaceWith(tmp.firstElementChild || document.createTextNode(''));
   else if (tmp.firstElementChild) el.after(tmp.firstElementChild);
 };
-A.savePassword = () => {
-  const e = (S.ui.errors = {});
-  const cur = $('#pw-cur').value,
-    nw = $('#pw-new').value,
-    cf = $('#pw-conf').value;
-  S.ui.pwDone = false;
-  if (!cur) e.pwCur = 'Enter your current password';
-  if (nw.length < 10 || !/[0-9\W]/.test(nw)) e.pwNew = 'Use at least 10 characters, including a number or symbol';
-  if (nw !== cf) e.pwConf = "Passwords don't match";
-  if (Object.keys(e).length) {
-    render();
-    return;
-  }
-  loadingBtn('pw-save', 800, () => {
-    S.ui.pwDone = true;
-    S.ui.pwNew = '';
-    render();
-    toast('Password updated');
-  });
-};
-A.revokeSession = el => {
-  mutate(() => {
-    D().sessions = D().sessions.filter(s => s.id !== el.dataset.id);
-  });
-  toast('Session signed out');
-};
-A.revokeAll = () =>
-  confirmDlg({
-    title: 'Sign out of all other sessions?',
-    body: "You'll stay signed in on this device. Other devices will need to sign in again.",
-    ok: 'Sign out others',
-    danger: true,
-    icon: 'log-out',
-    run: () => {
-      mutate(() => {
-        D().sessions = D().sessions.filter(s => s.cur);
-      });
-      toast('Signed out of other sessions');
-    },
-  });
-A.setup2fa = () => {
-  S.ui.tfaSetup = true;
-  S.ui.errors = {};
-  render();
-};
-A.cancel2fa = () => {
-  S.ui.tfaSetup = false;
-  render();
-};
-A.verify2fa = () => {
-  const v = $('#tfa-code').value.trim();
-  if (!/^\d{6}$/.test(v)) {
-    S.ui.errors.tfa = 'Enter the 6-digit code from your app';
-    render();
-    return;
-  }
-  S.ui.errors = {};
-  mutate(() => {
-    D().tfa = true;
-    S.ui.tfaSetup = false;
-  });
-  toast('Two-factor authentication enabled');
-};
-A.disable2fa = () =>
-  confirmDlg({
-    title: 'Turn off two-factor authentication?',
-    body: 'Your account will be protected by your password only.',
-    ok: 'Turn off',
-    danger: true,
-    icon: 'shield-off',
-    run: () => {
-      mutate(() => {
-        D().tfa = false;
-      });
-      toast('Two-factor authentication turned off');
-    },
-  });
-
 /* auth */
 A.auth = el => {
   S.ui.auth = el.dataset.v;
@@ -2093,109 +1986,6 @@ A.toggleShowPw = () => {
   }
 };
 export const EMAIL_RE = /^\S+@\S+\.\S+$/;
-export function enterApp(msg) {
-  S.ui.auth = null;
-  S.ui.errors = {};
-  go(S.prefs.home || 'home');
-  toast(msg);
-}
-A.doLogin = () => {
-  const e = (S.ui.errors = {});
-  const em = $('#l-email').value.trim(),
-    pw = $('#l-pw').value;
-  S.ui.af.email = em;
-  if (!em) e.email = 'Enter your email address';
-  else if (!EMAIL_RE.test(em)) e.email = 'Enter a valid email, like name@company.com';
-  if (!pw) e.pw = 'Enter your password';
-  if (Object.keys(e).length) {
-    render();
-    (e.email ? $('#l-email') : $('#l-pw'))?.focus();
-    if (!e.email) $('#l-pw').value = pw;
-    return;
-  }
-  loadingBtn('login-btn', 750, () => enterApp(`Signed in as ${em}`));
-};
-A.socialAuth = el => {
-  el.classList.add('is-loading');
-  setTimeout(() => enterApp(`Signed in with ${el.dataset.v}`), 800);
-};
-A.doSignup = () => {
-  const e = (S.ui.errors = {});
-  const nm = $('#s-name').value.trim(),
-    em = $('#s-email').value.trim(),
-    pw = $('#s-pw').value;
-  S.ui.af.name = nm;
-  S.ui.af.email = em;
-  if (!nm) e.name = 'Enter your name';
-  if (!EMAIL_RE.test(em)) e.email = 'Enter a valid work email';
-  if (pw.length < 10 || !/[0-9\W]/.test(pw)) e.pw = 'Use at least 10 characters, including a number or symbol';
-  if (Object.keys(e).length) {
-    render();
-    $('#s-email').value = em;
-    return;
-  }
-  loadingBtn('signup-btn', 800, () => {
-    S.ui.auth = 'verify';
-    startResend();
-    render();
-  });
-};
-export function startResend() {
-  S.ui.resendT = 30;
-  clearInterval(startResend._i);
-  startResend._i = setInterval(() => {
-    S.ui.resendT--;
-    const el = $('#resend-t');
-    if (el) el.textContent = S.ui.resendT;
-    if (S.ui.resendT <= 0) {
-      clearInterval(startResend._i);
-      if (S.ui.auth === 'verify') render();
-    }
-  }, 1000);
-}
-A.resend = el => {
-  if (el.dataset.v === 'verify') {
-    startResend();
-    render();
-    toast(`Verification email sent to ${S.ui.af.email}`);
-  } else toast(`Reset link sent to ${S.ui.af.email}`);
-};
-A.verified = () => {
-  S.ui.auth = 'onboarding';
-  S.ui.onb = 0;
-  S.ui.onbData.ws = '';
-  render();
-};
-A.doForgot = () => {
-  const em = $('#f-email').value.trim();
-  S.ui.af.email = em;
-  S.ui.errors = {};
-  if (!EMAIL_RE.test(em)) {
-    S.ui.errors.email = 'Enter the email you use to sign in';
-    render();
-    return;
-  }
-  loadingBtn('forgot-btn', 700, () => {
-    S.ui.auth = 'forgot-sent';
-    render();
-  });
-};
-A.doReset = () => {
-  const a = $('#r-pw').value,
-    b = $('#r-pw2').value;
-  const e = (S.ui.errors = {});
-  if (a.length < 10 || !/[0-9\W]/.test(a)) e.pw = 'Use at least 10 characters, including a number or symbol';
-  if (a !== b) e.pw2 = "Passwords don't match";
-  if (Object.keys(e).length) {
-    render();
-    return;
-  }
-  loadingBtn('reset-btn', 700, () => {
-    S.ui.auth = 'reset-done';
-    S.ui.pwNew = '';
-    render();
-  });
-};
 
 /* onboarding */
 A.onbSet = el => {
