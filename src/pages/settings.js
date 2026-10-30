@@ -3,6 +3,7 @@
    ===================================================================== */
 import { dOff, esc, fmtDate } from '../core/utils.js';
 import { ic, wsLogo } from '../core/icons.js';
+import { TIMEZONES } from '../core/constants.js';
 import { D, S, me } from '../core/store.js';
 import { av, pIcon } from '../ui/helpers.js';
 import { permsTable, teamsGrid } from './members.js';
@@ -156,7 +157,23 @@ export function settingsBody(sec, title) {
         srow(
           'Time zone',
           'Used for due dates and reminders.',
-          sel('tz', ['(GMT-08:00) Pacific Time', '(GMT-05:00) Eastern Time', '(GMT+00:00) London', '(GMT+01:00) Berlin', '(GMT+08:00) Singapore'], P.tz),
+          sel(
+            'tz',
+            TIMEZONES.map(z => [z.id, z.name]),
+            P.tz,
+          ),
+        ) +
+        srow(
+          'Time format',
+          'Used for start and due times.',
+          sel(
+            'timeFmt',
+            [
+              ['12', '12-hour (2:30 PM)'],
+              ['24', '24-hour (14:30)'],
+            ],
+            P.timeFmt || '12',
+          ),
         ) +
         srow(
           'Date format',
@@ -183,18 +200,6 @@ export function settingsBody(sec, title) {
               ['6', 'Saturday'],
             ],
             P.weekStart,
-          ),
-        ) +
-        srow(
-          'Time format',
-          '',
-          sel(
-            'timeFmt',
-            [
-              ['12', '12-hour (2:30 PM)'],
-              ['24', '24-hour (14:30)'],
-            ],
-            P.timeFmt || '12',
           ),
         )
       );

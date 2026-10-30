@@ -1,5 +1,5 @@
 /* ---------------- MODALS ---------------- */
-import { $$, MOD, ago, esc, fmtDate } from '../core/utils.js';
+import { $$, MOD, ago, esc, fmtDateTime } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { PCOLORS, PICONS } from '../core/constants.js';
 import { D, S, mem, pColor, proj, task, teamsList } from '../core/store.js';
@@ -75,8 +75,8 @@ export function taskModal(m, H) {
       ${formChip('status', stPill(f.status), 'Status')}
       ${formChip('assignee', `${av(f.assignee, 'sm', false)}${esc(mem(f.assignee)?.name || 'Assignee')}`, 'Assignee')}
       ${formChip('priority', prPill(f.priority), 'Priority')}
-      ${formChip('date', `${ic('calendar', 13)}${f.due ? 'Due ' + fmtDate(f.due) : 'Due date'}`, 'due')}
-      ${formChip('date', `${ic('calendar-arrow-up', 13)}${f.start ? 'Starts ' + fmtDate(f.start) : 'Start date'}`, 'start')}
+      ${formChip('date', `${ic('calendar', 13)}${f.due ? 'Due ' + fmtDateTime(f.due) : 'Due date'}`, 'due')}
+      ${formChip('date', `${ic('calendar-arrow-up', 13)}${f.start ? 'Starts ' + fmtDateTime(f.start) : 'Start date'}`, 'start')}
       ${formChip('labels', f.labels.length ? f.labels.map(lbl).join('') : `${ic('tag', 13)}Labels`, 'Labels')}
       ${formChip('recur', `${ic('repeat', 13)}${f.recur || 'Repeat'}`, 'Repeat')}
     </div>

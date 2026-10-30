@@ -1,5 +1,5 @@
 /* ---------- drag & drop ---------- */
-import { $, $$, addD, diffD, fmtDate, iso, parse } from '../core/utils.js';
+import { $, $$, dayKey, diffD, fmtDateTime, parse, shiftD, withDay } from '../core/utils.js';
 import { PR, ST } from '../core/constants.js';
 import { D, S, proj, save, task } from '../core/store.js';
 import { mutate, toast } from '../ui/toast.js';
@@ -183,11 +183,13 @@ document.addEventListener('drop', e => {
     if (switched) toast('Sorted manually to keep your order', { kind: 'info', ms: 2200 });
   } else if (d.type === 'cal' && d.day) {
     const t = task(d.id);
-    if (t.due === d.day) return;
-    const len = t.start && t.due ? diffD(parse(t.due), parse(t.start)) : null;
+    if (dayKey(t.due) === d.day) return;
+    // Moving to another day keeps the time of day; the start moves by the same number of days.
+    const due = withDay(t.due, d.day);
+    const shift = t.start && t.due ? diffD(parse(d.day), parse(t.due)) : null;
     fxSet({ moved: t.id });
-    updateTask(t.id, { due: d.day, ...(len != null ? { start: iso(addD(parse(d.day), -len)) } : {}) });
-    toast(`Rescheduled “${t.title}” to ${fmtDate(d.day)}`, { ms: 2200 });
+    updateTask(t.id, { due, ...(shift != null ? { start: shiftD(t.start, shift) } : {}) });
+    toast(`Rescheduled “${t.title}” to ${fmtDateTime(due)}`, { ms: 2200 });
   } else if (d.type === 'proj' && d.before && d.before !== d.id) {
     const o = D().projOrder.filter(x => x !== d.id);
     o.splice(o.indexOf(d.before), 0, d.id);
@@ -261,7 +263,7 @@ document.addEventListener('pointerdown', e => {
       render();
       return;
     }
-    updateTask(t.id, { due: iso(addD(parse(t.due), days)), start: t.start ? iso(addD(parse(t.start), days)) : null });
+    updateTask(t.id, { due: shiftD(t.due, days), start: t.start ? shiftD(t.start, days) : null });
     toast(`Moved “${t.title}” ${Math.abs(days)} day${Math.abs(days) > 1 ? 's' : ''} ${days > 0 ? 'later' : 'earlier'}`, { ms: 2200 });
   };
   addEventListener('pointermove', mv);

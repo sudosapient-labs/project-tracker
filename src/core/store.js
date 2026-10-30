@@ -1,6 +1,6 @@
 /* ---------- store ---------- */
-import { TODAY, diffD, iso, parse, uid } from './utils.js';
-import { PCOLORS, TEAMS_SEED } from './constants.js';
+import { iso, isPast, setTimeZone, today, uid } from './utils.js';
+import { DEFAULT_TZ, PCOLORS, TEAMS_SEED, validTz } from './constants.js';
 import { seed } from '../data/seed.js';
 
 export const STORE_KEY = 'gr8r.v3';
@@ -12,7 +12,8 @@ export const DEFAULT_PREFS = {
   weekStart: 1,
   dateFmt: 'MMM d',
   lang: 'English (US)',
-  tz: '(GMT-07:00) Pacific Time',
+  tz: DEFAULT_TZ,
+  timeFmt: '12',
   motion: 'system',
   home: 'home',
   openTasks: 'drawer',
@@ -32,6 +33,9 @@ export function load() {
   return null;
 }
 export const saved = load();
+if (saved?.prefs) saved.prefs.tz = validTz(saved.prefs.tz);
+/* Seed data and the first calendar month are computed below, before the first render. */
+setTimeZone(saved?.prefs?.tz || DEFAULT_TZ);
 export const S = {
   data: saved?.data || seed(),
   prefs: Object.assign({}, DEFAULT_PREFS, saved?.prefs || {}),
@@ -61,7 +65,7 @@ export const S = {
     editCell: null,
     openTasks: {},
     collapsedGroups: {},
-    calDate: iso(TODAY),
+    calDate: iso(today()),
     calMode: 'month',
     tlZoom: 'week',
     tlGroup: 'status',
@@ -109,7 +113,7 @@ export const visibleProjects = () =>
 export const canSee = p => !p.private || p.members.includes(D().me);
 export const tasksOf = pid => D().tasks.filter(t => t.project === pid && !t.archived);
 export const allTasks = () => D().tasks.filter(t => !t.archived && canSee(proj(t.project)));
-export const isOver = t => t.due && t.status !== 'done' && diffD(parse(t.due), TODAY) < 0;
+export const isOver = t => t.status !== 'done' && isPast(t.due);
 export const commentsOf = tid => D().comments.filter(c => c.task === tid);
 export function progressOf(pid) {
   const ts = tasksOf(pid);

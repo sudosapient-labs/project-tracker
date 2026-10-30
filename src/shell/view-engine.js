@@ -1,5 +1,5 @@
 /* ---------- filter engine ---------- */
-import { DAY, TODAY, diffD, esc, parse } from '../core/utils.js';
+import { DAY, diffD, esc, instant, parse, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { LABELS, PR, PRIOS, STATUSES } from '../core/constants.js';
 import { D, S, canSee, isOver, mem, pColor, proj, visibleProjects } from '../core/store.js';
@@ -77,7 +77,7 @@ export function matchF(t, f) {
     hit = f.v.some(v => {
       if (v === 'nodate') return !t.due;
       if (!t.due) return false;
-      const n = diffD(parse(t.due), TODAY);
+      const n = diffD(parse(t.due), today());
       return v === 'overdue' ? isOver(t) : v === 'today' ? n === 0 : v === 'week' ? n >= 0 && n <= 7 : n > 7;
     });
   } else if (f.f === 'created' || f.f === 'updated') {
@@ -101,8 +101,9 @@ export function sortTasks(ts, s) {
     {
       manual: t => t.order,
       title: t => t.title.toLowerCase(),
-      due: t => t.due || '9999',
-      start: t => t.start || '9999',
+      // By instant: an all-day start counts from the start of its day, an all-day due until its end.
+      due: t => (t.due ? instant(t.due, true) : Infinity),
+      start: t => (t.start ? instant(t.start) : Infinity),
       priority: t => -PR[t.priority || 'none'].w,
       status: t => STATUSES.findIndex(x => x.id === t.status),
       assignee: t => mem(t.assignee)?.name || 'zzz',

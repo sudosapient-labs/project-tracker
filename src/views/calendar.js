@@ -1,5 +1,5 @@
 /* ---------- CALENDAR ---------- */
-import { MONL, TODAY, WD, addD, diffD, esc, fmtDate, iso, parse, sod } from '../core/utils.js';
+import { MONL, WD, addD, dayKey, diffD, esc, fmtDate, fmtTime, hasTime, instant, iso, parse, sod, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { D, S, allTasks, pColor, proj } from '../core/store.js';
 import { av, prIcon, stIcon } from '../ui/helpers.js';
@@ -16,7 +16,13 @@ export function calendarHtml(ts, opt = {}) {
   const cur = parse(S.ui.calDate);
   const mode = S.ui.calMode;
   const evs = opt.events ? D().events.filter(e => !opt.project || e.project === opt.project) : [];
-  const itemsOn = ds => [...evs.filter(e => e.date === ds).map(e => ({ ev: e })), ...ts.filter(t => t.due === ds).map(t => ({ t }))];
+  const itemsOn = ds => [
+    ...evs.filter(e => e.date === ds).map(e => ({ ev: e })),
+    ...ts
+      .filter(t => dayKey(t.due) === ds)
+      .sort((a, b) => instant(a.due) - instant(b.due))
+      .map(t => ({ t })),
+  ];
   const wdn = Array.from({ length: 7 }, (_, i) => WD[(i + S.prefs.weekStart) % 7]);
   const chip = it => {
     if (it.ev) {
@@ -25,7 +31,7 @@ export function calendarHtml(ts, opt = {}) {
     }
     const t = it.t;
     const p = proj(t.project);
-    return `<button class="cev ${t.status === 'done' ? 'done' : ''}${fxc('moved', t.id)}" style="--c:${pColor(p)}" draggable="true" data-drag-cal="${t.id}" data-a="openTask" data-id="${t.id}" data-ctx="task" title="${esc(t.title)}">${t.status === 'done' ? stIcon('done', 11) : prIcon(t.priority, 11)}<span class="trunc">${esc(t.title)}</span>${av(t.assignee, '', false)}</button>`;
+    return `<button class="cev ${t.status === 'done' ? 'done' : ''}${fxc('moved', t.id)}" style="--c:${pColor(p)}" draggable="true" data-drag-cal="${t.id}" data-a="openTask" data-id="${t.id}" data-ctx="task" title="${esc(t.title)}${hasTime(t.due) ? ' · ' + fmtTime(t.due) : ''}">${t.status === 'done' ? stIcon('done', 11) : prIcon(t.priority, 11)}${hasTime(t.due) ? `<span class="num faint" style="font-size:11px">${fmtTime(t.due)}</span>` : ''}<span class="trunc">${esc(t.title)}</span>${av(t.assignee, '', false)}</button>`;
   };
   let label, body;
   if (mode === 'month') {
@@ -39,9 +45,9 @@ export function calendarHtml(ts, opt = {}) {
         .map(d => {
           const ds = iso(d);
           const items = itemsOn(ds);
-          const today = diffD(d, TODAY) === 0;
-          return `<div class="cday ${d.getMonth() !== cur.getMonth() ? 'out' : ''} ${today ? 'today' : ''}" data-drop-day="${ds}">
-          <span class="dn" ${today ? 'aria-current="date"' : ''}>${d.getDate()}</span>
+          const isToday = diffD(d, today()) === 0;
+          return `<div class="cday ${d.getMonth() !== cur.getMonth() ? 'out' : ''} ${isToday ? 'today' : ''}" data-drop-day="${ds}">
+          <span class="dn" ${isToday ? 'aria-current="date"' : ''}>${d.getDate()}</span>
           <button class="ibtn ibtn-xs add" data-a="newTask" data-due="${ds}" ${opt.project ? `data-project="${opt.project}"` : ''} aria-label="Add task on ${fmtDate(ds)}">${ic('plus', 13)}</button>
           ${items.slice(0, 3).map(chip).join('')}
           ${items.length > 3 ? `<button class="cmore" data-a="pop" data-pop="daylist" data-date="${ds}" data-key="${opt.key || ''}">+${items.length - 3} more</button>` : ''}
@@ -56,8 +62,8 @@ export function calendarHtml(ts, opt = {}) {
       .map(d => {
         const ds = iso(d);
         const items = itemsOn(ds).sort((a, b) => (a.ev ? 0 : 1) - (b.ev ? 0 : 1));
-        const today = diffD(d, TODAY) === 0;
-        return `<div class="wcol"><div class="wcol-h ${today ? 'today' : ''}"><span class="n">${d.getDate()}</span><span class="muted" style="font-size:12px">${WD[d.getDay()]}</span><span class="sp"></span><button class="ibtn ibtn-xs" data-a="newTask" data-due="${ds}" ${opt.project ? `data-project="${opt.project}"` : ''} aria-label="Add task">${ic('plus', 13)}</button></div>
+        const isToday = diffD(d, today()) === 0;
+        return `<div class="wcol"><div class="wcol-h ${isToday ? 'today' : ''}"><span class="n">${d.getDate()}</span><span class="muted" style="font-size:12px">${WD[d.getDay()]}</span><span class="sp"></span><button class="ibtn ibtn-xs" data-a="newTask" data-due="${ds}" ${opt.project ? `data-project="${opt.project}"` : ''} aria-label="Add task">${ic('plus', 13)}</button></div>
         <div class="wcol-b" data-drop-day="${ds}">${
           items
             .map(it => {
@@ -67,7 +73,7 @@ export function calendarHtml(ts, opt = {}) {
               }
               const t = it.t;
               const p = proj(t.project);
-              return `<button class="wcard${fxc('moved', t.id)}" style="--c:${pColor(p)}" draggable="true" data-drag-cal="${t.id}" data-a="openTask" data-id="${t.id}" data-ctx="task"><span class="t" style="${t.status === 'done' ? 'text-decoration:line-through;color:var(--text-3)' : ''}"><span class="pdot" style="--c:${pColor(p)}"></span>${esc(t.title)}</span><span class="m">${stIcon(t.status, 11)}${prIcon(t.priority, 11)}<span class="trunc grow">${esc(p.name)}</span>${av(t.assignee, 'sm', false)}</span></button>`;
+              return `<button class="wcard${fxc('moved', t.id)}" style="--c:${pColor(p)}" draggable="true" data-drag-cal="${t.id}" data-a="openTask" data-id="${t.id}" data-ctx="task"><span class="t" style="${t.status === 'done' ? 'text-decoration:line-through;color:var(--text-3)' : ''}"><span class="pdot" style="--c:${pColor(p)}"></span>${esc(t.title)}</span><span class="m">${stIcon(t.status, 11)}${prIcon(t.priority, 11)}${hasTime(t.due) ? `<span class="num">${fmtTime(t.due)}</span>` : ''}<span class="trunc grow">${esc(p.name)}</span>${av(t.assignee, 'sm', false)}</span></button>`;
             })
             .join('') || '<span class="faint" style="font-size:12px;padding:4px">No tasks</span>'
         }</div></div>`;

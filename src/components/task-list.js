@@ -141,7 +141,7 @@ export function miniRow(t, opt = {}) {
     <span class="tt">${esc(t.title)}</span>
     ${opt.noProj ? '' : `<span class="pj hide-m"><span class="pdot" style="--c:${pColor(p)}"></span><span class="trunc">${esc(p.name)}</span></span>`}
     <span data-tip="${PR[t.priority].name} priority">${prIcon(t.priority)}</span>
-    <span style="width:74px;text-align:right" class="hide-m">${dueHtml(t, false)}</span>
+    <span style="min-width:74px;text-align:right" class="hide-m">${dueHtml(t, false)}</span>
     ${opt.av === false ? '' : av(t.assignee, 'sm')}
   </div>`;
 }

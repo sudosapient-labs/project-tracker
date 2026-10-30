@@ -20,13 +20,15 @@ export const sod = d => {
   x.setHours(0, 0, 0, 0);
   return x;
 };
-export const TODAY = sod(new Date());
 export const iso = d => {
   const x = new Date(d);
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
 };
+/* A calendar day as a local-midnight Date. Timed values (UTC instants) resolve to their day in
+   the selected time zone, so day math (diffD, addD, fmtDate) works on both value shapes. */
 export const parse = s => {
   if (!s) return null;
+  if (hasTime(s)) s = dayKey(s);
   const [y, m, d] = s.split('-').map(Number);
   return new Date(y, m - 1, d);
 };
@@ -35,7 +37,7 @@ export const addD = (d, n) => {
   x.setDate(x.getDate() + n);
   return x;
 };
-export const dOff = n => iso(addD(TODAY, n));
+export const dOff = n => iso(addD(today(), n));
 export const diffD = (a, b) => Math.round((sod(a) - sod(b)) / DAY);
 export const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const MONL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -46,6 +48,83 @@ export let dateFormat = 'MMM d';
 export function setDateFormat(f) {
   dateFormat = f || 'MMM d';
 }
+export let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+export function setTimeZone(tz) {
+  if (tz) timeZone = tz;
+}
+export let timeFormat = '12';
+export function setTimeFormat(f) {
+  timeFormat = String(f) === '24' ? '24' : '12';
+}
+
+/* ---------- times and zones ----------
+   A start/due is either 'YYYY-MM-DD' (all day) or a UTC ISO instant ('2026-10-30T12:00:00.000Z'). */
+export const hasTime = v => typeof v === 'string' && v.length > 10 && v.includes('T');
+const zoneFmts = {};
+function zoneParts(ms, tz = timeZone) {
+  const f = (zoneFmts[tz] ||= new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }));
+  const o = {};
+  for (const p of f.formatToParts(ms)) if (p.type !== 'literal') o[p.type] = +p.value;
+  return o;
+}
+const zoneOffset = (ms, tz) => {
+  const o = zoneParts(ms, tz);
+  return Date.UTC(o.year, o.month - 1, o.day, o.hour % 24, o.minute, o.second) - Math.floor(ms / 1e3) * 1e3;
+};
+/* Wall-clock 'YYYY-MM-DD' + 'HH:MM' in the selected zone → UTC ms. */
+export function zonedMs(day, hm = '00:00', tz = timeZone) {
+  const [y, m, d] = day.split('-').map(Number);
+  const [h, mi] = hm.split(':').map(Number);
+  const guess = Date.UTC(y, m - 1, d, h, mi);
+  const ms = guess - zoneOffset(guess, tz);
+  return guess - zoneOffset(ms, tz);
+}
+/* The 'YYYY-MM-DD' a value (string of either shape, Date or ms) falls on in the selected zone. */
+export function dayKey(v) {
+  if (v == null || v === '') return '';
+  if (typeof v === 'string' && !hasTime(v)) return v.slice(0, 10);
+  const o = zoneParts(typeof v === 'string' ? Date.parse(v) : +v);
+  return `${o.year}-${String(o.month).padStart(2, '0')}-${String(o.day).padStart(2, '0')}`;
+}
+/* Today in the selected zone, as a local-midnight Date. Computed on each call, never stale. */
+export const today = () => parse(dayKey(Date.now()));
+/* UTC ms of a value. All-day values count as the start of the day, or its end when `end` is set. */
+export function instant(v, end) {
+  if (!v) return NaN;
+  if (hasTime(v)) return Date.parse(v);
+  return end ? zonedMs(iso(addD(parse(v), 1))) - 1 : zonedMs(v);
+}
+export const toDate = (v, end) => new Date(instant(v, end));
+/* 'HH:MM' (24h) of a timed value in the selected zone; '' for all-day values. */
+export function timeOf(v) {
+  if (!hasTime(v)) return '';
+  const o = zoneParts(Date.parse(v));
+  return `${String(o.hour % 24).padStart(2, '0')}:${String(o.minute).padStart(2, '0')}`;
+}
+/* Set the wall-clock time of a value; an empty time makes it all day. */
+export const withTime = (v, hm) => (!v ? null : hm ? new Date(zonedMs(dayKey(v), hm)).toISOString() : dayKey(v));
+/* Move a value to another day, keeping its time of day. */
+export const withDay = (v, day) => (hasTime(v) ? withTime(day, timeOf(v)) : day);
+export const shiftD = (v, n) => withDay(v, iso(addD(parse(v), n)));
+export const isPast = v => !!v && Date.now() > instant(v, true);
+export const dueSoon = v => hasTime(v) && instant(v) >= Date.now() && instant(v) - Date.now() <= 2 * 36e5;
+export function fmtTime(v) {
+  const hm = timeOf(v);
+  if (!hm) return '';
+  if (timeFormat === '24') return hm;
+  const [h, m] = hm.split(':').map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+export const fmtDateTime = (v, long) => (v ? fmtDate(v, long) + (hasTime(v) ? ', ' + fmtTime(v) : '') : '');
 export function fmtDate(s, long) {
   const d = typeof s === 'string' ? parse(s) : s;
   if (!d) return '';
@@ -53,16 +132,16 @@ export function fmtDate(s, long) {
   if (fmt === 'd/M') return `${d.getDate()}/${d.getMonth() + 1}${long ? '/' + d.getFullYear() : ''}`;
   if (fmt === 'M/d') return `${d.getMonth() + 1}/${d.getDate()}${long ? '/' + d.getFullYear() : ''}`;
   if (fmt === 'yyyy-MM-dd') return iso(d);
-  return `${MON[d.getMonth()]} ${d.getDate()}${long || d.getFullYear() !== TODAY.getFullYear() ? ', ' + d.getFullYear() : ''}`;
+  return `${MON[d.getMonth()]} ${d.getDate()}${long || d.getFullYear() !== today().getFullYear() ? ', ' + d.getFullYear() : ''}`;
 }
+/* Relative day ('Today', 'Fri', 'Oct 30'), plus the time when the value has one. */
 export function relDate(s) {
   if (!s) return '';
-  const n = diffD(parse(s), TODAY);
-  if (n === 0) return 'Today';
-  if (n === 1) return 'Tomorrow';
-  if (n === -1) return 'Yesterday';
-  if (n > 1 && n < 7) return WD[parse(s).getDay()];
-  return fmtDate(s);
+  const n = diffD(parse(s), today());
+  const t = hasTime(s) ? fmtTime(s) : '';
+  const day = n === 0 ? 'Today' : n === 1 ? 'Tomorrow' : n === -1 ? 'Yesterday' : n > 1 && n < 7 ? WD[parse(s).getDay()] : '';
+  if (day) return t ? `${day} ${t}` : day;
+  return t ? `${fmtDate(s)}, ${t}` : fmtDate(s);
 }
 export function ago(ts) {
   const m = Math.round((Date.now() - ts) / 6e4);
@@ -72,11 +151,11 @@ export function ago(ts) {
   if (h < 24) return h + 'h ago';
   const d = Math.round(h / 24);
   if (d < 7) return d + 'd ago';
-  return fmtDate(iso(new Date(ts)));
+  return fmtDate(dayKey(ts));
 }
 export const minsAgo = m => Date.now() - m * 6e4;
 export function dayBucket(ts) {
-  const n = diffD(new Date(ts), TODAY);
+  const n = diffD(parse(dayKey(ts)), today());
   if (n === 0) return 'Today';
   if (n === -1) return 'Yesterday';
   if (n > -7) return 'This week';

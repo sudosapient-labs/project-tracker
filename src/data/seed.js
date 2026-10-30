@@ -1,5 +1,5 @@
 /* ---------- seed data ---------- */
-import { dOff, minsAgo, uid } from '../core/utils.js';
+import { dOff, minsAgo, uid, withTime } from '../core/utils.js';
 
 export function seed() {
   const members = [
@@ -237,6 +237,7 @@ export function seed() {
   ];
   let n = 0;
   const T = [];
+  const SEED_TIMES = ['17:00', '10:00', '13:30', '18:30'];
   const t = (p, title, status, a, prio, due, labels = [], x = {}) => {
     const proj = projects.find(q => q.id === p);
     const count = T.filter(q => q.project === p).length + 1;
@@ -250,7 +251,8 @@ export function seed() {
           status,
           assignee: a,
           priority: prio,
-          due: due == null ? null : dOff(due),
+          // Every third task has a due time (wall-clock in the selected zone); the rest are all day.
+          due: due == null ? null : n % 3 ? dOff(due) : withTime(dOff(due), SEED_TIMES[(n / 3) % SEED_TIMES.length]),
           start: due == null ? null : dOff(due - (x.len || 4)),
           labels,
           subtasks: [],

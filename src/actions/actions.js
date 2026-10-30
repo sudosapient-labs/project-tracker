@@ -1,7 +1,7 @@
 /* =====================================================================
    ACTIONS · INPUT HANDLERS · DRAG & DROP · KEYBOARD · INIT
    ===================================================================== */
-import { $, $$, TODAY, addD, dOff, esc, fmtDate, iso, parse, uid } from '../core/utils.js';
+import { $, $$, addD, dOff, esc, fmtDateTime, instant, iso, parse, shiftD, today, uid, withDay, withTime } from '../core/utils.js';
 import { PR, PSTAT, ST } from '../core/constants.js';
 import { seed } from '../data/seed.js';
 import { D, DEFAULT_PREFS, S, allTasks, canSee, commentsOf, logAct, me, mem, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
@@ -11,7 +11,7 @@ import { mutate, toast } from '../ui/toast.js';
 import { autosize, focusKey, fxSet, go, render } from '../shell/render.js';
 import { viewOf } from '../shell/view-engine.js';
 import { TEMPLATES, closeModal, openModal } from '../overlays/modals.js';
-import { closePop, openPop, tgt } from '../overlays/popovers.js';
+import { closePop, dateVal, openPop, tgt } from '../overlays/popovers.js';
 import { strengthMeter } from '../pages/settings.js';
 
 export const A = {},
@@ -75,7 +75,7 @@ export function applyPatch(t, patch) {
         fxSet({ done: t.id });
       } else logAct('moved', t, `from ${ST[old].name} to ${ST[nv].name}`);
       if (nv === 'done' && t.recur && t.due) {
-        const nd = iso(addD(parse(t.due), RECUR_DAYS[t.recur] || 7));
+        const nd = shiftD(t.due, RECUR_DAYS[t.recur] || 7);
         const n = createTask({
           ...JSON.parse(JSON.stringify(t)),
           id: undefined,
@@ -88,12 +88,12 @@ export function applyPatch(t, patch) {
           attachments: [],
         });
         delete n.prevStatus;
-        msgs.push(`Next “${t.title}” scheduled for ${fmtDate(nd)}`);
+        msgs.push(`Next “${t.title}” scheduled for ${fmtDateTime(nd)}`);
       }
     } else if (k === 'assignee') logAct('assigned', t, nv ? `to ${mem(nv)?.name}` : '(unassigned)');
     else if (k === 'priority') logAct('changed priority of', t, `to ${PR[nv].name}`);
-    else if (k === 'due') logAct('changed due date of', t, nv ? `to ${fmtDate(nv)}` : '(cleared)');
-    else if (k === 'start') logAct('changed start date of', t, nv ? `to ${fmtDate(nv)}` : '(cleared)');
+    else if (k === 'due') logAct('changed due date of', t, nv ? `to ${fmtDateTime(nv)}` : '(cleared)');
+    else if (k === 'start') logAct('changed start date of', t, nv ? `to ${fmtDateTime(nv)}` : '(cleared)');
     else if (k === 'project') {
       const p = proj(nv);
       t.key = nextKey(p);
@@ -274,20 +274,17 @@ A.ctxBtn = el => {
 A.popPick = el => {
   const p = S.ui.pop;
   let v = el.dataset.v;
-  if (p.type === 'subassignee' || (p.type === 'date' && p.field === 'subdue')) {
+  // Picking a day keeps the time already set; the value stays all day otherwise.
+  if (p.type === 'date') return setDate(p, v && withDay(dateVal(p), v));
+  if (p.type === 'subassignee') {
     const t = task(p.id);
     const sb = t?.subtasks[p.i];
     if (!sb) return;
-    const k = p.type === 'subassignee' ? 'assignee' : 'due';
     v = v || null;
     S.ui.pop = null;
     mutate(() => {
-      sb[k] = v;
-      logAct(
-        k === 'assignee' ? 'assigned a subtask on' : 'set a subtask due date on',
-        t,
-        k === 'assignee' ? (v ? `to ${mem(v).name}` : '(unassigned)') : v ? fmtDate(v) : '(cleared)',
-      );
+      sb.assignee = v;
+      logAct('assigned a subtask on', t, v ? `to ${mem(v).name}` : '(unassigned)');
     });
     return;
   }
@@ -320,20 +317,41 @@ A.popPick = el => {
     toast(`${m.name} is now ${v === 'Admin' ? 'an' : 'a'} ${v}`);
     return;
   }
-  const field = { status: 'status', priority: 'priority', assignee: 'assignee', project: 'project', recur: 'recur', estimate: 'estimate', date: p.field }[
-    p.type
-  ];
+  const field = { status: 'status', priority: 'priority', assignee: 'assignee', project: 'project', recur: 'recur', estimate: 'estimate' }[p.type];
   if (!field) return;
   if (field === 'assignee' && !v) v = null;
   if (field === 'recur' && v === 'Does not repeat') v = null;
-  if ((field === 'estimate' || field === 'due' || field === 'start') && !v) v = null;
+  if (field === 'estimate' && !v) v = null;
   S.ui.pop = null;
-  const patch = { [field]: v };
-  if (field === 'due' && v && p.id !== '__form') {
+  updateTask(p.id, { [field]: v });
+};
+/* Store a start/due/subtask due from the date popover; `keep` leaves the popover open. */
+function setDate(p, v, keep) {
+  v = v || null;
+  if (!keep) S.ui.pop = null;
+  if (p.field === 'subdue') {
     const t = task(p.id);
-    if (t.start && t.start > v) patch.start = v;
+    const sb = t?.subtasks[p.i];
+    if (!sb) return;
+    mutate(() => {
+      sb.due = v;
+      logAct('set a subtask due date on', t, v ? fmtDateTime(v) : '(cleared)');
+    });
+    return;
   }
+  const patch = { [p.field]: v };
+  const t = tgt(p);
+  if (p.field === 'due' && v && p.id !== '__form' && t.start && instant(t.start) > instant(v, true)) patch.start = v;
   updateTask(p.id, patch);
+}
+/* The time is wall-clock time in the selected zone; an empty time makes the value all day. */
+IN.popTime = el => {
+  const p = S.ui.pop;
+  if (p?.type === 'date') setDate(p, withTime(dateVal(p) || dOff(0), el.value), true);
+};
+A.popAllDay = () => {
+  const p = S.ui.pop;
+  if (p?.type === 'date' && dateVal(p)) setDate(p, withTime(dateVal(p), ''), true);
 };
 A.popToggleLabel = el => {
   const p = S.ui.pop;
@@ -362,7 +380,7 @@ IN.popQ = el => {
 };
 export const ctxTo = type => () => {
   S.ui.pop = { ...S.ui.pop, type, q: '' };
-  if (type === 'date') S.ui.pop.m = iso(TODAY);
+  if (type === 'date') S.ui.pop.m = iso(today());
   render();
 };
 A.ctxStatus = ctxTo('status');
@@ -617,7 +635,7 @@ A.submitTask = () => {
     assignee: f.assignee,
     priority: f.priority,
     due: f.due,
-    start: f.start && f.due && f.start > f.due ? f.due : f.start,
+    start: f.start && f.due && instant(f.start) > instant(f.due, true) ? f.due : f.start,
     labels: f.labels,
     recur: f.recur,
     subtasks: f.subtasks,
@@ -1180,7 +1198,7 @@ A.colSortPrio = el => {
 A.calNav = el => {
   const d = +el.dataset.d;
   const cur = parse(S.ui.calDate);
-  S.ui.calDate = d === 0 ? iso(TODAY) : S.ui.calMode === 'month' ? iso(new Date(cur.getFullYear(), cur.getMonth() + d, 1)) : iso(addD(cur, d * 7));
+  S.ui.calDate = d === 0 ? iso(today()) : S.ui.calMode === 'month' ? iso(new Date(cur.getFullYear(), cur.getMonth() + d, 1)) : iso(addD(cur, d * 7));
   render();
 };
 A.tlToday = () => {

@@ -1,5 +1,5 @@
 /* ---------- small render helpers ---------- */
-import { TODAY, diffD, esc, parse, relDate } from '../core/utils.js';
+import { diffD, dueSoon, esc, hasTime, isPast, parse, relDate, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { LB, PR, PSTAT, ST } from '../core/constants.js';
 import { D, mem, pColor } from '../core/store.js';
@@ -48,8 +48,9 @@ export const pIcon = (p, cls = '', s = 15) => `<span class="picon ${cls}" style=
 export const pStatus = s => `<span class="pstatus" style="--c:${PSTAT[s].c}"><i></i>${PSTAT[s].name}</span>`;
 export function dueHtml(t, withIcon = true) {
   if (!t.due) return '';
-  const n = diffD(parse(t.due), TODAY);
-  const cls = t.status === 'done' ? '' : n < 0 ? 'over' : n <= 1 ? 'soon' : '';
+  // Timed tasks are "soon" within 2 hours; all-day tasks when due today or tomorrow.
+  const soon = hasTime(t.due) ? dueSoon(t.due) : diffD(parse(t.due), today()) <= 1;
+  const cls = t.status === 'done' ? '' : isPast(t.due) ? 'over' : soon ? 'soon' : '';
   return `<span class="due ${cls}">${withIcon ? ic('calendar', 12) : ''}${relDate(t.due)}</span>`;
 }
 export function progBar(v, cls = '') {

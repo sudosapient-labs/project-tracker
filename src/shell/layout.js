@@ -1,5 +1,5 @@
 /* ---------- shell ---------- */
-import { MOD, TODAY, diffD, esc, parse } from '../core/utils.js';
+import { MOD, diffD, esc, parse, today } from '../core/utils.js';
 import { ic, wsLogo } from '../core/icons.js';
 import { PSTAT } from '../core/constants.js';
 import { D, S, allTasks, mem, pColor, proj, team, teamsList, visibleProjects } from '../core/store.js';
@@ -80,7 +80,7 @@ export function renderSidebar() {
     d = D();
   const unreadInbox = d.notifs.filter(n => !n.read && n.type !== 'update').length;
   const unreadAll = d.notifs.filter(n => !n.read).length;
-  const myOpen = allTasks().filter(t => t.assignee === d.me && t.status !== 'done' && t.due && diffD(parse(t.due), TODAY) <= 0).length;
+  const myOpen = allTasks().filter(t => t.assignee === d.me && t.status !== 'done' && t.due && diffD(parse(t.due), today()) <= 0).length;
   const projs = visibleProjects().filter(p => p.status !== 'complete');
   const inProj = u.route === 'project' ? u.params.id : null;
   return `<nav class="side" aria-label="Main">
