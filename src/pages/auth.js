@@ -39,13 +39,12 @@ export function renderAuth() {
   if (s === 'signup')
     return authShell(
       `<form class="auth-card${S.ui.fx.auth ? ' fx-auth' : ''}" data-submit="doSignup" novalidate>
-    <div style="display:flex;justify-content:center">${LOGO(30)}</div><h1>Create your account</h1><p class="sub">Free for up to 3 members. No credit card required.</p>
+    <div style="display:flex;justify-content:center">${LOGO(30)}</div><h1>Create your account</h1><p class="sub">Set up your account to get started.</p>
     ${socialBtns()}<div class="or">or sign up with email</div>
     <div class="field"><label class="label" for="s-name">Full name</label><input class="input input-lg ${icls('name')}" id="s-name" value="${esc(f.name)}" autocomplete="name" placeholder="Tanjim Islam">${ferr('name')}</div>
     <div class="field"><label class="label" for="s-email">Work email</label><input class="input input-lg ${icls('email')}" id="s-email" type="email" value="" autocomplete="email" placeholder="you@company.com">${ferr('email')}</div>
     <div class="field"><label class="label" for="s-pw">Password</label><input class="input input-lg ${icls('pw')}" id="s-pw" type="password" data-in="pwStrength" value="${esc(S.ui.pwNew || '')}" autocomplete="new-password">${strengthMeter(S.ui.pwNew || '')}${ferr('pw') || '<span class="hint">At least 10 characters with a number or symbol.</span>'}</div>
     <button class="btn btn-primary btn-lg btn-block" data-a="doSignup" id="signup-btn">Create account</button>
-    <p class="hint" style="text-align:center">By creating an account you agree to the Terms and Privacy Policy.</p>
     <p class="auth-foot">Already have an account? <button type="button" class="link" data-a="auth" data-v="login">Sign in</button></p></form>`,
       `<button class="btn btn-ghost btn-sm" data-a="auth" data-v="login">Log in</button>`,
     );
@@ -100,7 +99,7 @@ export function renderOnboarding() {
       .join('')}</div>${nav()}`;
   if (st === 1) {
     const e = S.ui.errors.ws;
-    body = `<h1>Create your workspace</h1><p class="sub">A workspace is where your team's projects live.</p>
+    body = `<h1>Name your workspace</h1><p class="sub">This is where your projects, tasks, and files live.</p>
     <div class="field"><label class="label" for="o-ws">Workspace name</label><input class="input input-lg ${e ? 'is-error' : ''}" id="o-ws" data-in="onbWs" value="${esc(o.ws)}" placeholder="e.g. Gr8r Studio" autofocus>${e ? `<span class="err">${ic('circle-alert', 12)}${e}</span>` : ''}</div>${nav()}`;
   }
   if (st === 2)

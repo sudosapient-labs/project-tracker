@@ -1888,22 +1888,6 @@ A.saveWorkspace = () => {
       toast('Workspace settings saved');
   });
 };
-A.delWorkspace = () =>
-  confirmDlg({
-    title: `Delete ${D().ws.name}?`,
-    body: 'Every project, task, file, and comment in this workspace will be permanently deleted for all members.',
-    ok: 'Delete workspace',
-    danger: true,
-    typeName: D().ws.name,
-    run: () => {
-      S.data = seed();
-      S.views = {};
-      save();
-      S.ui.auth = 'login';
-      render();
-      toast('Workspace deleted. Demo data was restored for this prototype.', { kind: 'info', ms: 5000 });
-    },
-  });
 A.avColor = el => {
   me().c = el.dataset.v;
   save();
