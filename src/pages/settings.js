@@ -252,7 +252,17 @@ export function settingsBody(sec, title) {
       );
     case 'notif-push':
       return (
-        H('Notifications on desktop and mobile.') +
+        H(
+          `Desktop notifications while Gr8r Studio is open in a browser tab.${
+            !window.Notification
+              ? ' This browser doesn’t support them.'
+              : Notification.permission === 'denied'
+                ? ' Notifications are blocked for this site in your browser settings.'
+                : Notification.permission === 'default'
+                  ? ' Your browser will ask for permission when you turn one on.'
+                  : ''
+          }`,
+        ) +
         srow('Mentions', '', tog('push_mention', np.push_mention, 'np')) +
         srow('Assignments', '', tog('push_assign', np.push_assign, 'np')) +
         srow('Comments', '', tog('push_comment', np.push_comment, 'np')) +

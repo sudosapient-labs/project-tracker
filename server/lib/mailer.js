@@ -12,7 +12,7 @@ export function createMailer(db, config, log = console) {
   function queue({ to, subject, intro, action, link, outro = '' }) {
     const text = `${intro}\n\n${action}: ${link}\n\n${outro}`.trim();
     const html = `<div style="font:14px/1.5 -apple-system,Segoe UI,sans-serif;color:#1d1c1a;max-width:480px">
-      <p>${esc(intro)}</p>
+      <p>${esc(intro).replace(/\n/g, '<br>')}</p>
       <p><a href="${esc(link)}" style="display:inline-block;background:#1d1c1a;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">${esc(action)}</a></p>
       <p style="color:#6b6760;font-size:12px">${esc(outro)}<br>Or paste this link into your browser: ${esc(link)}</p></div>`;
     db.run(

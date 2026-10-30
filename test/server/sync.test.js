@@ -210,7 +210,7 @@ describe('per-person documents', () => {
     const o = (await owner.get('/api/bootstrap')).body;
     expect(o.data.projOrder).toEqual(['p1', 'p2']);
     expect(o.data.recentSearches).toEqual(['homepage']);
-    expect(o.data.notifPrefs).toEqual({ email_digest: false });
+    expect(o.data.notifPrefs).toMatchObject({ email_digest: false, email_mention: true });
     expect(o.prefs).toMatchObject({ theme: 'dark', name: 'Ada Owner' });
     expect(o.views).toEqual({ tasks: { q: 'x' } });
     expect(o.collapsed).toBe(true);

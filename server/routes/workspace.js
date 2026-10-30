@@ -2,7 +2,8 @@
 import { Hono } from 'hono';
 import { requireAuth } from '../auth.js';
 import { issueToken } from './auth.js';
-import { notify, canSee } from '../sync/rules.js';
+import { canSee } from '../sync/rules.js';
+import { notify } from '../notify.js';
 
 export function workspaceRoutes() {
   const r = new Hono();
@@ -64,7 +65,7 @@ export function workspaceRoutes() {
     if (canSee(p, me)) return c.json({ ok: true, already: true });
     const to = (p.lead && repo.get('members', p.lead)) || repo.all('members').find(m => m.role === 'Owner');
     const ctx = { repo, uid: me.id, now: Date.now(), changes: [] };
-    db.tx(() => notify(ctx, to?.id, { type: 'update', project: p.id, text: `requested access to ${p.name}`, snippet: `${me.name} (${me.email})` }));
+    db.tx(() => notify(ctx, to?.id, 'access', { type: 'update', project: p.id, text: `requested access to ${p.name}`, snippet: `${me.name} (${me.email})` }));
     engine.publish(ctx.changes);
     return c.json({ ok: true, to: to?.name || null });
   });

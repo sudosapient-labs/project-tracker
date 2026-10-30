@@ -3,7 +3,7 @@
    hook receives `ctx` (see engine.js) and throws Reject to refuse a single operation. */
 import { PR, ST } from '../../src/core/constants.js';
 import { Reject } from '../lib/http.js';
-import { newId } from '../lib/crypto.js';
+import { mentioned, notify } from '../notify.js';
 import { issueToken } from '../routes/auth.js';
 
 const RANK = { Owner: 4, Admin: 3, Member: 2, Guest: 1 };
@@ -28,24 +28,6 @@ function needMember(ctx, mid, what = 'person') {
 
 /* ---------- notifications ---------- */
 const clip = (s, n = 140) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
-export function notify(ctx, to, n) {
-  if (!to || to === ctx.uid) return;
-  const m = ctx.repo.get('members', to);
-  if (!m || m.status !== 'active') return;
-  const row = {
-    id: newId('n'),
-    type: n.type,
-    by: ctx.uid,
-    task: n.task || null,
-    project: n.project || null,
-    text: n.text,
-    snippet: n.snippet || '',
-    at: ctx.now,
-    read: false,
-  };
-  ctx.repo.put('notifs', row, to);
-  ctx.changes.push({ c: 'notifs', id: row.id, v: row, uid: to });
-}
 const dueSnippet = t => [t.due ? `Due ${t.due.slice(0, 10)}` : null, `${PR[t.priority]?.name || 'No'} priority`].filter(Boolean).join(' · ');
 
 /* ---------- task keys ---------- */
@@ -101,7 +83,7 @@ export const RULES = {
       const p = needProject(ctx, t.project);
       needMember(ctx, t.assignee, 'assignee');
       settleKey(ctx, t, p);
-      if (t.assignee) notify(ctx, t.assignee, { type: 'assign', task: t.id, text: 'assigned you', snippet: dueSnippet(t) });
+      if (t.assignee) notify(ctx, t.assignee, 'assign', { type: 'assign', task: t.id, text: 'assigned you', snippet: dueSnippet(t) }, t);
       return t;
     },
     update(ctx, before, t, keys) {
@@ -110,16 +92,22 @@ export const RULES = {
       else if (keys.includes('key') && keyTaken(ctx, t.key, t.id)) t.key = before.key;
       if (keys.includes('assignee')) {
         needMember(ctx, t.assignee, 'assignee');
-        if (t.assignee) notify(ctx, t.assignee, { type: 'assign', task: t.id, text: 'assigned you', snippet: dueSnippet(t) });
+        if (t.assignee) notify(ctx, t.assignee, 'assign', { type: 'assign', task: t.id, text: 'assigned you', snippet: dueSnippet(t) }, t);
       }
       if (keys.includes('status') && t.assignee && !keys.includes('assignee')) {
         const done = t.status === 'done';
-        notify(ctx, t.assignee, {
-          type: 'update',
-          task: t.id,
-          text: done ? 'completed' : `moved to ${ST[t.status].name}`,
-          snippet: done ? t.title : `${ST[before.status]?.name} → ${ST[t.status].name}`,
-        });
+        notify(
+          ctx,
+          t.assignee,
+          'status',
+          {
+            type: 'update',
+            task: t.id,
+            text: done ? 'completed' : `moved to ${ST[t.status].name}`,
+            snippet: done ? t.title : `${ST[before.status]?.name} → ${ST[t.status].name}`,
+          },
+          t,
+        );
       }
       return t;
     },
@@ -183,13 +171,10 @@ export const RULES = {
       cm.at = ctx.now;
       cm.re ||= {};
       cm.project = t.project;
-      const mentioned = new Set();
-      for (const m of ctx.repo.all('members'))
-        if (m.id !== ctx.uid && cm.text.includes('@' + m.name)) {
-          mentioned.add(m.id);
-          notify(ctx, m.id, { type: 'mention', task: t.id, text: 'mentioned you in', snippet: clip(cm.text) });
-        }
-      if (t.assignee && !mentioned.has(t.assignee)) notify(ctx, t.assignee, { type: 'comment', task: t.id, text: 'commented on', snippet: clip(cm.text) });
+      const reached = mentioned(ctx.repo, cm.text);
+      for (const [id, reason] of reached) notify(ctx, id, reason, { type: 'mention', task: t.id, text: 'mentioned you in', snippet: clip(cm.text) });
+      if (t.assignee && !reached.has(t.assignee))
+        notify(ctx, t.assignee, 'comment', { type: 'comment', task: t.id, text: 'commented on', snippet: clip(cm.text) });
       return cm;
     },
     update(ctx, before, cm, keys) {

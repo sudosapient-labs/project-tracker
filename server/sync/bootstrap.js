@@ -2,6 +2,7 @@
    the client swaps its data source without changing how anything renders. */
 import { listSessions } from '../auth.js';
 import { canSee } from './rules.js';
+import { DEFAULT_NOTIF_PREFS } from '../notify.js';
 
 const ACTIVITY_LIMIT = 1000;
 const NOTIF_LIMIT = 500;
@@ -50,7 +51,7 @@ export function bootstrap({ db, repo }, auth) {
       recentSearches: state.recentSearches,
       sessions: listSessions(db, uid, auth.session.id),
       tfa: !!user.totp_enabled,
-      notifPrefs: state.notifPrefs,
+      notifPrefs: { ...DEFAULT_NOTIF_PREFS, ...state.notifPrefs },
     },
     prefs: { ...state.prefs, name: auth.member.name, title: auth.member.title || '' },
     views: state.views,
