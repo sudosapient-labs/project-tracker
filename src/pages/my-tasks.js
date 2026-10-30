@@ -1,5 +1,5 @@
 /* ---------- MY TASKS ---------- */
-import { TODAY, dOff, diffD, parse } from '../core/utils.js';
+import { dOff, diffD, parse, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { D, S, allTasks, isOver } from '../core/store.js';
 import { applyView, viewOf, viewToolbar } from '../shell/view-engine.js';
@@ -19,14 +19,14 @@ export function pageMyTasks() {
       key: 'today',
       name: 'Today',
       html: ic('sun', 14),
-      tasks: mine.filter(t => t.status !== 'done' && t.due && diffD(parse(t.due), TODAY) === 0),
+      tasks: mine.filter(t => t.status !== 'done' && t.due && !isOver(t) && diffD(parse(t.due), today()) === 0),
       set: { due: dOff(0) },
     },
     {
       key: 'upcoming',
       name: 'Upcoming',
       html: ic('calendar-days', 14),
-      tasks: mine.filter(t => t.status !== 'done' && (!t.due || diffD(parse(t.due), TODAY) > 0)),
+      tasks: mine.filter(t => t.status !== 'done' && (!t.due || diffD(parse(t.due), today()) > 0)),
       set: { due: dOff(3) },
     },
     {

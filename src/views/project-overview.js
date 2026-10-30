@@ -1,5 +1,5 @@
 /* ---------- OVERVIEW ---------- */
-import { TODAY, dayBucket, diffD, esc, fmtDate, parse } from '../core/utils.js';
+import { dayBucket, diffD, esc, fmtDate, parse, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { STATUSES } from '../core/constants.js';
 import { D, TM, isOver, mem, pColor, progressOf, task, tasksOf } from '../core/store.js';
@@ -19,7 +19,7 @@ export function projOverview(p) {
   const acts = D()
     .activity.filter(a => a.project === p.id)
     .slice(0, 6);
-  const daysLeft = diffD(parse(p.due), TODAY);
+  const daysLeft = diffD(parse(p.due), today());
   return `<div class="page" style="max-width:1160px;padding-top:22px">
     <div class="grid2">
       <div class="stack">
@@ -44,7 +44,7 @@ export function projOverview(p) {
         <section class="panel"><div class="panel-h"><h2>Milestones</h2></div><div class="panel-b">${
           (p.milestones || [])
             .map(m => {
-              const n = diffD(parse(m.date), TODAY);
+              const n = diffD(parse(m.date), today());
               return `<div class="row" style="height:32px;font-size:13px"><span style="width:9px;height:9px;transform:rotate(45deg);border-radius:2px;flex-shrink:0;margin:0 3px;background:${n < 0 ? 'var(--green)' : pColor(p)}"></span><span class="grow trunc ${n < 0 ? 'faint' : ''}">${esc(m.name)}</span><span class="num muted">${fmtDate(m.date)}</span></div>`;
             })
             .join('') || '<span class="faint">No milestones yet</span>'

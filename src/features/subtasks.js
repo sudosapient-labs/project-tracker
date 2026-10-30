@@ -15,7 +15,7 @@ export function subtaskHtml(t, s) {
     <div class="faint" style="font-size:12px;margin:4px 0 0 26px">Subtask ${i + 1} of ${t.subtasks.length} · ${s.done ? 'Done' : 'Open'}</div>
     <dl class="kv" style="margin-top:16px">
       <dt>${ic('user', 14)}Assignee</dt><dd><button class="pillbtn ${s.assignee ? '' : 'empty'}" data-a="pop" data-pop="subassignee" data-id="${t.id}" data-i="${i}">${av(s.assignee, 'sm', false)}<span>${s.assignee ? esc(mem(s.assignee)?.name) : 'Unassigned'}</span></button></dd>
-      <dt>${ic('calendar', 14)}Due date</dt><dd><button class="pillbtn ${s.due ? '' : 'empty'}" data-a="pop" data-pop="date" data-field="subdue" data-id="${t.id}" data-i="${i}">${ic('calendar', 13)}<span class="num">${s.due ? relDate(s.due) : 'Set date'}</span></button></dd>
+      <dt>${ic('calendar', 14)}Due</dt><dd><button class="pillbtn ${s.due ? '' : 'empty'}" data-a="pop" data-pop="date" data-field="subdue" data-id="${t.id}" data-i="${i}">${ic('calendar', 13)}<span class="num">${s.due ? relDate(s.due) : 'Set date'}</span></button></dd>
       <dt>${ic('folder', 14)}Parent</dt><dd><button class="pillbtn" data-a="closeSub"><span class="mono faint" style="font-size:11px">${t.key}</span>${esc(t.title)}</button></dd>
     </dl>
     <div class="dsec"><div class="dsec-h"><h3 id="s-note-l">Notes</h3></div>

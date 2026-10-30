@@ -1,5 +1,5 @@
 /* ---------- WORKSPACE OVERVIEW ---------- */
-import { TODAY, diffD, esc, fmtDate, parse, relDate } from '../core/utils.js';
+import { diffD, esc, fmtDate, parse, relDate, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { STATUSES } from '../core/constants.js';
 import { D, allTasks, canSee, isOver, mem, pColor, progressOf, tasksOf, visibleProjects } from '../core/store.js';
@@ -12,7 +12,7 @@ export function pageOverview() {
   const counts = STATUSES.map(s => ({ s, n: all.filter(t => t.status === s.id).length }));
   const ms = ps
     .flatMap(p => (p.milestones || []).map(m => ({ ...m, p })))
-    .filter(m => diffD(parse(m.date), TODAY) >= 0)
+    .filter(m => diffD(parse(m.date), today()) >= 0)
     .sort((a, b) => (a.date > b.date ? 1 : -1))
     .slice(0, 6);
   const load = D()

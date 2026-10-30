@@ -1,5 +1,5 @@
 /* ---------- TIMELINE ---------- */
-import { $, MON, MONL, TODAY, addD, diffD, esc, fmtDate, parse } from '../core/utils.js';
+import { $, MON, MONL, addD, diffD, esc, fmtDate, fmtDateTime, instant, parse, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { S, allTasks, canSee, pColor, proj, task, taskProg, visibleProjects } from '../core/store.js';
 import { av, empty, stIcon } from '../ui/helpers.js';
@@ -23,9 +23,11 @@ export function tlControls() {
     .join('')}</select>
   <button class="btn btn-ghost" data-a="tlToday">${ic('crosshair', 14)}Today</button>`;
 }
+/* Bars span start → due by day in the selected zone; a start after the due is ignored. */
+const barStart = t => (t.start && instant(t.start) <= instant(t.due, true) ? t.start : t.due);
 export function timelineHtml(ts, key, p) {
   const dw = S.ui.tlZoom === 'week' ? 32 : 11;
-  const rs = startOfWeek(addD(TODAY, S.ui.tlZoom === 'week' ? -21 : -56));
+  const rs = startOfWeek(addD(today(), S.ui.tlZoom === 'week' ? -21 : -56));
   const nDays = S.ui.tlZoom === 'week' ? 7 * 13 : 7 * 34;
   const X = ds => diffD(parse(ds), rs) * dw;
   const g = S.ui.tlGroup;
@@ -42,7 +44,7 @@ export function timelineHtml(ts, key, p) {
   if (ms.length) rows.push({ type: 'ms' });
   groups.forEach(G => {
     if (g !== 'none') rows.push({ type: 'g', G });
-    G.tasks.sort((a, b) => ((a.start || a.due) > (b.start || b.due) ? 1 : -1)).forEach(t => rows.push({ type: 't', t }));
+    G.tasks.sort((a, b) => instant(a.start || a.due) - instant(b.start || b.due)).forEach(t => rows.push({ type: 't', t }));
   });
   const RH = 36;
   const H = rows.length * RH;
@@ -67,7 +69,7 @@ export function timelineHtml(ts, key, p) {
     S.ui.tlZoom === 'week'
       ? Array.from({ length: nDays }, (_, i) => {
           const d = addD(rs, i);
-          return `<div style="width:${dw}px" class="${diffD(d, TODAY) === 0 ? 'today' : ''}">${d.getDate()}</div>`;
+          return `<div style="width:${dw}px" class="${diffD(d, today()) === 0 ? 'today' : ''}">${d.getDate()}</div>`;
         }).join('')
       : Array.from({ length: nDays / 7 }, (_, i) => {
           const d = addD(rs, i * 7);
@@ -88,12 +90,12 @@ export function timelineHtml(ts, key, p) {
       if (r.type === 'ms') return `<div class="tl-rowbg" style="top:${y}px"></div>` + msLane(ms, X, dw, y);
       const t = r.t;
       const pp = proj(t.project);
-      const s = t.start && t.start <= t.due ? t.start : t.due;
+      const s = barStart(t);
       const x = X(s);
       const w = Math.max(dw, (diffD(parse(t.due), parse(s)) + 1) * dw);
       const c = g === 'status' || g === 'none' ? pColor(pp) : `var(--st-${t.status})`;
       const inside = w > 110;
-      return `<div class="tl-rowbg" style="top:${y}px"></div><div class="bar ${t.status === 'done' ? 'done' : ''}" style="--c:${c};left:${x}px;top:${y + 7}px;width:${w}px" data-bar="${t.id}" data-dw="${dw}" data-a="openTask" data-id="${t.id}" data-ctx="task" title="${esc(t.title)} · ${fmtDate(s)} → ${fmtDate(t.due)}"><span class="pf" style="width:${taskProg(t)}%"></span>${inside ? `${av(t.assignee, 'sm', false)}<span class="trunc">${esc(t.title)}</span>` : ''}</div>${inside ? '' : `<div class="bar-lbl" style="left:${x + w + 8}px;top:${y + 10}px">${esc(t.title)}</div>`}`;
+      return `<div class="tl-rowbg" style="top:${y}px"></div><div class="bar ${t.status === 'done' ? 'done' : ''}" style="--c:${c};left:${x}px;top:${y + 7}px;width:${w}px" data-bar="${t.id}" data-dw="${dw}" data-a="openTask" data-id="${t.id}" data-ctx="task" title="${esc(t.title)} · ${fmtDateTime(s)} → ${fmtDateTime(t.due)}"><span class="pf" style="width:${taskProg(t)}%"></span>${inside ? `${av(t.assignee, 'sm', false)}<span class="trunc">${esc(t.title)}</span>` : ''}</div>${inside ? '' : `<div class="bar-lbl" style="left:${x + w + 8}px;top:${y + 10}px">${esc(t.title)}</div>`}`;
     })
     .join('');
   // dependency paths
@@ -105,7 +107,7 @@ export function timelineHtml(ts, key, p) {
           const a = task(d);
           const x1 = X(a.due) + dw;
           const y1 = rowY[d];
-          const s = t.start && t.start <= t.due ? t.start : t.due;
+          const s = barStart(t);
           const x2 = X(s);
           const y2 = rowY[t.id];
           const mx = Math.max(x1 + 10, x2 - 10);
@@ -129,7 +131,7 @@ export function timelineHtml(ts, key, p) {
       'Give tasks a start and due date to see them here.',
       `<button class="btn btn-primary btn-sm" data-a="newTask" ${p ? `data-project="${p.id}"` : ''}>${ic('plus', 14)}New task</button>`,
     );
-  const todayX = diffD(TODAY, rs) * dw;
+  const todayX = diffD(today(), rs) * dw;
   return `<div class="tl" data-tl-today="${todayX}" data-tl-key="${key}">
     <div class="tl-left"><div class="tl-head">Task</div><div class="tl-rows" id="tl-rows">${left}<div style="height:40px"></div></div></div>
     <div class="tl-right" id="tl-right" data-keep="tl:${key}:${S.ui.tlZoom}">

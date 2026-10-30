@@ -1,5 +1,5 @@
 /* ---------------- POPOVERS ---------------- */
-import { $, MOD, MONL, TODAY, WD, addD, dOff, diffD, esc, fmtDate, iso, parse } from '../core/utils.js';
+import { $, MOD, MONL, WD, addD, dOff, dayKey, diffD, esc, fmtDate, fmtTime, hasTime, instant, iso, parse, timeOf, today } from '../core/utils.js';
 import { ic, wsLogo } from '../core/icons.js';
 import { LABELS, PRIOS, PSTAT, STATUSES } from '../core/constants.js';
 import { D, S, allTasks, canSee, me, mem, pColor, proj, task, visibleProjects } from '../core/store.js';
@@ -29,9 +29,8 @@ export function openPop(el, extra = {}) {
     ...extra,
   };
   if (d.pop === 'date') {
-    const tk = task(d.id);
-    const cur = S.ui.pop.id === '__form' ? S.ui.form[d.field] : d.field === 'subdue' ? tk?.subtasks[+d.i]?.due : tk?.[d.field];
-    S.ui.pop.m = iso(cur ? parse(cur) : TODAY);
+    const cur = dateVal(S.ui.pop);
+    S.ui.pop.m = iso(cur ? parse(cur) : today());
   }
   render();
   setTimeout(() => {
@@ -66,6 +65,11 @@ export function closePop() {
 export function tgt(p) {
   return p.id === '__form' ? S.ui.form : task(p.id);
 }
+/* Current value behind a date popover: a task start/due, a subtask due or a form field. */
+export function dateVal(p) {
+  const t = tgt(p);
+  return (p.field === 'subdue' ? t?.subtasks[p.i]?.due : t?.[p.field]) || null;
+}
 export function popList(items, opt = {}) {
   const q = (S.ui.pop.q || '').toLowerCase();
   const list = items.filter(it => !q || it.name.toLowerCase().includes(q));
@@ -84,9 +88,9 @@ export function miniCal(p, val) {
     ${cells
       .map(d => {
         const ds = iso(d);
-        const on = ds === val;
-        const today = diffD(d, TODAY) === 0;
-        return `<button data-a="popPick" data-v="${ds}" style="height:30px;border-radius:6px;font-size:12px;${on ? 'background:var(--accent);color:var(--on-accent);font-weight:600' : today ? 'color:var(--accent);font-weight:600;box-shadow:inset 0 0 0 1px var(--accent-line)' : d.getMonth() !== m.getMonth() ? 'color:var(--text-3)' : ''}" onmouseover="if(!this.style.background)this.style.background='var(--surface-2)'" onmouseout="if(this.style.background==='var(--surface-2)')this.style.background=''" aria-label="${fmtDate(ds, true)}" class="num">${d.getDate()}</button>`;
+        const on = ds === dayKey(val);
+        const isToday = diffD(d, today()) === 0;
+        return `<button data-a="popPick" data-v="${ds}" style="height:30px;border-radius:6px;font-size:12px;${on ? 'background:var(--accent);color:var(--on-accent);font-weight:600' : isToday ? 'color:var(--accent);font-weight:600;box-shadow:inset 0 0 0 1px var(--accent-line)' : d.getMonth() !== m.getMonth() ? 'color:var(--text-3)' : ''}" onmouseover="if(!this.style.background)this.style.background='var(--surface-2)'" onmouseout="if(this.style.background==='var(--surface-2)')this.style.background=''" aria-label="${fmtDate(ds, true)}" class="num">${d.getDate()}</button>`;
       })
       .join('')}</div></div>`;
 }
@@ -178,14 +182,15 @@ export function popHtml(p) {
       break;
     }
     case 'date': {
-      const val = p.field === 'subdue' ? t?.subtasks[p.i]?.due : t?.[p.field];
+      const val = dateVal(p);
       const q = [
         ['Today', 0],
         ['Tomorrow', 1],
-        ['Next week', 7 - ((TODAY.getDay() + 6) % 7)],
+        ['Next week', 7 - ((today().getDay() + 6) % 7)],
         ['In 2 weeks', 14],
       ];
-      inner = `<div class="row" style="gap:4px;padding:4px;flex-wrap:wrap">${q.map(([n, d]) => `<button class="badge" data-a="popPick" data-v="${dOff(d)}" style="cursor:pointer">${n}</button>`).join('')}${val ? `<button class="badge" data-a="popPick" data-v="" style="cursor:pointer;color:var(--red)">Clear</button>` : ''}</div><div class="msep"></div>${miniCal(p, val)}`;
+      const time = `<div class="row" style="gap:6px;padding:4px 8px 8px"><span class="faint row">${ic('clock', 14)}</span><input type="time" class="input num" style="height:30px;flex:1" data-in="popTime" value="${timeOf(val)}" aria-label="Time"><button class="btn btn-ghost btn-sm ${hasTime(val) ? '' : 'on'}" data-a="popAllDay" aria-pressed="${!hasTime(val)}" ${hasTime(val) ? '' : 'disabled'}>All day</button></div>`;
+      inner = `<div class="row" style="gap:4px;padding:4px;flex-wrap:wrap">${q.map(([n, d]) => `<button class="badge" data-a="popPick" data-v="${dOff(d)}" style="cursor:pointer">${n}</button>`).join('')}${val ? `<button class="badge" data-a="popPick" data-v="" style="cursor:pointer;color:var(--red)">Clear</button>` : ''}</div><div class="msep"></div>${miniCal(p, val)}<div class="msep"></div>${time}`;
       style = 'min-width:0';
       break;
     }
@@ -325,7 +330,9 @@ export function popHtml(p) {
     case 'daylist': {
       const ds = p.date;
       const evs = D().events.filter(e => e.date === ds);
-      const ts = allTasks().filter(x => x.due === ds);
+      const ts = allTasks()
+        .filter(x => dayKey(x.due) === ds)
+        .sort((a, b) => instant(a.due) - instant(b.due));
       inner =
         `<div class="mh">${fmtDate(ds, true)}</div>` +
         evs
@@ -337,7 +344,7 @@ export function popHtml(p) {
         ts
           .map(
             x =>
-              `<button class="mi" data-a="openTask" data-id="${x.id}">${stIcon(x.status)}<span class="trunc">${esc(x.title)}</span><span class="r">${av(x.assignee, 'sm', false)}</span></button>`,
+              `<button class="mi" data-a="openTask" data-id="${x.id}">${stIcon(x.status)}<span class="trunc">${esc(x.title)}</span><span class="r">${hasTime(x.due) ? `<span class="num">${fmtTime(x.due)}</span>` : ''}${av(x.assignee, 'sm', false)}</span></button>`,
           )
           .join('');
       style = 'width:280px';

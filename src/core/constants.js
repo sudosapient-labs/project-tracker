@@ -1,4 +1,18 @@
 /* ---------- vocab ---------- */
+export const TIMEZONES = [
+  { id: 'Asia/Kolkata', name: 'India Standard Time (GMT+05:30)' },
+  { id: 'Asia/Dubai', name: 'Dubai, Gulf Standard Time (GMT+04:00)' },
+  { id: 'Europe/London', name: 'London (GMT+00:00 / +01:00)' },
+  { id: 'Europe/Berlin', name: 'Berlin (GMT+01:00 / +02:00)' },
+  { id: 'Asia/Singapore', name: 'Singapore (GMT+08:00)' },
+  { id: 'America/New_York', name: 'Eastern Time (GMT−05:00 / −04:00)' },
+  { id: 'America/Los_Angeles', name: 'Pacific Time (GMT−08:00 / −07:00)' },
+  { id: 'UTC', name: 'UTC' },
+];
+const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+export const DEFAULT_TZ = TIMEZONES.some(z => z.id === browserTz) ? browserTz : 'Asia/Kolkata';
+/* Older saves stored a display label; anything outside the list falls back to the default. */
+export const validTz = v => (TIMEZONES.some(z => z.id === v) ? v : DEFAULT_TZ);
 export const STATUSES = [
   { id: 'backlog', name: 'Backlog' },
   { id: 'todo', name: 'To Do' },

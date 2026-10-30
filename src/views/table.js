@@ -1,5 +1,5 @@
 /* ---------- TABLE ---------- */
-import { esc, fmtDate, iso } from '../core/utils.js';
+import { dayKey, esc, fmtDate, fmtDateTime } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { S, isOver, mem, pColor, proj, task } from '../core/store.js';
 import { av, dueHtml, empty, lbl, prPill, stIcon, stPill } from '../ui/helpers.js';
@@ -10,8 +10,8 @@ export const TCOLS = [
   ['status', 'Status', 132],
   ['priority', 'Priority', 112],
   ['assignee', 'Assignee', 156],
-  ['due', 'Due date', 112],
-  ['start', 'Start date', 112],
+  ['due', 'Due', 132],
+  ['start', 'Start', 132],
   ['labels', 'Labels', 180],
   ['deps', 'Dependencies', 150],
   ['estimate', 'Estimate', 92],
@@ -32,9 +32,9 @@ export function tcell(t, c) {
     case 'assignee':
       return `<td class="cellbtn" data-a="pop" data-pop="assignee" data-id="${t.id}"><span class="row" style="gap:6px">${av(t.assignee, 'sm', false)}<span class="trunc ${t.assignee ? '' : 'faint'}">${esc(mem(t.assignee)?.name || 'Unassigned')}</span></span></td>`;
     case 'due':
-      return `<td class="cellbtn num ${isOver(t) ? '' : ''}" data-a="pop" data-pop="date" data-field="due" data-id="${t.id}" style="${isOver(t) ? 'color:var(--red)' : ''}">${t.due ? fmtDate(t.due) : '<span class="faint">—</span>'}</td>`;
+      return `<td class="cellbtn num ${isOver(t) ? '' : ''}" data-a="pop" data-pop="date" data-field="due" data-id="${t.id}" style="${isOver(t) ? 'color:var(--red)' : ''}">${t.due ? fmtDateTime(t.due) : '<span class="faint">—</span>'}</td>`;
     case 'start':
-      return `<td class="cellbtn num" data-a="pop" data-pop="date" data-field="start" data-id="${t.id}">${t.start ? fmtDate(t.start) : '<span class="faint">—</span>'}</td>`;
+      return `<td class="cellbtn num" data-a="pop" data-pop="date" data-field="start" data-id="${t.id}">${t.start ? fmtDateTime(t.start) : '<span class="faint">—</span>'}</td>`;
     case 'labels':
       return `<td class="cellbtn" data-a="pop" data-pop="labels" data-id="${t.id}"><span class="row" style="gap:4px">${t.labels.map(lbl).join('') || '<span class="faint">—</span>'}</span></td>`;
     case 'deps':
@@ -44,7 +44,7 @@ export function tcell(t, c) {
         ? `<td class="editing"><input id="edit-cell" data-blur="commitCell" data-key-enter="commitCell" data-id="${t.id}" data-f="estimate" value="${esc(t.estimate || '')}" placeholder="e.g. 2d" aria-label="Estimate"></td>`
         : `<td class="cellbtn num" data-dbl="editCell" data-id="${t.id}" data-f="estimate" data-a="editCell" title="Click to edit">${t.estimate ? esc(t.estimate) : '<span class="faint">—</span>'}</td>`;
     case 'created':
-      return `<td class="num muted">${fmtDate(iso(new Date(t.created)))}</td>`;
+      return `<td class="num muted">${fmtDate(dayKey(t.created))}</td>`;
     case 'project':
       return `<td class="cellbtn" data-a="pop" data-pop="project" data-id="${t.id}"><span class="row" style="gap:6px"><span class="pdot" style="--c:${pColor(proj(t.project))}"></span><span class="trunc">${esc(proj(t.project).name)}</span></span></td>`;
   }
