@@ -19,14 +19,15 @@ const AVATAR_COLORS = ['#5A67D8', '#C54B78', '#3B82C4', '#23918A', '#C48A1E', '#
 export const avatarColor = seed => AVATAR_COLORS[[...seed].reduce((a, ch) => a + ch.charCodeAt(0), 0) % AVATAR_COLORS.length];
 
 const MIN = 60_000;
-const TTL = { verify: 48 * 60 * MIN, reset: 30 * MIN, invite: 14 * 24 * 60 * MIN };
-const LINK = { verify: 'verify', reset: 'reset', invite: 'invite' };
+const TTL = { verify: 48 * 60 * MIN, reset: 30 * MIN, invite: 14 * 24 * 60 * MIN, join: 30 * 24 * 60 * MIN };
+const LINK = { verify: 'verify', reset: 'reset', invite: 'invite', join: 'join' };
 
 /* Single-use tokens. Issuing a new verify/reset token retires older unused ones for that email. */
 export function issueToken(db, config, kind, emailAddr, userId = null) {
   const raw = token();
   const now = Date.now();
-  if (kind !== 'invite') db.run('UPDATE auth_tokens SET used_at = ? WHERE email = ? AND kind = ? AND used_at IS NULL', now, emailAddr, kind);
+  if (kind === 'verify' || kind === 'reset')
+    db.run('UPDATE auth_tokens SET used_at = ? WHERE email = ? AND kind = ? AND used_at IS NULL', now, emailAddr, kind);
   db.run(
     'INSERT INTO auth_tokens (token_hash, kind, user_id, email, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)',
     sha256(raw),
@@ -75,17 +76,24 @@ export function authRoutes({ limit }) {
   r.post('/signup', limit('signup', 10, 10 * MIN), async c => {
     const b = await parseBody(
       c,
-      z.object({ name: z.string().trim().min(1, 'Enter your name').max(80), email, password, invite: z.string().max(200).optional() }),
+      z.object({
+        name: z.string().trim().min(1, 'Enter your name').max(80),
+        email,
+        password,
+        invite: z.string().max(200).optional(),
+        join: z.string().max(200).optional(),
+      }),
     );
     if (b.error) return b.error;
     const { db, repo, config, mailer, engine } = c.var;
-    const { name, email: em, password: pw, invite } = b.data;
+    const { name, email: em, password: pw, invite, join } = b.data;
     if (db.get('SELECT 1 FROM users WHERE email = ?', em))
       return c.json({ error: 'An account with this email already exists. Sign in instead.', field: 'email' }, 409);
 
     const hash = await hashPassword(pw);
     const inviteTok = invite && findToken(db, 'invite', invite);
     const inviteOk = inviteTok && inviteTok.email.toLowerCase() === em;
+    const joinOk = !!(join && findToken(db, 'join', join));
     let out;
     try {
       out = db.tx(() => {
@@ -101,7 +109,7 @@ export function authRoutes({ limit }) {
         } else {
           const invited = repo.all('members', "WHERE lower(json_extract(data, '$.email')) = ?", em)[0];
           if (invited && invited.status === 'invited') member = { ...invited, name, status: 'active', last: 0 };
-          else if (config.allowOpenSignup)
+          else if (config.allowOpenSignup || joinOk)
             member = { id: newId('m'), name, email: em, role: 'Member', team: '', title: '', c: avatarColor(em), status: 'active', last: 0, tz: '' };
           else throw Object.assign(new Error('invite-only'), { status: 403 });
         }
@@ -144,6 +152,12 @@ export function authRoutes({ limit }) {
     if (!t) return c.json({ error: 'This invite link has expired or was already used.' }, 404);
     const m = repo.all('members', "WHERE lower(json_extract(data, '$.email')) = ?", t.email.toLowerCase())[0];
     return c.json({ email: t.email, name: m?.status === 'invited' ? '' : m?.name || '', workspace: repo.workspace()?.name || '' });
+  });
+
+  /* Prefill for the sign-up screen when someone opens a workspace invite link. */
+  r.get('/join/:token', c => {
+    if (!findToken(c.var.db, 'join', c.req.param('token'))) return c.json({ error: 'This invite link has expired. Ask for a new one.' }, 404);
+    return c.json({ workspace: c.var.repo.workspace()?.name || '' });
   });
 
   /* ---------- email verification ---------- */

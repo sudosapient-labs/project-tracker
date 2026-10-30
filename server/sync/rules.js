@@ -11,13 +11,14 @@ export const isAdmin = ctx => RANK[ctx.me.role] >= RANK.Admin;
 const notGuest = (ctx, what) => {
   if (ctx.me.role === 'Guest') throw new Reject(`Guests can't ${what}.`);
 };
-export const canSee = (p, uid) => !!p && (!p.private || (p.members || []).includes(uid));
+/* Private projects are visible to their members only; guests only ever see projects they're added to. */
+export const canSee = (p, m) => !!p && !!m && ((!p.private && m.role !== 'Guest') || (p.members || []).includes(m.id));
 
 /* The project a record belongs to must exist and be visible to the actor. */
 function needProject(ctx, pid) {
   const p = ctx.repo.get('projects', pid);
   if (!p) throw new Reject('That project no longer exists.', 404);
-  if (!canSee(p, ctx.uid)) throw new Reject("You don't have access to that project.");
+  if (!canSee(p, ctx.me)) throw new Reject("You don't have access to that project.");
   return p;
 }
 function needMember(ctx, mid, what = 'person') {
@@ -139,7 +140,7 @@ export const RULES = {
       return p;
     },
     update(ctx, before, p, keys) {
-      if (!canSee(before, ctx.uid)) throw new Reject("You don't have access to that project.");
+      if (!canSee(before, ctx.me)) throw new Reject("You don't have access to that project.");
       if (keys.includes('lead')) needMember(ctx, p.lead, 'project lead');
       if (keys.includes('seq')) p.seq = Math.max(before.seq || 0, p.seq || 0);
       if (keys.includes('members')) {
@@ -156,7 +157,7 @@ export const RULES = {
     },
     remove(ctx, p) {
       if (!isAdmin(ctx) && p.lead !== ctx.uid) throw new Reject('Only admins and the project lead can delete a project.');
-      if (!canSee(p, ctx.uid)) throw new Reject("You don't have access to that project.");
+      if (!canSee(p, ctx.me)) throw new Reject("You don't have access to that project.");
       for (const t of ctx.repo.all('tasks', 'WHERE project_id = ?', p.id)) {
         deleteTaskCascade(ctx, t);
         ctx.repo.del('tasks', t.id);
@@ -263,6 +264,8 @@ export const RULES = {
       }
       if (keys.includes('role')) {
         if (self) throw new Reject("You can't change your own role.");
+        // Becoming or leaving Guest changes which projects this person can see.
+        if (before.role === 'Guest' || m.role === 'Guest') ctx.resync.add(m.id);
         if ((m.role === 'Owner' || before.role === 'Owner') && ctx.me.role !== 'Owner') throw new Reject('Only an owner can change who owns the workspace.');
       }
       return m;
@@ -324,7 +327,7 @@ export const RULES = {
       // the actor can already see, sharing its stored bytes.
       const srcId = /\/api\/files\/([A-Za-z0-9_-]+)\//.exec(f.url || '')?.[1];
       const src = srcId && ctx.db.get('SELECT project_id, storage_key, mime, bytes FROM files WHERE id = ?', srcId);
-      if (!src?.storage_key || !canSee(ctx.repo.get('projects', src.project_id), ctx.uid)) throw new Reject('Upload the file again to add it here.', 400);
+      if (!src?.storage_key || !canSee(ctx.repo.get('projects', src.project_id), ctx.me)) throw new Reject('Upload the file again to add it here.', 400);
       f.by = ctx.uid;
       f.url = `/api/files/${f.id}/${encodeURIComponent(f.name)}`;
       ctx.afterPut.push(() => ctx.db.run('UPDATE files SET storage_key = ?, mime = ?, bytes = ? WHERE id = ?', src.storage_key, src.mime, src.bytes, f.id));

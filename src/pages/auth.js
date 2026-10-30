@@ -59,7 +59,7 @@ export function renderAuth() {
   if (s === 'signup')
     return authShell(
       `<form class="auth-card${S.ui.fx.auth ? ' fx-auth' : ''}" data-submit="doSignup" novalidate>
-    <div style="display:flex;justify-content:center">${LOGO(30)}</div><h1>${S.ui.invite ? `Join ${esc(S.ui.invite.workspace || 'your team')}` : 'Create your account'}</h1><p class="sub">${S.ui.invite ? `You were invited as ${esc(S.ui.invite.email)}.` : 'Set up your account to get started.'}</p>
+    <div style="display:flex;justify-content:center">${LOGO(30)}</div><h1>${S.ui.invite ? `Join ${esc(S.ui.invite.workspace || 'your team')}` : 'Create your account'}</h1><p class="sub">${S.ui.invite?.email ? `You were invited as ${esc(S.ui.invite.email)}.` : S.ui.invite ? 'Create your account to join.' : 'Set up your account to get started.'}</p>
     ${socialBtns()}<div class="or">or sign up with email</div>
     <div class="field"><label class="label" for="s-name">Full name</label><input class="input input-lg ${icls('name')}" id="s-name" value="${esc(f.name)}" autocomplete="name" placeholder="Your name">${ferr('name')}</div>
     <div class="field"><label class="label" for="s-email">Work email</label><input class="input input-lg ${icls('email')}" id="s-email" type="email" value="${esc(f.email)}" autocomplete="email" placeholder="you@company.com">${ferr('email')}</div>

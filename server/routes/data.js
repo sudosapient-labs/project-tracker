@@ -39,17 +39,6 @@ export function dataRoutes() {
     return c.json({ ok: true });
   });
 
-  /* The owner finished (or skipped) first-run setup. */
-  r.post('/workspace/onboarded', requireAuth(), c => {
-    const { repo } = c.var;
-    if (c.var.auth.member.role !== 'Owner') return c.json({ error: 'Only the workspace owner can finish setup.' }, 403);
-    const ws = repo.workspace();
-    repo.saveWorkspace({ ...ws, name: ws.name || 'My Workspace', onboarded: true });
-    const { onboarded, ...pub } = repo.workspace();
-    c.var.engine.publish([{ c: 'ws', v: pub }]);
-    return c.json({ ok: true, ws: pub });
-  });
-
   /* Live updates. The client reconnects (and re-bootstraps) whenever the stream drops. */
   r.get('/events', requireAuth(), c => {
     const { engine } = c.var;

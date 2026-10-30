@@ -33,7 +33,7 @@ export function fileRoutes() {
     if (!file || typeof file === 'string') return c.json({ error: 'Choose a file to upload.' }, 400);
     if (file.size > config.maxUploadBytes) return c.json({ error: `Files can be up to ${fsize(config.maxUploadBytes)}.` }, 413);
     const p = repo.get('projects', String(body.project || ''));
-    if (!p || !canSee(p, member.id)) return c.json({ error: "You don't have access to that project." }, 403);
+    if (!p || !canSee(p, member)) return c.json({ error: "You don't have access to that project." }, 403);
     const t = body.task ? repo.get('tasks', String(body.task)) : null;
     if (body.task && (!t || t.project !== p.id)) return c.json({ error: 'That task no longer exists.' }, 404);
 
@@ -78,7 +78,7 @@ export function fileRoutes() {
   r.get('/:id/:name?', requireAuth(), c => {
     const { db, repo, config } = c.var;
     const row = db.get('SELECT project_id, storage_key, mime, bytes, data FROM files WHERE id = ?', c.req.param('id'));
-    if (!row?.storage_key || !canSee(repo.get('projects', row.project_id), c.var.auth.member.id)) return c.json({ error: 'File not found.' }, 404);
+    if (!row?.storage_key || !canSee(repo.get('projects', row.project_id), c.var.auth.member)) return c.json({ error: 'File not found.' }, 404);
     const full = path.join(config.uploadDir, row.storage_key);
     if (!fs.existsSync(full)) return c.json({ error: 'File not found.' }, 404);
     const name = safeName(JSON.parse(row.data).name);

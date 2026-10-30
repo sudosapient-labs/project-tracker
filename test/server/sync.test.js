@@ -249,3 +249,51 @@ describe('live updates', () => {
     expect(bobChanges.map(x => x.c)).toEqual(['projects']);
   });
 });
+
+describe('collaboration endpoints', () => {
+  it('a reusable invite link lets new people join as members; a new link retires the old one', async () => {
+    const { t, owner } = await team();
+    const first = (await owner.post('/api/workspace/invite-link')).body.link;
+    const second = (await owner.post('/api/workspace/invite-link')).body.link;
+    const tok = l => l.split('#join/')[1];
+    expect((await t.client().get(`/api/auth/join/${tok(first)}`)).status).toBe(404);
+    expect((await t.client().get(`/api/auth/join/${tok(second)}`)).status).toBe(200);
+    const r = await t.client().post('/api/auth/signup', { name: 'Eve', email: 'eve@example.com', password: 'correct-horse-9', join: tok(second) });
+    expect(r.status).toBe(201);
+    expect(r.body.user).toMatchObject({ role: 'Member', verified: false });
+    // The link keeps working for the next person.
+    expect((await t.client().post('/api/auth/signup', { name: 'Zed', email: 'zed@example.com', password: 'correct-horse-9', join: tok(second) })).status).toBe(
+      201,
+    );
+  });
+
+  it('resends an invite with a fresh link, only for people who have not joined', async () => {
+    const { t, owner } = await team();
+    await owner.sync([
+      put('members', { id: 'mcar', name: 'Carl', email: 'carl@example.com', role: 'Member', team: '', title: '', c: '#6B7280', status: 'invited', tz: '' }),
+    ]);
+    const before = t.lastLink('carl@example.com');
+    const r = await owner.post('/api/members/mcar/resend-invite');
+    expect(r.body.devLink).toBe(t.lastLink('carl@example.com'));
+    expect(r.body.devLink).not.toBe(before);
+    expect((await t.client().get(`/api/auth/invite/${before.split('#invite/')[1]}`)).status).toBe(404);
+    expect((await owner.post('/api/members/mbob/resend-invite')).status).toBe(400);
+  });
+
+  it('asking for access to a private project notifies its lead', async () => {
+    const { owner, bob, ownerId } = await team();
+    await owner.sync([put('projects', project('p1', { private: true, members: [ownerId], lead: ownerId }))]);
+    expect((await bob.post('/api/projects/p1/request-access')).body.to).toBe('Ada Owner');
+    const n = (await owner.get('/api/bootstrap')).body.data.notifs[0];
+    expect(n).toMatchObject({ project: 'p1', by: 'mbob', text: 'requested access to Website' });
+  });
+
+  it('guests only see projects they are added to', async () => {
+    const { owner, bob, ownerId } = await team('Guest');
+    await owner.sync([put('projects', project('p1')), put('tasks', task('t1', 'p1'))]);
+    expect((await bob.get('/api/bootstrap')).body.data.tasks).toEqual([]);
+    expect((await bob.sync([patch('tasks', 't1', { title: 'x' })])).body.results[0].ok).toBe(false);
+    await owner.sync([patch('projects', 'p1', { members: [ownerId, 'mbob'] })]);
+    expect((await bob.get('/api/bootstrap')).body.data.tasks).toHaveLength(1);
+  });
+});

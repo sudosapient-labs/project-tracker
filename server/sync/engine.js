@@ -200,6 +200,7 @@ export function createEngine({ db, repo, config, mailer, log = console }) {
     changes.forEach((ch, i) => last.set(`${ch.c}:${ch.id ?? ''}:${ch.onlyUser ?? ''}:${ch.uid ?? ''}`, i));
     changes = changes.filter((ch, i) => last.get(`${ch.c}:${ch.id ?? ''}:${ch.onlyUser ?? ''}:${ch.uid ?? ''}`) === i);
     const projects = new Map(repo.all('projects').map(p => [p.id, p]));
+    const members = new Map(repo.all('members').map(m => [m.id, m]));
     const favCache = new Map();
     for (const k of conns) {
       if (k.clientId && k.clientId === exceptClient) continue;
@@ -207,7 +208,7 @@ export function createEngine({ db, repo, config, mailer, log = console }) {
       for (const ch of changes) {
         if (ch.onlyUser && ch.onlyUser !== k.uid) continue;
         if (ch.c === 'notifs' && ch.uid !== k.uid) continue;
-        if (PROJECT_SCOPED.has(ch.c) && ch.v && ch.pid && !canSee(projects.get(ch.pid), k.uid)) continue;
+        if (PROJECT_SCOPED.has(ch.c) && ch.v && ch.pid && !canSee(projects.get(ch.pid), members.get(k.uid))) continue;
         let v = ch.v;
         if (v && (ch.c === 'projects' || ch.c === 'tasks')) {
           if (!favCache.has(k.uid)) favCache.set(k.uid, repo.favorites(k.uid));

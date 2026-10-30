@@ -55,3 +55,14 @@ export async function openProject(page, name, tab = 'list') {
     .click();
   await page.locator(`.tab[data-tab="${tab}"]`).click();
 }
+
+/* The newest link emailed to `to` (the e2e server records outgoing mail in its outbox table). */
+import { DatabaseSync } from 'node:sqlite';
+export function emailLink(to) {
+  const db = new DatabaseSync('test-results/e2e-data/db.sqlite', { readOnly: true });
+  try {
+    return db.prepare('SELECT link FROM outbox WHERE to_addr = ? ORDER BY id DESC').get(to)?.link;
+  } finally {
+    db.close();
+  }
+}

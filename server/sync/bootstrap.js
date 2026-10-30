@@ -10,7 +10,7 @@ export function bootstrap({ db, repo }, auth) {
   const uid = auth.member.id;
   const favs = repo.favorites(uid);
   const projects = repo.all('projects', 'ORDER BY created_at, rowid').map(p => ({ ...p, fav: favs.projects.has(p.id) }));
-  const vis = JSON.stringify(projects.filter(p => canSee(p, uid)).map(p => p.id));
+  const vis = JSON.stringify(projects.filter(p => canSee(p, auth.member)).map(p => p.id));
   const IN = 'project_id IN (SELECT value FROM json_each(?))';
   const OPT = `(project_id IS NULL OR ${IN})`;
 

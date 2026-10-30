@@ -13,6 +13,7 @@ import { createEngine } from './sync/engine.js';
 import { authRoutes } from './routes/auth.js';
 import { dataRoutes } from './routes/data.js';
 import { fileRoutes } from './routes/files.js';
+import { workspaceRoutes } from './routes/workspace.js';
 
 export function createApp({ db, config, log = console }) {
   const repo = createRepo(db);
@@ -49,6 +50,7 @@ export function createApp({ db, config, log = console }) {
   api.route('/auth', authRoutes({ limit }));
   api.route('/files', fileRoutes());
   api.route('/', dataRoutes());
+  api.route('/', workspaceRoutes());
   api.get('/health', c => c.json({ ok: true }));
   api.all('*', c => c.json({ error: 'Not found.' }, 404));
   app.route('/api', api);

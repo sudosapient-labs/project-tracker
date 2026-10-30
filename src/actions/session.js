@@ -140,6 +140,18 @@ export async function boot() {
         S.ui.errors.email = e.message;
         return render();
       }
+    } else if (kind === 'join' && token) {
+      clearHash();
+      if (!s.user) {
+        try {
+          const j = await get(`/api/auth/join/${encodeURIComponent(token)}`);
+          S.ui.joinToken = token;
+          S.ui.invite = { workspace: j.workspace, email: '' };
+          return show('signup');
+        } catch (e) {
+          toast(e.message, { kind: 'err', ms: 7000 });
+        }
+      } else toast("You're already a member of this workspace.", { kind: 'info' });
     } else if (kind === 'invite' && token) {
       clearHash();
       if (!s.user) {
@@ -154,7 +166,7 @@ export async function boot() {
         }
       }
     }
-    await route(s, kind === 'verify' || kind === 'reset' || kind === 'invite' ? '' : hash);
+    await route(s, ['verify', 'reset', 'invite', 'join'].includes(kind) ? '' : hash);
   } catch (e) {
     S.ui.auth = 'boot-error';
     S.ui.bootError = e.message;
@@ -246,9 +258,15 @@ A.doSignup = async () => {
   }
   try {
     const r = await busy('signup-btn', () =>
-      post('/api/auth/signup', { name: nm, email: em, password: pw, ...(S.ui.inviteToken ? { invite: S.ui.inviteToken } : {}) }),
+      post('/api/auth/signup', {
+        name: nm,
+        email: em,
+        password: pw,
+        ...(S.ui.inviteToken ? { invite: S.ui.inviteToken } : {}),
+        ...(S.ui.joinToken ? { join: S.ui.joinToken } : {}),
+      }),
     );
-    S.ui.inviteToken = null;
+    S.ui.inviteToken = S.ui.joinToken = S.ui.invite = null;
     S.ui.pwNew = '';
     S.ui.devLink = r.devLink || null;
     if (r.user.verified) return route(r, '', `Welcome, ${r.user.name.split(' ')[0]}`);
@@ -333,9 +351,9 @@ A.doForgot = async () => {
 A.openDevLink = () => {
   const url = S.ui.devLink;
   if (!url) return;
-  location.hash = url.split('#')[1];
   S.ui.devLink = null;
-  boot();
+  // The hashchange listener below boots with the token.
+  location.hash = url.split('#')[1];
 };
 
 A.doReset = async () => {
@@ -395,3 +413,8 @@ A.onbExit = async () => {
   S.ui.auth = null;
   openRoute('');
 };
+
+/* An emailed link pasted into a tab that already has the app open only changes the hash. */
+addEventListener('hashchange', () => {
+  if (/^#(verify|reset|invite|join)\//.test(location.hash)) boot();
+});

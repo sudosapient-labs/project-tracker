@@ -7,6 +7,7 @@ import { D, S, allTasks, canSee, commentsOf, logAct, me, mem, proj, save, task, 
 import { fileType, fsize } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
+import { post } from '../core/api.js';
 import { autosize, focusKey, fxSet, go, render } from '../shell/render.js';
 import { commit, restoreSnapshot, retryNow, takeSnapshot } from '../shell/sync.js';
 import { viewOf } from '../shell/view-engine.js';
@@ -1483,9 +1484,13 @@ A.delProject = el => {
     },
   });
 };
-A.requestAccess = el => {
-  const p = proj(el.dataset.id);
-  toast(`Access requested. We'll notify you when ${mem(p?.lead)?.name || 'the owner'} responds.`);
+A.requestAccess = async el => {
+  try {
+    const r = await post(`/api/projects/${encodeURIComponent(el.dataset.id)}/request-access`);
+    toast(r.already ? 'You already have access.' : `Access requested. ${r.to || 'The project lead'} will get a notification.`);
+  } catch (e) {
+    toast(e.message, { kind: 'err' });
+  }
 };
 
 /* sharing & invites */
@@ -1635,11 +1640,24 @@ A.submitInvite = () => {
     toast(`${list.length} invitation${list.length > 1 ? 's' : ''} sent`);
   });
 };
-A.copyInviteLink = () => copy(`${location.origin}${location.pathname}#signup`, 'Invite link copied');
-A.resendInvite = el => {
+/* A reusable link anyone can use to join as a Member. Copying makes a new one and retires the last. */
+A.copyInviteLink = async () => {
+  try {
+    const { link } = await post('/api/workspace/invite-link');
+    copy(link, 'Invite link copied. Anyone with it can join as a member.');
+  } catch (e) {
+    toast(e.message, { kind: 'err' });
+  }
+};
+A.resendInvite = async el => {
   S.ui.pop = null;
   render();
-  toast(`Invite resent to ${mem(el.dataset.id).email}`);
+  try {
+    await post(`/api/members/${encodeURIComponent(el.dataset.id)}/resend-invite`);
+    toast(`Invite resent to ${mem(el.dataset.id).email}`);
+  } catch (e) {
+    toast(e.message, { kind: 'err' });
+  }
 };
 A.viewProfile = el => go('member', { id: el.dataset.id });
 A.assignToMember = el => {
