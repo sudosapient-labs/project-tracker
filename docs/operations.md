@@ -89,10 +89,10 @@ deleted with the last record that uses them.
 
 ## Known limits
 
-- **One process.** Rate limits (per IP, per email, per device) and live-update connections are kept in
+- **One process.** Rate limits (per IP, per email, per device, per API key) and live-update connections are kept in
   memory, so the app runs as a single Node process; limits reset when it restarts. Running several
   instances would need a shared store behind `server/lib/rate-limit.js` and the sync engine's fan-out.
-  (Two-factor lockouts are stored in the database.)
+  (Two-factor lockouts and API idempotency records are stored in the database.)
 - **Reconnects re-bootstrap.** When the live-update stream drops, the client reloads the whole graph
   (`GET /api/bootstrap`) rather than catching up from a cursor; fine for a team-sized workspace,
   costly for a very large one.

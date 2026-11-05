@@ -67,6 +67,12 @@ without it all fail closed. `pnpm start` and the Docker image set `production`.
 | `BACKUP_DIR`  | none    | Where backups go. When set, the running server also writes one a day. Unset, `pnpm db:backup` writes to `backups` next to the database and the server takes none. See [operations](operations.md#backups). |
 | `BACKUP_KEEP` | `14`    | How many database copies to keep (at least 1).                                                                                                                                                             |
 
+## Public API
+
+| Variable         | Default | Meaning                                                                                                                                                                           |
+| ---------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `API_RATE_LIMIT` | `120`   | Requests a minute each personal API key may make to `/api/v1`, and separately to `/api/mcp` (MCP tool calls count as the API requests they make). Counted in memory, per process. |
+
 ## Development and test only
 
 | Variable             | Default            | Meaning                                                                                   |

@@ -78,6 +78,30 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 - **Logging:** production logs one line per request (method, path, status, time), never bodies,
   cookies, query strings or tokens; tokens in auth link paths are replaced by `…`.
 
+## Personal API keys
+
+- Created and revoked in Settings → API with a signed-in session (and its CSRF header); creating one
+  also needs the current password, so a signed-in browser alone (say, a stolen session) can't mint a
+  credential that outlives it. A key can't create, list or revoke keys. A key is `ssk_` + 32 random
+  bytes, shown once; only its SHA-256 is stored (like session tokens it's high-entropy, so a slow
+  hash adds nothing), with a 12-character prefix for the list. Each has a last-used time and an
+  optional expiry (30, 90 or 365 days); at most 25 per person.
+- A key acts as the person who made it, read fresh on every request: their current role, the
+  projects they can open, and Guest limits. Removing someone deletes their keys, and so does a
+  password reset (account recovery). A routine password change or "Sign out of all other sessions"
+  keeps them; revoke keys in Settings → API. Keys skip two-factor, as every bearer token does.
+- Scopes: `read` (GET only) or `write`. Writes go through the same sync rules as the app (see
+  [architecture](architecture.md#public-api-mcp-and-cli)); work in projects a key can't open answers
+  404, never 403, so it doesn't reveal what exists.
+- `/api/v1` and `/api/mcp` accept only `Authorization: Bearer`, never the session cookie, so they
+  need no CSRF header: a cross-site page can't make a browser attach a bearer key, and no CORS is
+  offered. `/api/mcp` also refuses browser `Origin`s other than the app's.
+- Each key may make `API_RATE_LIMIT` requests a minute to `/api/v1`, and as many MCP protocol
+  requests to `/api/mcp` (`RateLimit-*` headers, `429` with `Retry-After`). Changes show in Activity
+  as "Ada via CLI" (the client's label or the key's name), set by the server; the app can't forge one.
+- `sudo-cli` strips control characters from workspace text before printing it, so a task title
+  can't send escape sequences to someone's terminal.
+
 ## Content security
 
 - Every response carries a strict CSP: scripts only from the app, `base-uri 'none'`,
