@@ -5,6 +5,13 @@ All notable changes to this project are documented here. From 0.2.0 on this file
 when the release PR is merged (see [CI and releases](docs/ci-and-releases.md)), so don't edit those
 entries by hand. Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1](https://github.com/sudosapient-labs/project-tracker/compare/v0.1.0...v0.1.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **docs:** record that the prod rename and release setup are done ([#9](https://github.com/sudosapient-labs/project-tracker/issues/9)) ([6f64f45](https://github.com/sudosapient-labs/project-tracker/commit/6f64f4563a10167ee9e942b198afca1a2189515a))
+
 ## [0.1.0] - 2026-10-31
 
 First release of Sudo Sapient.
