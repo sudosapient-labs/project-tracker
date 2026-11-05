@@ -32,18 +32,19 @@ workspace **Owner** and goes through setup. Without `RESEND_API_KEY`, emails (ve
 invites) are printed with their links to the API console, and the verify and reset screens offer the
 link directly. The local database is `data/sudo-sapient.db`; delete `data/` to start over.
 
-| Script           | What it does                                                                                     |
-| ---------------- | ------------------------------------------------------------------------------------------------ |
-| `pnpm dev`       | `dev:server` (API, `NODE_ENV=development`, restarts on change) + `dev:web` (Vite)                |
-| `pnpm build`     | client production build in `dist/`                                                               |
-| `pnpm start`     | production server (`NODE_ENV=production`): API + `dist/` on :8787                                |
-| `pnpm preview`   | `build`, then `start`                                                                            |
-| `pnpm db:seed`   | load the demo workspace into an empty development database                                       |
-| `pnpm db:backup` | copy the database and new uploads to `BACKUP_DIR` (see [operations](docs/operations.md#backups)) |
-| `pnpm test`      | API tests (Vitest, in-memory database); `pnpm test:watch` to re-run on change                    |
-| `pnpm test:e2e`  | build, start a throwaway server on :8790, run the Playwright journeys                            |
-| `pnpm lint`      | ESLint                                                                                           |
-| `pnpm format`    | Prettier (`pnpm format:check` only checks, as CI does)                                           |
+| Script           | What it does                                                                                           |
+| ---------------- | ------------------------------------------------------------------------------------------------------ |
+| `pnpm dev`       | `dev:server` (API, `NODE_ENV=development`, restarts on change) + `dev:web` (Vite)                      |
+| `pnpm build`     | client production build in `dist/`                                                                     |
+| `pnpm start`     | production server (`NODE_ENV=production`): API + `dist/` on :8787                                      |
+| `pnpm preview`   | `build`, then `start`                                                                                  |
+| `pnpm db:seed`   | load the demo workspace into an empty development database                                             |
+| `pnpm db:backup` | copy the database and new uploads to `BACKUP_DIR` (see [operations](docs/operations.md#backups))       |
+| `pnpm test`      | API tests (Vitest, in-memory database); `pnpm test:watch` to re-run on change                          |
+| `pnpm test:e2e`  | build, start a throwaway server on :8790, run the Playwright journeys (`test:e2e:run` skips the build) |
+| `pnpm lint`      | ESLint                                                                                                 |
+| `pnpm typecheck` | `tsc` on the files that opt in with `// @ts-check`                                                     |
+| `pnpm format`    | Prettier (`pnpm format:check` only checks, as CI does)                                                 |
 
 The e2e journeys need a browser once: `pnpm exec playwright install chromium`.
 
@@ -54,6 +55,7 @@ The e2e journeys need a browser once: `pnpm exec playwright install chromium`.
 - [Deployment](docs/deployment.md): Railway, and any other Docker host
 - [Security](docs/security.md): authentication, sessions, CSRF, rate limits, content security
 - [Operations](docs/operations.md): backups and restore, logging, scheduled jobs, known limits
+- [CI and releases](docs/ci-and-releases.md): the checks, versioning, the `main` → `prod` rename
 - [Changelog](CHANGELOG.md)
 
 ## Project structure
@@ -100,11 +102,24 @@ docs/                   documentation and the README screenshot
 Dockerfile              production image (see docs/deployment.md)
 docker-entrypoint.sh    hands root-owned volume mounts to `node`, then drops to it
 railway.json            Railway build, health check and restart policy
-.github/                CI workflow and pull request template
+.github/                CI and release workflows, Dependabot, pull request template
 ```
 
 ## Contributing
 
-Every push to `main` and every pull request runs lint, the format check, the API tests, a production
-build and the e2e journeys (`.github/workflows/ci.yml`). Note user-facing changes under
-`[Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
+Branch off `prod`, open a pull request, and wait for the `ci-ok` check: it runs lint, the format
+check, the type check, the API tests, a production build and the e2e journeys in parallel where it
+can (`.github/workflows/ci.yml`). Title the PR as a [Conventional Commit](https://www.conventionalcommits.org)
+(`feat: add task templates`, `fix: keep the drawer open on save`); CI checks it.
+
+## How we release
+
+1. PRs are squash-merged into `prod`, so each PR title is one commit message.
+2. After every push to `prod`, [release-please](https://github.com/googleapis/release-please) opens
+   or updates a **release PR** with the next version and `CHANGELOG.md` entries, worked out from those
+   titles (`fix:` patch, `feat:` minor).
+3. Merge the release PR when you want to cut a version. That tags `vX.Y.Z` on `prod` and creates the
+   GitHub release. Don't edit the changelog or `version` by hand.
+
+Merging to `prod` is what Railway deploys; cutting a version doesn't deploy anything by itself. Setup
+notes (tokens, repository settings) are in [CI and releases](docs/ci-and-releases.md).

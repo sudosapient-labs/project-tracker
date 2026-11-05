@@ -1,3 +1,4 @@
+// @ts-check
 /* The full object graph one person may see, in the same shape the prototype's seed data had, so
    the client swaps its data source without changing how anything renders. */
 import { listSessions } from '../auth.js';

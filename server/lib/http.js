@@ -1,3 +1,4 @@
+// @ts-check
 /* Parse and validate a JSON body. Returns { data } or { error: Response } with the first issue. */
 export async function parseBody(c, schema) {
   let raw;

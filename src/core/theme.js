@@ -1,3 +1,4 @@
+// @ts-check
 /* ---------- theme ---------- */
 import { setDateFormat, setTimeFormat, setTimeZone } from './utils.js';
 import { S } from './store.js';

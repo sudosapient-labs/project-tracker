@@ -1,3 +1,4 @@
+// @ts-check
 /* Project permissions, shared by the server (which enforces them) and the client (which hides what
    the server would refuse). Levels match the share dialog's choices. */
 export const PERMS = ['Can view', 'Can comment', 'Can edit', 'Full access'];

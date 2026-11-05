@@ -1,3 +1,4 @@
+// @ts-check
 /* SQLite via Node's built-in driver. One connection per process; writes are serialised by SQLite
    and every sync batch runs inside a single IMMEDIATE transaction. */
 import fs from 'node:fs';

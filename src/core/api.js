@@ -1,3 +1,4 @@
+// @ts-check
 /* ---------- HTTP client for /api ---------- */
 
 /* Identifies this tab, so the server doesn't echo our own changes back over the event stream. */

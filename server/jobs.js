@@ -1,3 +1,4 @@
+// @ts-check
 /* Scheduled work, run every few minutes by server/index.js: due-date reminders, overdue alerts and
    the weekday morning email digest. Each takes `now` so tests can run it at any moment. */
 import { validTz } from '../src/core/constants.js';

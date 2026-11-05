@@ -1,10 +1,9 @@
 # Changelog
 
-All notable changes to this project are documented here. The format is based on
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
+All notable changes to this project are documented here. From 0.2.0 on this file is written by
+[release-please](https://github.com/googleapis/release-please) from Conventional Commit messages
+when the release PR is merged (see [CI and releases](docs/ci-and-releases.md)), so don't edit those
+entries by hand. Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.1.0] - 2026-10-31
 

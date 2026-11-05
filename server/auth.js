@@ -1,3 +1,4 @@
+// @ts-check
 /* Sessions and request authentication. A session is an opaque random token in an httpOnly cookie;
    only its SHA-256 is stored, so a database leak doesn't hand out live sessions. */
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';

@@ -16,8 +16,10 @@
     "db:backup": "node server/scripts/backup.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "pnpm build && playwright test",
+    "test:e2e": "pnpm build && pnpm test:e2e:run",
+    "test:e2e:run": "playwright test",
     "lint": "eslint .",
+    "typecheck": "tsc -p .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
@@ -35,12 +37,14 @@
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@playwright/test": "^1.55.0",
+    "@types/node": "^26.6.6",
     "concurrently": "^9.2.0",
     "dompurify": "^3.4.17",
     "eslint": "^9.39.5",
     "globals": "^15.15.0",
     "lucide": "^0.460.0",
     "prettier": "^3.9.9",
+    "typescript": "^7.0.2",
     "vite": "^6.4.4",
     "vitest": "^3.2.0"
   }
