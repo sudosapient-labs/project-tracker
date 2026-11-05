@@ -8,19 +8,14 @@ lands through a pull request, squash-merged so the PR title becomes the commit o
 Branch protection is by convention for now (it needs a paid plan to enforce): don't push to `prod`
 directly, and wait for the `ci-ok` check before merging.
 
-### Renaming `main` to `prod` (once, by an admin)
+### The `main` → `prod` rename
 
-The repository was created with `main`; the workflows, docs and release config already assume `prod`.
-Do these in order, ideally in one sitting:
+The repository started with `main` and was renamed to `prod` on 2026-11-05. Railway's deploy trigger
+watches `prod`. Old `main` URLs redirect, but clones made before the rename need:
 
-1. **Rename the branch:** Settings → Branches → the pencil next to `main` → `prod`. (Or
-   `gh api -X POST repos/sudosapient-labs/project-tracker/branches/main/rename -f new_name=prod`.)
-   GitHub retargets open PRs and redirects old `main` URLs; forks and local clones need
-   `git branch -m main prod && git fetch origin && git branch -u origin/prod prod`.
-2. **Point Railway at `prod`:** service → Settings → Source → branch. Railway keeps tracking `main`
-   until you change it, so skip this and deploys stop.
-3. **Confirm CI runs:** push or merge anything to `prod` and check that the `CI` and `Release`
-   workflows start.
+```bash
+git branch -m main prod && git fetch origin && git branch -u origin/prod prod
+```
 
 ## Pull request checks
 
@@ -66,15 +61,17 @@ Versions come from [Conventional Commits](https://www.conventionalcommits.org) o
   `package.json` and adds the new section to `CHANGELOG.md`.
 - Merging that PR creates the `vX.Y.Z` tag and the GitHub release.
 
-Releasing doesn't deploy: Railway deploys whatever is on `prod`.
+Tagging doesn't deploy anything by itself, but merging the release PR is a push to `prod`, so Railway
+deploys it like any other change.
 
 ### Setup the release workflow needs
 
-- Settings → Actions → General → Workflow permissions → tick **Allow GitHub Actions to create and
-  approve pull requests**, or the release PR can't be opened.
-- PRs opened with the default `GITHUB_TOKEN` don't start other workflows, so CI won't run on the
-  release PR. If you want it to, add a `RELEASE_PLEASE_TOKEN` secret (a PAT or app token with
-  contents and pull-requests write); the workflow uses it when present.
+- The org and the repository both allow GitHub Actions to create pull requests (Settings → Actions →
+  General → Workflow permissions). Without it the release PR can't be opened.
+- PRs opened with the default `GITHUB_TOKEN` don't start other workflows, so CI doesn't run on the
+  release PR; it only changes `package.json` and `CHANGELOG.md`. If you want it to run, add a
+  `RELEASE_PLEASE_TOKEN` secret (a PAT or app token with contents and pull-requests write); the
+  workflow uses it when present.
 
 ## Dependencies
 
