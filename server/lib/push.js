@@ -1,3 +1,4 @@
+// @ts-check
 /* Web Push. VAPID keys come from VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY, or are generated once and kept
    in `server_keys` so a plain install works without setup. Sending happens after the database commit
    (see engine.publish); subscriptions the push service reports as gone are deleted. */

@@ -1,3 +1,4 @@
+// @ts-check
 /* ---------- file types (shared with the server) ---------- */
 export const FILE_TYPES = ['fig', 'pdf', 'zip', 'img', 'sheet', 'doc', 'code', 'other'];
 export function fileType(name) {

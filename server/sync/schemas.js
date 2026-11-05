@@ -1,3 +1,4 @@
+// @ts-check
 /* Shapes of synced records, matching what the client renders. Known fields are type-checked;
    unknown fields pass through (the UI keeps small flags like `prevStatus` on records), bounded by
    the per-record size limit in the engine. */

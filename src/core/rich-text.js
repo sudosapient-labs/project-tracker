@@ -1,3 +1,4 @@
+// @ts-check
 /* What a rich-text description may contain: exactly what the drawer's editor produces (bold,
    italic, lists, a heading, links, and the paragraphs, line breaks and divs contenteditable writes).
    The client (DOMPurify, ui/helpers.js) and the server (sanitize-html, server/lib/rich-text.js) both

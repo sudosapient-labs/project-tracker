@@ -8,7 +8,6 @@
 
 ## Checklist
 
-- [ ] `pnpm test` and `pnpm test:e2e` pass
-- [ ] `pnpm lint` and `pnpm format:check` pass
+- [ ] PR title is a [Conventional Commit](https://www.conventionalcommits.org) (`feat: ...`, `fix: ...`, `chore: ...`); it becomes the squash-merge commit and the changelog line
+- [ ] `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test` and `pnpm test:e2e` pass
 - [ ] Docs updated (README, `docs/`, `.env.example`) where behaviour or configuration changed
-- [ ] `CHANGELOG.md` has an entry under `[Unreleased]` for user-facing changes

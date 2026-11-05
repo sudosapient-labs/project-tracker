@@ -1,3 +1,4 @@
+// @ts-check
 /* Storage for synced entities. Every collection the client holds in `S.data` maps to a table whose
    `data` column is the client-facing object, so responses keep the exact shape the UI renders. */
 

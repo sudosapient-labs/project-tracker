@@ -1,3 +1,4 @@
+// @ts-check
 /* Rich text (task descriptions) is sanitised on write against the same allowlist the client renders
    with (src/core/rich-text.js), so stored HTML never carries scripts, styles, forms or foreign tags.
    The output matches how browsers serialise the editor's HTML (`<br>`, `&nbsp;`), so a clean

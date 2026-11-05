@@ -24,10 +24,10 @@ Migrations run on start, so the first start creates the database.
 
 ## Railway
 
-Railway deploys `main` with the `Dockerfile`. `railway.json` sets the builder, the health check
+Railway deploys `prod` with the `Dockerfile`. `railway.json` sets the builder, the health check
 (`/api/health`) and the restart policy, so those need no dashboard settings.
 
-1. **Create the service** from the GitHub repository, branch `main`. Railway uses the root
+1. **Create the service** from the GitHub repository, branch `prod`. Railway uses the root
    `Dockerfile`.
 2. **Attach a volume** mounted at `/data`. It holds the database and uploads. Railway mounts it owned
    by `root`; the entrypoint hands it to `node`, so don't set `RAILWAY_RUN_UID`.
@@ -85,7 +85,7 @@ To take a backup now: `railway ssh`, then `node server/scripts/backup.js`. Resto
 
 ### Upgrading
 
-Push (or merge) to `main`; Railway builds and deploys the new image. Pending migrations run on start,
+Push (or merge) to `prod`; Railway builds and deploys the new image. Pending migrations run on start,
 in a transaction each; a failing migration stops the server from starting. A service with a volume has
 a short downtime on each deploy, because Railway doesn't mount the volume on two deployments at once.
 Take a backup before deploys that add migrations.

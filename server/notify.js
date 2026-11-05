@@ -1,3 +1,4 @@
+// @ts-check
 /* Notifications: in-app records (pushed live to the recipient) plus email, both gated by the
    recipient's notification preferences (Settings → Notifications). */
 import { newId } from './lib/crypto.js';

@@ -1,3 +1,4 @@
+// @ts-check
 /* Per-collection rules for synced writes: who may create, change or delete a record, which fields
    the server owns, and the side effects (task keys, cascades, notifications, invite emails). Each
    hook receives `ctx` (see engine.js) and throws Reject to refuse a single operation. */

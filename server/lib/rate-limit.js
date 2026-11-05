@@ -1,3 +1,4 @@
+// @ts-check
 /* Fixed-window, in-memory rate limiting. Good enough for a single process; put a shared store behind
    this if the API ever runs on several instances. */
 const TOO_MANY = 'Too many attempts. Wait a minute and try again.';

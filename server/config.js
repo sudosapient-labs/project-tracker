@@ -1,3 +1,4 @@
+// @ts-check
 /* Runtime configuration, read once from the environment. `pnpm dev` sets NODE_ENV=development and
    needs no .env file. Only NODE_ENV `development` and `test` relax security; any other value, or
    none at all, runs with production behaviour (Secure cookies, setup token, no emailed links in API

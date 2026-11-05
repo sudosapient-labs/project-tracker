@@ -1,3 +1,4 @@
+// @ts-check
 /* ---------- vocab ---------- */
 export const TIMEZONES = [
   { id: 'Asia/Kolkata', name: 'India Standard Time (GMT+05:30)' },

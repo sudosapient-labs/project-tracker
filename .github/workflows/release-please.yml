@@ -1,0 +1,24 @@
+name: Release
+
+# Keeps a release PR open on prod with the next version and changelog, built from Conventional Commit
+# messages. Merging that PR tags the version (vX.Y.Z) and creates the GitHub release. Nothing deploys here.
+on:
+  push:
+    branches: [prod]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          # GITHUB_TOKEN works, but PRs it opens don't start CI. Add a RELEASE_PLEASE_TOKEN secret (a PAT
+          # or app token with contents + pull-requests write) if the release PR should run the checks.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          target-branch: ${{ github.ref_name }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

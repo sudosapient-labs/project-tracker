@@ -1,3 +1,4 @@
+// @ts-check
 /* ---------- store ---------- */
 import { iso, isPast, setTimeZone, today, uid } from './utils.js';
 import { DEFAULT_TZ, PCOLORS, TEAMS_SEED, validTz } from './constants.js';

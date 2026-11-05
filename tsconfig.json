@@ -1,0 +1,17 @@
+{
+  // Type-checks plain JavaScript. checkJs is off on purpose: only files that start with `// @ts-check`
+  // are checked, so typing can spread file by file instead of in one big-bang change.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "allowJs": true,
+    "checkJs": false,
+    "strict": false,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["server", "src"]
+}
