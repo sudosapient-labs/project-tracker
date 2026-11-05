@@ -1,7 +1,7 @@
 /* =====================================================================
    SETTINGS · AUTH · ONBOARDING · DESIGN SYSTEM · SYSTEM STATES
    ===================================================================== */
-import { dOff, esc, fmtDate } from '../core/utils.js';
+import { ago, dOff, esc, fmtDate } from '../core/utils.js';
 import { ic, wsLogo } from '../core/icons.js';
 import { TIMEZONES } from '../core/constants.js';
 import { D, S, me } from '../core/store.js';
@@ -44,6 +44,7 @@ export const SET_NAV = [
       ['profile', 'Profile', 'user'],
       ['preferences', 'Preferences', 'sliders-horizontal'],
       ['shortcuts', 'Keyboard shortcuts', 'keyboard'],
+      ['api', 'API', 'braces'],
     ],
   ],
   [
@@ -333,6 +334,8 @@ export function settingsBody(sec, title) {
             `<div class="sblock" style="margin-top:18px"><h2>${g}</h2>${list.map(([n, k]) => `<div class="srow" style="padding:9px 0"><span>${n}</span><span class="row" style="gap:4px">${k.map((x, i) => `${i && k[0] === 'G' ? '<span class="faint" style="font-size:11px">then</span>' : ''}<kbd>${x}</kbd>`).join('')}</span></div>`).join('')}</div>`,
         ).join('')
       );
+    case 'api':
+      return H('Personal API keys let scripts, the CLI and AI assistants (MCP) act as you, with your projects and permissions.') + apiSection();
     case 'password': {
       const e = S.ui.errors;
       const pw = S.ui.pwNew || '';
@@ -406,6 +409,50 @@ export function settingsBody(sec, title) {
     }
   }
   return page404();
+}
+/* Settings → API: create and revoke personal keys. A new key's token is shown once, with the
+   snippets to use it from the CLI and an MCP client. */
+function apiSection() {
+  const keys = D().apiKeys || [];
+  const fresh = S.ui.newApiKey;
+  const err = S.ui.errors.apiName;
+  const origin = location.origin;
+  const when = ms => (ms ? fmtDate(new Date(ms).toISOString().slice(0, 10)) : '');
+  const mcp = JSON.stringify(
+    { mcpServers: { 'sudo-sapient': { url: `${origin}/api/mcp`, headers: { Authorization: `Bearer ${fresh?.token || 'ssk_…'}` } } } },
+    null,
+    2,
+  );
+  return `${
+    fresh
+      ? `<div class="alert ok" style="margin-bottom:18px;display:block" id="api-new"><div class="row" style="gap:8px;margin-bottom:6px">${ic('circle-check', 15)}<b>Copy “${esc(fresh.key.name)}” now. You won’t see it again.</b></div>
+      <div class="row" style="gap:8px"><input class="input mono" id="api-token" readonly value="${esc(fresh.token)}" style="flex:1" aria-label="New API key"><button class="btn btn-primary btn-sm" data-a="copyText" data-text="${esc(fresh.token)}">${ic('copy', 13)}Copy</button><button class="btn btn-ghost btn-sm" data-a="dismissApiKey">Done</button></div>
+      <p class="muted" style="font-size:12.5px;margin:12px 0 4px">Terminal: run this, then paste the key when asked (keeps it out of your shell history)</p><pre class="mono" style="margin:0;padding:10px;background:var(--sunken);border-radius:var(--r);font-size:12px;white-space:pre-wrap;user-select:all">sudo-cli login --url ${esc(origin)}</pre>
+      <p class="muted" style="font-size:12.5px;margin:12px 0 4px">MCP over HTTP, e.g. Cursor’s <span class="mono">mcp.json</span></p><pre class="mono" style="margin:0;padding:10px;background:var(--sunken);border-radius:var(--r);font-size:12px;white-space:pre-wrap;user-select:all">${esc(mcp)}</pre></div>`
+      : ''
+  }
+  <form data-submit="createApiKey" class="sblock" style="margin-top:0"><h2>New key</h2><div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-start;margin-top:10px">
+    <div class="field" style="flex:1;min-width:200px"><label class="label" for="api-name">Name</label><input class="input ${err ? 'is-error' : ''}" id="api-name" placeholder="e.g. Laptop CLI, Claude" maxlength="60" value="${esc(S.ui.apiName || '')}">${err ? `<span class="err">${ic('circle-alert', 12)}${esc(err)}</span>` : ''}</div>
+    <div class="field"><label class="label" for="api-scope">Access</label><select class="select" id="api-scope" style="width:auto;min-width:150px"><option value="write">Read and write</option><option value="read">Read only</option></select></div>
+    <div class="field" style="min-width:170px"><label class="label" for="api-pw">Your password</label><input type="password" class="input ${S.ui.errors.apiPw ? 'is-error' : ''}" id="api-pw" autocomplete="current-password">${S.ui.errors.apiPw ? `<span class="err">${ic('circle-alert', 12)}${esc(S.ui.errors.apiPw)}</span>` : ''}</div>
+    <div class="field"><label class="label" for="api-exp">Expires</label><select class="select" id="api-exp" style="width:auto;min-width:120px"><option value="90">In 90 days</option><option value="30">In 30 days</option><option value="365">In a year</option><option value="">Never</option></select></div>
+    <div class="field"><span class="label" aria-hidden="true">&nbsp;</span><button class="btn btn-primary" data-a="createApiKey" id="api-create">${ic('plus', 14)}Create key</button></div>
+  </div></form>
+  <div class="sblock"><h2>Your keys</h2>${
+    keys.length
+      ? keys
+          .map(k => {
+            const expired = k.expiresAt && k.expiresAt < Date.now();
+            return srow(
+              `<span class="row" style="gap:8px">${ic('key-round', 14)}${esc(k.name)}<span class="badge">${k.scope === 'write' ? 'Read and write' : 'Read only'}</span>${expired ? '<span class="badge red">Expired</span>' : ''}</span>`,
+              `<span class="mono">${esc(k.prefix)}…</span> · Created ${when(k.createdAt)} · ${k.lastUsedAt ? `Last used ${ago(k.lastUsedAt)}` : 'Never used'}${k.expiresAt && !expired ? ` · Expires ${when(k.expiresAt)}` : ''}`,
+              `<button class="btn btn-danger-ghost btn-sm" data-a="revokeApiKey" data-id="${esc(k.id)}">Revoke</button>`,
+            );
+          })
+          .join('')
+      : `<p class="faint" style="padding:12px 0">No keys yet.</p>`
+  }</div>
+  <div class="sblock"><h2>Docs</h2><p class="muted" style="font-size:13px">REST reference and a console to try requests: <a class="link" href="/api/docs" target="_blank" rel="noopener">API docs</a> (<a class="link" href="/api/v1/openapi.json" target="_blank" rel="noopener">OpenAPI</a>). MCP endpoint: <span class="mono" style="user-select:all">${esc(origin)}/api/mcp</span>. Changes made with a key show in Activity as “via” the app that made them.</p></div>`;
 }
 export function strengthMeter(pw) {
   let s = 0;

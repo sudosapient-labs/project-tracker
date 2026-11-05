@@ -395,6 +395,8 @@ export function authRoutes({ limit }) {
       db.run('DELETE FROM sessions WHERE user_id = ?', user.id);
       retireEmailChanges(db, user.id);
       forgetDevices(db, user.id);
+      // Recovering the account revokes its API keys: whoever had control may have made one.
+      db.run('DELETE FROM api_keys WHERE user_id = ?', user.id);
     });
     ids.forEach(id => engine.disconnectSession(id));
     clearSessionCookie(c);

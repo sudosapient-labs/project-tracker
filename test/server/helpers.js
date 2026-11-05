@@ -90,3 +90,34 @@ export async function account(t, { name = 'Ada Owner', email = 'ada@example.com'
   }
   return { c, user: r.body.user };
 }
+
+/* A personal API key for a signed-in client (Settings → API). */
+export async function apiKey(c, { name = 'Test key', scope = 'write', expiresInDays = null } = {}) {
+  const r = await c.post('/api/keys', { name, scope, expiresInDays, password: PW });
+  if (r.status !== 201) throw new Error(`key failed: ${r.status} ${JSON.stringify(r.body)}`);
+  return r.body.token;
+}
+
+/* Calls /api/v1 with a bearer key, the way scripts do: no cookies, no CSRF header. */
+export function keyClient(app, token, { client } = {}) {
+  async function req(method, url, body, headers = {}) {
+    const res = await app.request('/api/v1' + url, {
+      method,
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(client ? { 'x-sudo-client': client } : {}),
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...headers,
+      },
+      body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
+    });
+    const type = res.headers.get('content-type') || '';
+    return { status: res.status, body: type.includes('json') ? await res.json() : await res.text(), headers: res.headers };
+  }
+  return {
+    get: (u, h) => req('GET', u, undefined, h),
+    post: (u, b = {}, h) => req('POST', u, b, h),
+    patch: (u, b, h) => req('PATCH', u, b, h),
+    del: (u, h) => req('DELETE', u, undefined, h),
+  };
+}

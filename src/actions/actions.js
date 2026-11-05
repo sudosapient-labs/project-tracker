@@ -2,7 +2,7 @@
    ACTIONS · INPUT HANDLERS · DRAG & DROP · KEYBOARD · INIT
    ===================================================================== */
 import { $, $$, addD, dOff, esc, fmtDateTime, fmtTime, instant, iso, parse, parseTime, shiftD, today, uid, withDay, withTime } from '../core/utils.js';
-import { PR, PSTAT, ST } from '../core/constants.js';
+import { PR, PSTAT, RECUR_DAYS, ST } from '../core/constants.js';
 import { D, S, allTasks, canSee, commentsOf, logAct, me, mem, memName, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
 import { fileType, fsize, richHtml } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
@@ -61,7 +61,6 @@ export function createTask(f) {
   logAct('created', t);
   return t;
 }
-export const RECUR_DAYS = { Daily: 1, Weekly: 7, 'Every 2 weeks': 14, Monthly: 30 };
 export function applyPatch(t, patch) {
   const msgs = [];
   for (const k of Object.keys(patch)) {

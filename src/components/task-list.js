@@ -131,7 +131,7 @@ export function actHtml(a, opt = {}) {
     : p
       ? `<span class="obj" data-a="go" data-r="project" data-id="${p.id}">${esc(p.name)}</span>`
       : '';
-  return `<div class="fitem">${av(a.by, 'sm')}<div class="grow"><b>${esc(m?.id === D().me ? 'You' : m?.name || 'Someone')}</b> <span class="muted">${esc(a.verb)}</span> ${obj} ${a.extra ? `<span class="muted">${esc(a.extra)}</span>` : ''}${opt.proj && p && t ? ` <span class="faint">in ${esc(p.name)}</span>` : ''}</div><time>${ago(a.at)}</time></div>`;
+  return `<div class="fitem">${av(a.by, 'sm')}<div class="grow"><b>${esc(m?.id === D().me ? 'You' : m?.name || 'Someone')}</b>${a.via ? ` <span class="faint">via ${esc(a.via)}</span>` : ''} <span class="muted">${esc(a.verb)}</span> ${obj} ${a.extra ? `<span class="muted">${esc(a.extra)}</span>` : ''}${opt.proj && p && t ? ` <span class="faint">in ${esc(p.name)}</span>` : ''}</div><time>${ago(a.at)}</time></div>`;
 }
 export function miniRow(t, opt = {}) {
   const p = proj(t.project);

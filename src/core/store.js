@@ -40,6 +40,7 @@ export const emptyData = () => ({
   savedViews: [],
   recentSearches: [],
   sessions: [],
+  apiKeys: [],
   tfa: false,
   notifPrefs: {},
 });

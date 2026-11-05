@@ -352,6 +352,9 @@ export const RULES = {
       needProject(ctx, a.project, a.verb === 'commented on' ? COMMENT : EDIT);
       a.by = ctx.uid;
       if (!(Math.abs(a.at - ctx.now) < 5 * 60_000)) a.at = ctx.now;
+      // "Ada via Claude": set by the server from the API key or client, never taken from the record.
+      if (ctx.via) a.via = ctx.via;
+      else delete a.via;
       return a;
     },
     update() {

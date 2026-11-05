@@ -79,6 +79,8 @@ export const PICONS = [
 export const ROLES = ['Owner', 'Admin', 'Member', 'Guest'];
 /* Repeat choices for a task (the drawer's Repeat menu); the server accepts only these. */
 export const RECUR = ['Daily', 'Weekly', 'Every 2 weeks', 'Monthly'];
+/* Days between occurrences; completing a repeating task schedules the next one this far ahead. */
+export const RECUR_DAYS = { Daily: 1, Weekly: 7, 'Every 2 weeks': 14, Monthly: 30 };
 /* The comment reaction picker; the server accepts only these as reaction keys. */
 export const REACTIONS = ['👍', '🎉', '❤️', '👀', '🚀', '✅'];
 /* Fields a task filter can test (shell/view-engine.js FIELDS); saved views are checked against them. */

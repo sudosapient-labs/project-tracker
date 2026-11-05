@@ -97,5 +97,6 @@ export function housekeep({ db }, now = Date.now()) {
   db.run("DELETE FROM notifications WHERE created_at < ? AND json_extract(data, '$.read')", now - 180 * DAY);
   db.run('DELETE FROM auth_tokens WHERE expires_at < ?', now - 7 * DAY);
   db.run('DELETE FROM outbox WHERE COALESCE(sent_at, CASE WHEN attempts >= ? THEN created_at END) < ?', MAX_ATTEMPTS, now - 30 * DAY);
+  db.run('DELETE FROM api_idempotency WHERE created_at < ?', now - DAY);
   db.run("DELETE FROM reminders WHERE NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id = reminders.task_id AND json_extract(t.data, '$.status') != 'done')");
 }

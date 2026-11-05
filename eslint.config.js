@@ -9,7 +9,16 @@ export default [
     languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...globals.browser } },
   },
   {
-    files: ['vite.config.js', 'vitest.config.js', 'playwright.config.js', 'eslint.config.js', 'server/**/*.js', 'test/**/*.js', 'e2e/**/*.js'],
+    files: [
+      'vite.config.js',
+      'vitest.config.js',
+      'playwright.config.js',
+      'eslint.config.js',
+      'server/**/*.js',
+      'packages/**/*.js',
+      'test/**/*.js',
+      'e2e/**/*.js',
+    ],
     languageOptions: { globals: { ...globals.node } },
   },
   {
