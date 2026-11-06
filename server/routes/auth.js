@@ -427,6 +427,8 @@ export function authRoutes({ limit }) {
     if (a) c.var.db.run('DELETE FROM sessions WHERE id = ?', a.session.id);
     if (a) c.var.engine.disconnectSession(a.session.id);
     clearSessionCookie(c);
+    // Whatever this person's session left in the browser's HTTP cache goes too.
+    c.header('Clear-Site-Data', '"cache"');
     return c.json({ ok: true });
   });
 

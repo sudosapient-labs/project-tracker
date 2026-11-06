@@ -165,7 +165,10 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 
 - Every response carries a strict CSP: scripts only from the app, `base-uri 'none'`,
   `form-action 'self'`, `object-src 'none'`, `frame-ancestors 'none'` (styles and fonts also allow
-  Google Fonts).
+  Google Fonts), and `X-Frame-Options: DENY` to match.
+- Every `/api` response, file downloads included, carries `Cache-Control: no-store`, so no data
+  is kept in the browser's cache or a shared one; signing out also sends
+  `Clear-Site-Data: "cache"`.
 - Served files get their own CSP with `sandbox` (no scripts, no same origin), and only images, PDFs
   and plain text are shown inline; everything else downloads. Inline PDFs are the exception to the
   sandbox (Chromium won't render a sandboxed PDF) and get a CSP without scripts or other origins.

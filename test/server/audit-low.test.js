@@ -412,3 +412,34 @@ describe('descriptions are parsed once', () => {
     expect(deep.body).toMatchObject({ code: 'invalid_request', field: 'descriptionHtml', error: 'descriptionHtml: Its formatting is nested too deeply.' });
   });
 });
+
+describe('cache and framing headers', () => {
+  it('marks every API answer, file downloads included, as not to be stored', async () => {
+    const { t, ada } = await team();
+    await ada.sync([put('projects', project('p1'))]);
+    const up = await t.app.request('/api/files?project=p1&name=a.png', {
+      method: 'POST',
+      headers: { 'x-requested-with': 'sudo-sapient', 'content-type': 'image/png', cookie: ada.cookie },
+      body: Buffer.from('89504e470d0a1a0a', 'hex'),
+    });
+    const { file } = await up.json();
+    const answers = [
+      await t.app.request(file.url, { headers: { cookie: ada.cookie } }),
+      await t.app.request(`${file.url}?download`, { headers: { cookie: ada.cookie } }),
+      await t.app.request('/api/bootstrap', { headers: { cookie: ada.cookie } }),
+      await t.app.request('/api/health'),
+      await t.app.request('/api/bootstrap'),
+      await t.app.request('/api/nope'),
+    ];
+    expect(answers.map(r => r.status)).toEqual([200, 200, 200, 200, 401, 404]);
+    for (const r of answers) expect(r.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('clears the browser’s cache on sign-out, and forbids framing the app', async () => {
+    const { ada } = await team();
+    const out = await ada.post('/api/auth/logout');
+    expect(out.headers.get('clear-site-data')).toBe('"cache"');
+    expect(out.headers.get('x-frame-options')).toBe('DENY');
+    expect(out.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+  });
+});

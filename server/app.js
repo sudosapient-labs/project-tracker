@@ -102,6 +102,8 @@ export function createApp({ db, config, log = console, pushSend }) {
       formAction: ["'self'"],
       objectSrc: ["'none'"],
     },
+    // Matches frame-ancestors 'none' for browsers that only know the older header.
+    xFrameOptions: 'DENY',
     crossOriginEmbedderPolicy: false,
   });
   const fileHeaders = secureHeaders({ crossOriginEmbedderPolicy: false });
@@ -114,6 +116,12 @@ export function createApp({ db, config, log = console, pushSend }) {
     other: bodyLimit({ maxSize: KB * KB, onError: tooLarge }),
   };
   const api = new Hono();
+  // Nothing the API answers (data, files, errors) is kept by the browser or a shared cache, so it
+  // can't be read back from disk or by whoever uses the browser next.
+  api.use('*', async (c, next) => {
+    await next();
+    c.header('Cache-Control', 'no-store');
+  });
   api.use('*', (c, next) => {
     const p = c.req.path;
     if (c.req.method === 'POST' && /^\/api\/files\/?$/.test(p)) return next();
