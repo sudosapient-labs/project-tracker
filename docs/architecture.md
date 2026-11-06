@@ -19,11 +19,12 @@ proxies `/api` to the API on :8787.
   later value of each field wins), and each request stays within the server's limits (500 ops,
   4 MB, 900,000 characters of descriptions); an op the server defers because its per-request
   budget is spent (`retry`) is sent again, and a batch refused as too large (`413`) is split.
-- **Lists and maps merge.** A project's `members` and `perms` and a task's `subtasks`, `labels` and
-  `deps` are whole values, so the client sends each one with the value it edited from (`base`) and
+- **Lists and maps merge.** A project's `members`, `perms` and `milestones`, a task's `subtasks`,
+  `labels` and `deps`, and a comment's reactions (`re`) are whole values, so the client sends each one with the value it edited from (`base`) and
   the server applies only that client's additions, removals and changes onto the current value
   (`server/sync/merge.js`). A stale write (an offline queue, a tab behind) can't undo someone else's
-  change: a person taken off a project stays off. A patch without `base` (the REST API, which
+  change: a person taken off a project stays off. Entries are matched by id (milestones by name),
+  and reactions emoji by emoji, so two people reacting at once both count. A patch without `base` (the REST API, which
   reads and writes in one request) replaces the whole value.
 - **Undo.** Undo puts back only the records the action changed. A record it deleted is re-sent
   with `restore: true`; the server then restores its own copy, kept in `recent_deletes` for 10

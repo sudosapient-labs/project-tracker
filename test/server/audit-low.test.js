@@ -317,3 +317,45 @@ describe('deleted records kept for Undo', () => {
     expect(t.db.all('SELECT id FROM recent_deletes').map(r => r.id)).toEqual(['ca']);
   });
 });
+
+describe('three-way merges of reactions and milestones', () => {
+  it('keeps both of two people reacting at once, even with the same emoji', async () => {
+    const { t, ada, adaId, bob } = await team();
+    await ada.sync([
+      put('projects', project('p1')),
+      put('tasks', task('t1', 'p1')),
+      put('comments', { id: 'c1', task: 't1', by: adaId, at: 1, text: 'hi', re: {} }),
+    ]);
+    const base = { re: {} };
+    expect(oks(await ada.sync([patch('comments', 'c1', { re: { '👍': [adaId] } }, { base })]))).toEqual([true]);
+    // Bob edited from the copy without Ada's reaction.
+    expect(oks(await bob.sync([patch('comments', 'c1', { re: { '👍': ['mbob'], '🎉': ['mbob'] } }, { base })]))).toEqual([true]);
+    expect(t.repo.get('comments', 'c1').re).toEqual({ '👍': ['mbob', adaId], '🎉': ['mbob'] });
+    // Taking his back off, from a stale copy, leaves Ada's.
+    await bob.sync([patch('comments', 'c1', { re: { '👍': [], '🎉': ['mbob'] } }, { base: { re: { '👍': ['mbob'], '🎉': ['mbob'] } } })]);
+    expect(t.repo.get('comments', 'c1').re).toEqual({ '👍': [adaId], '🎉': ['mbob'] });
+  });
+
+  it('keeps milestones someone else added or removed, matched by name', async () => {
+    const { t, ada, bob } = await team();
+    const ms = [
+      { name: 'Beta', date: '2026-12-01' },
+      { name: 'Launch', date: '2027-01-15' },
+    ];
+    await ada.sync([put('projects', project('p1', { milestones: ms }))]);
+    await ada.sync([
+      patch(
+        'projects',
+        'p1',
+        { milestones: [ms[0], { name: 'Launch', date: '2027-02-01' }, { name: 'GA', date: '2027-03-01' }] },
+        { base: { milestones: ms } },
+      ),
+    ]);
+    // Bob, still on the old list, drops Beta.
+    await bob.sync([patch('projects', 'p1', { milestones: [ms[1]] }, { base: { milestones: ms } })]);
+    expect(t.repo.get('projects', 'p1').milestones).toEqual([
+      { name: 'Launch', date: '2027-02-01' },
+      { name: 'GA', date: '2027-03-01' },
+    ]);
+  });
+});
