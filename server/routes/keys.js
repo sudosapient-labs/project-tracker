@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { GONE, currentAuthSamePassword, requireAuth } from '../auth.js';
 import { parseBody } from '../lib/http.js';
-import { verifyPassword } from '../lib/crypto.js';
+import { passwordError } from './auth.js';
 import { MAX_KEYS, createKey, listKeys, revokeKey } from '../api/keys.js';
 
 const HOUR = 3_600_000;
@@ -31,8 +31,8 @@ export function keyRoutes({ limit }) {
       if (b.error) return b.error;
       const { db } = c.var;
       const uid = c.var.auth.member.id;
-      if (!(await verifyPassword(b.data.password, c.var.auth.user.password_hash)))
-        return c.json({ error: 'Your password is incorrect.', field: 'password' }, 400);
+      const wrong = await passwordError(c, limit, b.data.password);
+      if (wrong) return wrong;
       const { password, ...opts } = b.data;
       // Made in one transaction with a fresh look at the session and password: either may have
       // changed while the request was on its way (a stolen session, then the owner changed the

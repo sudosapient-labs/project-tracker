@@ -144,6 +144,30 @@ const emailTaken = ({ db }, em, exceptId) =>
   !!db.get('SELECT 1 FROM users WHERE email = ? AND id != ?', em, exceptId) ||
   !!db.get("SELECT 1 FROM members WHERE lower(json_extract(data, '$.email')) = ? AND id != ?", em, exceptId);
 
+/* Failed password checks per account, shared by sign-in and every signed-in action that asks for the
+   password. Each attempt is reserved before the (slow) check and given back if it was right, so
+   parallel guesses can't all slip past the limit while the first ones are still being checked. */
+const passwordFailKey = em => `login-fail:${em}`;
+const PASSWORD_LOCKED = 'Too many incorrect passwords for this account. Try again in 15 minutes.';
+/* true, false, or 'locked' when the account's failure budget is used up (nothing was checked). */
+export async function checkPassword(limit, user, pw) {
+  const key = passwordFailKey(user.email);
+  if (!limit.hit(key, LOGIN_FAILS, LOGIN_FAIL_MS)) return 'locked';
+  const ok = await verifyPassword(pw, user.password_hash);
+  if (ok) limit.refund(key);
+  return ok;
+}
+/* checkPassword as a route answers it: null when the password is right, else the error response. */
+export async function passwordError(c, limit, pw, { field = 'password', error = 'Your password is incorrect.' } = {}) {
+  const ok = await checkPassword(limit, c.var.auth.user, pw);
+  if (ok === true) return null;
+  if (ok === 'locked') {
+    c.header('Retry-After', String(limit.blocked(passwordFailKey(c.var.auth.user.email), LOGIN_FAILS)));
+    return c.json({ error: PASSWORD_LOCKED, code: 'locked' }, 429);
+  }
+  return c.json({ error, field }, 400);
+}
+
 export function authRoutes({ limit }) {
   const r = new Hono();
 
@@ -305,19 +329,19 @@ export function authRoutes({ limit }) {
     // Guessing one account's password from many addresses still hits the per-email limit. A browser
     // that signed in to this account before (device cookie) only answers for its own failures, so
     // failing on purpose elsewhere can't lock the owner out; once it uses those up it's a stranger.
+    // The attempt is counted before the password is checked and given back if it was right, so
+    // parallel guesses can't all be checked before the first failures are counted.
     const device = user && readDevice(c, db, user.id);
     const devKey = device && `login-fail-device:${device.token_hash}`;
-    const failKey = devKey && !limit.blocked(devKey, LOGIN_FAILS) ? devKey : `login-fail:${b.data.email}`;
-    const wait = limit.blocked(failKey, LOGIN_FAILS);
-    if (wait) {
-      c.header('Retry-After', String(wait));
+    const emailKey = passwordFailKey(b.data.email);
+    const failKey = devKey && limit.hit(devKey, LOGIN_FAILS, LOGIN_FAIL_MS) ? devKey : limit.hit(emailKey, LOGIN_FAILS, LOGIN_FAIL_MS) ? emailKey : null;
+    if (!failKey) {
+      c.header('Retry-After', String(limit.blocked(emailKey, LOGIN_FAILS)));
       return c.json({ error: 'Too many failed sign-in attempts for this account. Try again in 15 minutes or reset your password.' }, 429);
     }
     const ok = user ? await verifyPassword(b.data.password, user.password_hash) : await burnPasswordCheck(b.data.password);
-    if (!ok) {
-      limit.hit(failKey, LOGIN_FAILS, LOGIN_FAIL_MS);
-      return c.json({ error: 'Incorrect email or password.' }, 401);
-    }
+    if (!ok) return c.json({ error: 'Incorrect email or password.' }, 401);
+    limit.refund(failKey);
     createSession(c, db, user.id, { remember: b.data.remember !== false, pending2fa: !!user.totp_enabled });
     if (!user.totp_enabled) rememberDevice(c, db, user.id);
     return c.json({ ...sessionState(c), twoFactor: !!user.totp_enabled });
@@ -429,7 +453,8 @@ export function authRoutes({ limit }) {
     const b = await parseBody(c, z.object({ current: z.string().min(1, 'Enter your current password').max(200), password }));
     if (b.error) return b.error;
     const { user } = c.var.auth;
-    if (!(await verifyPassword(b.data.current, user.password_hash))) return c.json({ error: 'Your current password is incorrect.', field: 'current' }, 400);
+    const wrong = await passwordError(c, limit, b.data.current, { field: 'current', error: 'Your current password is incorrect.' });
+    if (wrong) return wrong;
     const { db, engine } = c.var;
     const hash = await hashPassword(b.data.password);
     // Anyone who knew the old password is signed out everywhere else, can't finish an email change
@@ -464,7 +489,8 @@ export function authRoutes({ limit }) {
     if (b.error) return b.error;
     const { db, config, mailer } = c.var;
     const { user, member } = c.var.auth;
-    if (!(await verifyPassword(b.data.password, user.password_hash))) return c.json({ error: 'Your password is incorrect.', field: 'password' }, 400);
+    const wrong = await passwordError(c, limit, b.data.password);
+    if (wrong) return wrong;
     const em = b.data.email;
     if (em === user.email.toLowerCase()) return c.json({ error: 'That’s already your email.', field: 'email' }, 400);
     if (emailTaken(c.var, em, user.id)) return c.json({ error: 'Someone in the workspace already uses this email.', field: 'email' }, 409);
@@ -532,10 +558,11 @@ export function authRoutes({ limit }) {
   r.post('/account/delete', limit('account-delete', 5, 10 * MIN), requireAuth('account'), async c => {
     const b = await parseBody(c, z.object({ password: z.string().min(1, 'Enter your password').max(200) }));
     if (b.error) return b.error;
-    const { user, member } = c.var.auth;
-    if (!(await verifyPassword(b.data.password, user.password_hash))) return c.json({ error: 'Your password is incorrect.', field: 'password' }, 400);
+    const { member } = c.var.auth;
     if (member.role === 'Owner')
       return c.json({ error: 'Owners can’t delete their account. Make someone else an Owner and ask them to change your role first.', code: 'owner' }, 400);
+    const wrong = await passwordError(c, limit, b.data.password);
+    if (wrong) return wrong;
     // Re-checked as it's removed: the session may have ended, or this person become an Owner, meanwhile.
     if (!currentAuthSamePassword(c.var.db, c.var.auth) || !c.var.engine.removeAccount(c.var.auth)) return c.json(GONE, 401);
     clearSessionCookie(c);
@@ -571,7 +598,8 @@ export function authRoutes({ limit }) {
     const { db, config } = c.var;
     const { user } = c.var.auth;
     if (user.totp_enabled) return c.json({ error: 'Two-factor authentication is already on.' }, 400);
-    if (!(await verifyPassword(b.data.password, user.password_hash))) return c.json({ error: 'Your password is incorrect.', field: 'password' }, 400);
+    const wrong = await passwordError(c, limit, b.data.password);
+    if (wrong) return wrong;
     if (!currentAuthSamePassword(db, c.var.auth)) return c.json(GONE, 401);
     const secret = newTotpSecret();
     db.run('UPDATE users SET totp_secret = ? WHERE id = ?', seal(secret, config.secretKey), user.id);
@@ -608,8 +636,9 @@ export function authRoutes({ limit }) {
     if (b.error) return b.error;
     const { db, config } = c.var;
     const { user } = c.var.auth;
-    const ok =
-      (b.data.password && (await verifyPassword(b.data.password, user.password_hash))) || (b.data.code && useSecondFactor(db, config, user.id, b.data.code));
+    const pw = b.data.password ? await checkPassword(limit, user, b.data.password) : false;
+    const ok = pw === true || (b.data.code && useSecondFactor(db, config, user.id, b.data.code));
+    if (!ok && pw === 'locked') return c.json({ error: PASSWORD_LOCKED, code: 'locked' }, 429);
     if (!ok) return c.json({ error: 'Enter your current password or a code from your authenticator app.', field: 'confirm' }, 400);
     if (!currentAuthSamePassword(db, c.var.auth)) return c.json(GONE, 401);
     db.tx(() => {

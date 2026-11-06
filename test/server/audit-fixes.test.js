@@ -337,3 +337,39 @@ describe('M3 the task-key counter is the server’s', () => {
     expect(keyOf(t, 't3')).toBe('WEB-1');
   });
 });
+
+describe('M4 password guesses are counted before they are checked', () => {
+  const env = { DISABLE_RATE_LIMIT: 'false', TRUST_PROXY: '1' };
+  const from = i => ({ 'x-forwarded-for': `10.0.${i >> 8}.${i & 255}` });
+
+  it('parallel sign-in guesses get only the 10 checks the lock allows', async () => {
+    const { t } = await workspace([], env);
+    const st = (
+      await Promise.all(Array.from({ length: 40 }, (_, i) => t.client().post('/api/auth/login', { email: 'ada@example.com', password: `wrong-${i}` }, from(i))))
+    ).map(r => r.status);
+    expect(st.filter(s => s === 401)).toHaveLength(10);
+    expect(st.filter(s => s === 429)).toHaveLength(30);
+    expect((await t.client().post('/api/auth/login', { email: 'ada@example.com', password: PW }, from(999))).status).toBe(429);
+  });
+
+  it('a successful sign-in gives its reserved attempt back', async () => {
+    const { t } = await workspace([], env);
+    for (let i = 0; i < 9; i++) await t.client().post('/api/auth/login', { email: 'ada@example.com', password: 'nope-nope-1' }, from(i));
+    for (let i = 0; i < 3; i++) expect((await t.client().post('/api/auth/login', { email: 'ada@example.com', password: PW }, from(100 + i))).status).toBe(200);
+  });
+
+  it('a signed-in session guessing through password-confirmed endpoints shares the account’s budget', async () => {
+    const { t, ada } = await workspace([], env);
+    const guesses = [
+      ...Array.from({ length: 6 }, (_, i) => ada.post('/api/auth/password', { current: `wrong-${i}`, password: 'brand-new-pass-7' }, from(i))),
+      ...Array.from({ length: 6 }, (_, i) => ada.post('/api/keys', { name: 'k', scope: 'read', expiresInDays: null, password: `wrong-${i}` }, from(50 + i))),
+      ...Array.from({ length: 6 }, (_, i) => ada.post('/api/auth/email', { email: `x${i}@example.com`, password: `wrong-${i}` }, from(100 + i))),
+    ];
+    const st = (await Promise.all(guesses)).map(r => r.status);
+    expect(st.filter(s => s === 400)).toHaveLength(10);
+    expect(st.filter(s => s === 429)).toHaveLength(8);
+    // Locked now, even with the right password and from a fresh address; sign-in from a new browser too.
+    expect((await ada.post('/api/auth/2fa/setup', { password: PW }, from(200))).status).toBe(429);
+    expect((await t.client().post('/api/auth/login', { email: 'ada@example.com', password: PW }, from(201))).status).toBe(429);
+  });
+});

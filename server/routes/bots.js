@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { GONE, currentAuthSamePassword, requireAuth } from '../auth.js';
 import { isAdminRole } from '../../src/core/access.js';
 import { parseBody } from '../lib/http.js';
-import { verifyPassword } from '../lib/crypto.js';
+import { passwordError } from './auth.js';
 import { MAX_KEYS, createKey, revokeKey } from '../api/keys.js';
 import { BOT_ROLES, MAX_BOTS, createBot, getBot, listBots, updateBot } from '../api/bots.js';
 
@@ -88,8 +88,8 @@ export function botRoutes({ limit }) {
       const { db, repo } = c.var;
       const m = bot(c);
       if (!m) return gone(c);
-      if (!(await verifyPassword(b.data.password, c.var.auth.user.password_hash)))
-        return c.json({ error: 'Your password is incorrect.', field: 'password' }, 400);
+      const wrong = await passwordError(c, limit, b.data.password);
+      if (wrong) return wrong;
       const { password, ...opts } = b.data;
       // Re-checked in the transaction that makes the key: the admin's session, password and role,
       // and the bot, as they are now (see routes/keys.js).

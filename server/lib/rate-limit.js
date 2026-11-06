@@ -34,6 +34,11 @@ export function rateLimiter({ enabled = true } = {}) {
     if (ok) h.n += cost;
     return { ok, limit, remaining: limit - h.n, reset: Math.max(1, Math.ceil((h.reset - now) / 1000)) };
   };
+  /* Give back one use of `key` taken with `hit` (e.g. a reserved attempt that succeeded). */
+  const refund = key => {
+    const h = enabled && hits.get(key);
+    if (h && h.n > 0) h.n--;
+  };
   /* Seconds until `key` may be used again, or 0 when it has uses left. Counts nothing. */
   const blocked = (key, limit) => {
     const h = enabled && hits.get(key);
@@ -51,5 +56,5 @@ export function rateLimiter({ enabled = true } = {}) {
       }
       return next();
     };
-  return Object.assign(limit, { hit, take, blocked });
+  return Object.assign(limit, { hit, take, blocked, refund });
 }

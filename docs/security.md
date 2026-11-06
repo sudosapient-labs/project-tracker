@@ -32,7 +32,13 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 
 - Auth endpoints are rate-limited per client IP (see `TRUST_PROXY`), e.g. 10 sign-ins a minute, 10
   sign-ups and 5 password-reset requests per 10 minutes.
-- Each email is locked for 15 minutes after 10 failed sign-ins from anywhere.
+- Each email is locked for 15 minutes after 10 failed sign-ins from anywhere. Each attempt is counted
+  before the password is checked (and given back when it was right), so parallel guesses can't all
+  be checked before the first failures count.
+- Signed-in actions that ask for the password (changing it or the email, API and bot keys, setting
+  up or turning off two-factor, deleting the account, the Owner's two-factor reset) share that
+  per-account budget, so a stolen session can't guess the password faster through them. Once it's
+  used up they answer `429` until the lock ends.
 - So that strangers can't use that lock to keep the owner out, a browser that has signed in to the
   account before carries a **device cookie** (`ss_dev`: random, `HttpOnly`, one year, path
   `/api/auth`, stored hashed; the OWASP device-cookie pattern). Its sign-ins skip the per-email lock and
