@@ -2,7 +2,7 @@
    ACTIONS · SESSION: boot, sign up, verify, sign in (+2FA), sign out,
    password reset, onboarding hand-off, and reloading the workspace.
    ===================================================================== */
-import { $ } from '../core/utils.js';
+import { $, esc } from '../core/utils.js';
 import { setTimeZone } from '../core/utils.js';
 import { validTz } from '../core/constants.js';
 import { D, DEFAULT_PREFS, PREFS_KEY, S, allTasks, canSee, emptyData, me, proj } from '../core/store.js';
@@ -10,6 +10,7 @@ import { ApiError, get, post } from '../core/api.js';
 import { toast } from '../ui/toast.js';
 import { hashFor, render, routeFromHash } from '../shell/render.js';
 import {
+  OFFLINE_MSG,
   collect,
   commit,
   connectLive,
@@ -24,7 +25,7 @@ import {
   settled,
   stopSync,
 } from '../shell/sync.js';
-import { A, EMAIL_RE } from './actions.js';
+import { A, EMAIL_RE, confirmDlg } from './actions.js';
 import { disablePushHere, refreshPush } from './push.js';
 
 const AUTH_SCREENS = ['login', 'signup', 'forgot'];
@@ -506,13 +507,40 @@ function takeFlash() {
     return null;
   }
 }
+/* Signing out first saves what's queued. If some of it can't be saved (offline, or refused), it
+   asks before dropping it; and it only signs out here once the server has ended the session, so
+   the reloaded tab isn't still signed in behind the sign-in screen. */
 A.signOut = async () => {
   S.ui.pop = null;
-  await commit().catch(() => {});
-  await disablePushHere();
-  await post('/api/auth/logout').catch(() => {});
-  signedOut();
+  render();
+  const errs = await commit();
+  const refused = errs.filter(e => e !== OFFLINE_MSG);
+  const waiting = pendingCount();
+  if (waiting || refused.length) {
+    const why = waiting
+      ? `${S.ui.offline ? "You're offline, and some" : 'Some'} of your changes haven't reached the server yet. If you sign out now, they're lost.`
+      : `Some of your changes couldn't be saved: ${refused[0]}`;
+    return confirmDlg({ title: 'Sign out without saving?', body: esc(why), ok: 'Sign out anyway', danger: true, icon: 'log-out', run: leave });
+  }
+  await leave();
 };
+async function leave() {
+  await disablePushHere();
+  try {
+    await post('/api/auth/logout');
+  } catch (e) {
+    // Already signed out (401) is fine; otherwise stay, with everything still queued.
+    if (e.status !== 401) {
+      refreshPush();
+      toast(e.offline ? "You're offline, so you can't sign out yet. Try again once you're connected." : `Couldn't sign out. ${e.message}`, {
+        kind: 'err',
+        ms: 7000,
+      });
+      return;
+    }
+  }
+  signedOut();
+}
 
 onSync({ signedOut: () => signedOut('Your session ended. Sign in again to continue.'), otherUser, stillMe, resync: reload });
 
