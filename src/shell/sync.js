@@ -378,6 +378,8 @@ function settle(ops, results) {
   return changed;
 }
 
+/* The batch on its way without keepalive (too large for it), so pagehide can take it back. */
+let flushCtl = null;
 export async function flush() {
   // While what pagehide sent is unanswered (back from the back/forward cache), wait for it.
   if (flushing || !queue.length || !shadow || exitSends) return;
@@ -386,11 +388,13 @@ export async function flush() {
   syncState();
   const ops = inflight;
   // A small batch goes with keepalive, so closing the tab doesn't cancel it; pagehide then only
-  // has to send what's still queued behind it, in the keepalive budget that's left.
+  // has to send what's still queued behind it, in the keepalive budget that's left. A larger one
+  // can be stopped, so pagehide can send it again at the head of what it sends.
   const body = JSON.stringify({ ops });
   inflightBytes = bytes(body) <= KEEPALIVE_BYTES / 2 ? bytes(body) : 0;
+  const ctl = (flushCtl = inflightBytes ? null : new AbortController());
   try {
-    const res = await api('POST', '/api/sync', { ops }, { keepalive: inflightBytes > 0 });
+    const res = await api('POST', '/api/sync', { ops }, { keepalive: inflightBytes > 0, signal: ctl?.signal });
     collect(); // move any edits made meanwhile into the queue before adopting server values
     inflight = [];
     inflightBytes = 0;
@@ -403,24 +407,29 @@ export async function flush() {
     if (res.links?.length) S.ui.devLinks = res.links;
     if (changed) refresh();
   } catch (e) {
-    inflight = [];
-    inflightBytes = 0;
-    if (e.status === 401) hooks.signedOut(e);
-    else if (e.status === 413 && ops.length > 1) {
-      // The batch as a whole was too large: send it again in smaller ones.
-      queue.unshift(...ops);
-      flushBytes = Math.max(64_000, Math.floor(flushBytes / 4));
-    } else if (e.offline || e.status >= 500 || e.status === 429) {
-      queue.unshift(...ops);
-      offline();
+    if (ctl?.signal.aborted) {
+      // Stopped by pagehide, which put the batch back at the head of the queue and sent it.
     } else {
-      // Refused as a whole (a single op larger than a request may be, or a malformed batch):
-      // reported, and the resync puts back what the server has.
-      toast(e.message, { kind: 'err' });
-      hooks.resync();
+      inflight = [];
+      inflightBytes = 0;
+      if (e.status === 401) hooks.signedOut(e);
+      else if (e.status === 413 && ops.length > 1) {
+        // The batch as a whole was too large: send it again in smaller ones.
+        queue.unshift(...ops);
+        flushBytes = Math.max(64_000, Math.floor(flushBytes / 4));
+      } else if (e.offline || e.status >= 500 || e.status === 429) {
+        queue.unshift(...ops);
+        offline();
+      } else {
+        // Refused as a whole (a single op larger than a request may be, or a malformed batch):
+        // reported, and the resync puts back what the server has.
+        toast(e.message, { kind: 'err' });
+        hooks.resync();
+      }
     }
   } finally {
     flushing = false;
+    if (flushCtl === ctl) flushCtl = null;
   }
   if (queue.length && !S.ui.offline) flush();
   else {
@@ -500,53 +509,80 @@ export async function retryNow() {
   if (!live && shadow) connectLive();
 }
 
-/* Before the tab goes away, send what's still queued with keepalive requests, which outlive the
-   page. Browsers allow about 64 KB of keepalive bodies at once (the batch already on its way, sent
-   with keepalive by flush, counts too), so as many ops as fit, in order. Nothing leaves the queue
-   until the server confirms it: the page may only be going into the back/forward cache, or be
-   offline, and then the queue must still be there when it comes back. Sending an op twice is
-   harmless (a put becomes an update, a delete of something gone does nothing). */
+/* Before the tab goes away, send what's still queued with one keepalive request, which outlives
+   the page. Browsers allow about 64 KB of keepalive bodies at once (the batch already on its way,
+   sent with keepalive by flush, counts too), so as many ops as fit, in order. A batch on its way
+   without keepalive would be cancelled with the page, so it's stopped and goes first. Nothing
+   leaves the queue until the server confirms it: the page may only be going into the
+   back/forward cache, or be offline, and then the queue must still be there when it comes back.
+   Sending an op twice is harmless (a put becomes an update, a delete of something gone does
+   nothing). */
 const KEEPALIVE_BYTES = 60_000;
 const enc = new TextEncoder();
 const bytes = s => enc.encode(s).length;
 let inflightBytes = 0;
-/* The keepalive requests pagehide sent, until they're all answered. */
+/* The keepalive request pagehide sent, until it's answered, and how to stop it. */
 let exitSends = null;
-export function keepaliveBatches(ops, budget = KEEPALIVE_BYTES) {
+let exitCtl = null;
+let exitOps = null;
+/* The ops, from the first, that fit in one keepalive request of `budget` bytes. */
+export function keepaliveBatch(ops, budget = KEEPALIVE_BYTES) {
   const out = [];
-  let left = budget;
+  let left = budget - 12; // {"ops":[]}
   for (const op of ops) {
-    const fresh = !out.length || out.at(-1).length >= BATCH;
-    // The op and its comma, plus the {"ops":[]} around a new request.
-    const cost = bytes(JSON.stringify(op)) + 1 + (fresh ? 12 : 0);
-    if (cost > left) break;
-    if (fresh) out.push([]);
-    out.at(-1).push(op);
+    const cost = bytes(JSON.stringify(op)) + 1; // the op and its comma
+    if (out.length >= BATCH || cost > left) break;
+    out.push(op);
     left -= cost;
   }
   return out;
 }
 addEventListener('pagehide', () => {
-  if (!shadow || exitSends) return;
+  if (!shadow) return;
   collect(false);
-  const batches = keepaliveBatches(queue, KEEPALIVE_BYTES - inflightBytes);
-  if (!batches.length) return;
-  for (const op of batches.flat()) keptAlive.add(op);
-  exitSends = Promise.allSettled(
-    batches.map(async ops => {
+  const reclaim = flushCtl && inflight.length ? inflight : [];
+  // From the head of the queue: what an earlier pagehide sent, if that is still unanswered (back
+  // from the back/forward cache meanwhile), goes again ahead of the rest, in place of it.
+  const ops = keepaliveBatch([...reclaim, ...queue], KEEPALIVE_BYTES - inflightBytes);
+  if (!ops.length || (exitSends && ops.every(op => exitOps.has(op)))) return;
+  if (reclaim.length) {
+    flushCtl.abort();
+    queue.unshift(...inflight);
+    inflight = [];
+  }
+  exitCtl?.abort();
+  for (const op of ops) keptAlive.add(op);
+  const ctl = (exitCtl = new AbortController());
+  const sent = (exitOps = new Set(ops));
+  const p = (async () => {
+    try {
       const res = await fetch('/api/sync', {
         method: 'POST',
         keepalive: true,
         credentials: 'same-origin',
+        signal: ctl.signal,
         headers: { 'content-type': 'application/json', 'x-requested-with': 'sudo-sapient', 'x-client-id': CLIENT_ID },
         body: JSON.stringify({ ops }),
       });
       if (!res.ok) return;
-      // Confirmed: these are saved (the resync on pageshow brings back what the server made of them).
-      const done = new Set(ops);
-      queue = queue.filter(op => !done.has(op));
-    }),
-  ).finally(() => (exitSends = null));
+      const results = (await res.json())?.results || [];
+      // Answered: what the server saved or refused leaves the queue (the resync on pageshow brings
+      // back what it made of them); what it deferred (`retry`: everything after the first such op)
+      // stays, unsealed, to be sent again.
+      const keep = new Set(ops.filter((op, i) => !results[i] || (!results[i].ok && results[i].retry)));
+      for (const op of keep) keptAlive.delete(op);
+      queue = queue.filter(op => !sent.has(op) || keep.has(op));
+      if (shadow && settle(ops, results)) refresh();
+    } catch {
+      /* offline, or stopped by a later pagehide that sent these again: they stay queued */
+    }
+  })();
+  exitSends = p;
+  p.finally(() => {
+    if (exitSends !== p) return;
+    exitSends = null;
+    exitCtl = null;
+  });
 });
 // Back from the back/forward cache: once what pagehide sent is answered, catch up (that also sends
 // whatever is still queued, then reloads).
