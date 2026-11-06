@@ -1,7 +1,7 @@
 /* ---------- drag & drop ---------- */
 import { $, $$, dayKey, diffD, fmtDateTime, parse, shiftD, withDay } from '../core/utils.js';
 import { PR, ST } from '../core/constants.js';
-import { D, S, proj, save, task } from '../core/store.js';
+import { D, S, canEdit, proj, save, task } from '../core/store.js';
 import { mutate, toast } from '../ui/toast.js';
 import { fxSet, render } from '../shell/render.js';
 import { viewOf } from '../shell/view-engine.js';
@@ -68,8 +68,11 @@ document.addEventListener('dragover', e => {
     e.preventDefault();
     $$('.bcol.over').forEach(x => x !== col && x.classList.remove('over'));
     col.classList.add('over');
+    DRAG.col = col.dataset.dropCol;
+    DRAG.before = null;
     const body = col.querySelector('[data-col-body]');
-    if (!body) return;
+    // A collapsed column has no cards to drop between: the card goes to its end.
+    if (!body) return void $('.drop-line')?.remove();
     const cards = [...body.querySelectorAll('.kcard:not(.dragging)')];
     const after = cards.find(c => {
       const r = c.getBoundingClientRect();
@@ -82,7 +85,6 @@ document.addEventListener('dragover', e => {
     }
     const ref = after || body.querySelector('.addcard, .composer');
     if (line.nextSibling !== ref || line.parentNode !== body) body.insertBefore(line, ref);
-    DRAG.col = col.dataset.dropCol;
     DRAG.before = after ? after.dataset.dragCard : null;
   } else if (DRAG.type === 'row') {
     const row = e.target.closest('.trow[data-task-row]');
@@ -238,7 +240,8 @@ document.addEventListener('pointerdown', e => {
     return;
   }
   const b = e.target.closest?.('[data-bar]');
-  if (!b) return;
+  // Nothing moves in a project I can only view or comment in (the server would refuse it).
+  if (!b || b.closest('[data-ro]') || !canEdit(proj(task(b.dataset.bar)?.project))) return;
   const x0 = e.clientX;
   const l0 = parseFloat(b.style.left);
   const dw = +b.dataset.dw;
