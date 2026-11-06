@@ -2,14 +2,33 @@
 import { MOD, clamp, esc } from '../core/utils.js';
 import { LOGO, ic } from '../core/icons.js';
 import { PSTAT } from '../core/constants.js';
-import { D, S, allTasks, pColor, proj, save, task } from '../core/store.js';
+import { D, S, allTasks, canSee, pColor, proj, save, task, visibleProjects } from '../core/store.js';
 import { FT, av, hl, stIcon } from '../ui/helpers.js';
 import { effectiveDark } from '../core/theme.js';
 import { go, render } from '../shell/render.js';
-import { sortTasks } from '../shell/view-engine.js';
+import { sortTasks, viewOf } from '../shell/view-engine.js';
 import { searchAll } from '../pages/search.js';
 import { openModal } from './modals.js';
 import { A } from '../actions/actions.js';
+
+/* Shortcuts into the project open now, or else the first one in the sidebar I can open. */
+function projectSuggestions() {
+  const here = S.ui.route === 'project' && proj(S.ui.params?.id);
+  const p = here && canSee(here) ? here : visibleProjects().find(canSee);
+  if (!p) return [];
+  return [
+    {
+      icon: 'signal-high',
+      name: `High priority in ${p.name}`,
+      run: () => {
+        const v = viewOf('p:' + p.id);
+        v.filters = [{ f: 'priority', op: 'is', v: ['urgent', 'high'] }];
+        go('project', { id: p.id, tab: 'list' });
+      },
+    },
+    { icon: 'paperclip', name: `Files in ${p.name}`, run: () => go('project', { id: p.id, tab: 'files' }) },
+  ];
+}
 
 export function commands() {
   return [
@@ -96,14 +115,7 @@ export function paletteItems() {
       items: [
         { icon: 'clock-alert', name: 'Overdue tasks', run: () => A.goTasks({ dataset: { f: 'overdue' } }) },
         { icon: 'user', name: 'Tasks assigned to me', run: () => go('mytasks') },
-        {
-          icon: 'signal-high',
-          name: 'High priority in Website Redesign',
-          run: () => {
-            go('project', { id: 'p1', tab: 'v:v1' });
-          },
-        },
-        { icon: 'paperclip', name: 'Files in Website Redesign', run: () => go('project', { id: 'p1', tab: 'files' }) },
+        ...projectSuggestions(),
       ],
     });
     return groups;
