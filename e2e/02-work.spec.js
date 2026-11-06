@@ -100,3 +100,103 @@ test('delete a task, undo it, then delete it for good', async ({ page }) => {
   await expect(row(page, 'Punch the cards')).toHaveCount(0);
   expect(await errors()).toEqual([]);
 });
+
+test('quick edit keeps descriptions intact: plain text decoded, formatting left alone', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  const headers = { 'x-requested-with': 'sudo-sapient' };
+  const now = Date.now();
+  const taskOp = (id, n, title, desc) => ({
+    c: 'tasks',
+    id,
+    k: 'put',
+    v: {
+      id,
+      key: `QE-${n}`,
+      project: 'pqe',
+      title,
+      status: 'todo',
+      assignee: null,
+      priority: 'none',
+      labels: [],
+      subtasks: [],
+      attachments: [],
+      deps: [],
+      desc,
+      created: now,
+      updated: now,
+      order: n,
+    },
+  });
+  const RICH = '<ul><li>Gears</li><li>Levers &amp; <a href="https://example.com/cams">cams</a></li></ul>';
+  const ops = [
+    {
+      c: 'projects',
+      id: 'pqe',
+      k: 'put',
+      v: {
+        id: 'pqe',
+        key: 'QE',
+        name: 'Quick edits',
+        icon: 'code',
+        color: 'teal',
+        status: 'active',
+        team: '',
+        lead: null,
+        members: [],
+        desc: '',
+        milestones: [],
+      },
+    },
+    taskOp('tqe1', 1, 'Plain ampersand', '<p>a &amp; b</p>'),
+    taskOp('tqe2', 2, 'Formatted list', RICH),
+  ];
+  expect((await page.request.post('/api/sync', { headers, data: { ops } })).ok()).toBe(true);
+  const descOf = async id => (await (await page.request.get('/api/bootstrap')).json()).data.tasks.find(t => t.id === id).desc;
+  const richStored = await descOf('tqe2');
+  expect(richStored).toContain('<li>Gears</li>');
+
+  const quickEdit = async title => {
+    await row(page, title).click({ button: 'right' });
+    await page.locator('.pop [data-a="editTask"]').click();
+    await expect(page.locator('#f-title')).toHaveValue(title);
+  };
+  const save = async () => {
+    await page.click('#f-submit');
+    await toastWith(page, 'Changes saved');
+    await synced(page);
+  };
+  await page.goto('/#project/qe/list');
+
+  // Plain text shows decoded, and an unrelated change leaves the stored description byte for byte.
+  await quickEdit('Plain ampersand');
+  await expect(page.locator('#f-desc')).toHaveValue('a & b');
+  await page.fill('#f-title', 'Plain ampersand, renamed');
+  await save();
+  expect(await descOf('tqe1')).toBe('<p>a &amp; b</p>');
+
+  // Editing the text escapes it once.
+  await quickEdit('Plain ampersand, renamed');
+  await page.fill('#f-desc', 'c & d < e');
+  await save();
+  expect(await descOf('tqe1')).toBe('<p>c &amp; d &lt; e</p>');
+  await quickEdit('Plain ampersand, renamed');
+  await expect(page.locator('#f-desc')).toHaveValue('c & d < e');
+  await page.locator('.modal [data-a="closeModal"]').last().click();
+
+  // A formatted description isn't offered as plain text, and saving other changes leaves it alone.
+  await quickEdit('Formatted list');
+  await expect(page.locator('#f-desc')).toHaveCount(0);
+  await expect(page.locator('#f-desc-rich')).toContainText('This description has formatting');
+  await page.fill('#f-title', 'Formatted list, renamed');
+  await save();
+  expect(await descOf('tqe2')).toBe(richStored);
+
+  // The note's link opens the task in the drawer, where the formatting can be edited.
+  await quickEdit('Formatted list, renamed');
+  await page.locator('#f-desc-rich [data-a="openTask"]').click();
+  await expect(page.locator('.modal')).toHaveCount(0);
+  await expect(drawer(page).locator('#d-desc li', { hasText: 'Gears' })).toBeVisible();
+  expect(await errors()).toEqual([]);
+});

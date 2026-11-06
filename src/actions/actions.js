@@ -5,6 +5,7 @@ import { $, $$, addD, dOff, esc, fmtDateTime, fmtTime, instant, iso, parse, pars
 import { PR, PSTAT, RECUR_DAYS, ST } from '../core/constants.js';
 import { D, S, allTasks, canSee, commentsOf, logAct, me, mem, memName, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
 import { fileType, fsize, richHtml } from '../ui/helpers.js';
+import { plainDescText, textToHtml } from '../core/rich-text.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
 import { post, upload } from '../core/api.js';
@@ -599,12 +600,13 @@ A.delTask = el => {
 A.editTask = el => {
   const t = task(el.dataset.id);
   if (!t) return;
+  // A formatted description isn't offered as plain text (the modal links to the drawer editor
+  // instead); descOrig is what the textarea starts with, so an untouched one is never rewritten.
+  const text = plainDescText(t.desc);
   S.ui.form = {
     title: t.title,
-    desc: (t.desc || '')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim(),
+    desc: text ?? '',
+    descOrig: text,
     project: t.project,
     status: t.status,
     assignee: t.assignee,
@@ -708,14 +710,7 @@ A.submitTask = () => {
     if (
       !mutate(() => {
         applyPatch(t, base);
-        if (
-          f.desc !==
-          (t.desc || '')
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim()
-        )
-          t.desc = f.desc ? `<p>${esc(f.desc)}</p>` : '';
+        if (f.descOrig != null && f.desc !== f.descOrig) t.desc = textToHtml(f.desc);
       })
     )
       return;
@@ -728,7 +723,7 @@ A.submitTask = () => {
   let t;
   if (
     !mutate(() => {
-      t = createTask({ ...base, desc: f.desc ? `<p>${esc(f.desc)}</p>` : '' });
+      t = createTask({ ...base, desc: textToHtml(f.desc) });
     })
   )
     return;

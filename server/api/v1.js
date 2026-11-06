@@ -7,6 +7,7 @@
    Routes are declared once in ROUTES; registration and the OpenAPI document both read them. */
 import { Hono } from 'hono';
 import { PR, RECUR_DAYS, ST } from '../../src/core/constants.js';
+import { textToHtml } from '../../src/core/rich-text.js';
 import { newId } from '../lib/crypto.js';
 import { cleanRich, richTextProblem } from '../lib/rich-text.js';
 import { canSee, memberFor } from '../sync/rules.js';
@@ -33,15 +34,6 @@ export const htmlToText = html =>
     .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, e) => ENT[e])
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-const esc = s => s.replace(/[&<>"']/g, ch => `&${{ '&': 'amp', '<': 'lt', '>': 'gt', '"': 'quot', "'": '#39' }[ch]};`);
-/* Plain text becomes paragraphs, the way the app's own quick-add stores a description. */
-const textToHtml = s =>
-  s
-    .split(/\n{2,}/)
-    .map(p => p.trim())
-    .filter(Boolean)
-    .map(p => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`)
-    .join('');
 const shortDate = v => new Date(v.slice(0, 10) + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 const shiftDate = (v, days) => new Date(Date.parse(v.slice(0, 10) + 'T00:00:00Z') + days * 86_400_000).toISOString().slice(0, 10) + v.slice(10);
 
