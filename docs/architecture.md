@@ -68,7 +68,7 @@ proxies `/api` to the API on :8787.
   `engine.apply` in atomic mode: one transaction, all or nothing. So validation, permissions,
   notifications, emails and live updates to open apps are exactly the app's. The server stamps
   activity with `via` (the client's `X-Sudo-Client` label or the key's name).
-- **MCP** (`packages/mcp`, no dependencies) is a small JSON-RPC server over stdio (`sudo-mcp`) and
+- **MCP** (`packages/mcp`, whose only dependency is `packages/client`) is a small JSON-RPC server over stdio (`sudo-mcp`) and
   Streamable HTTP. The app hosts it at `/api/mcp`, where each tool calls `/api/v1` in-process with the
   caller's key. **The CLI** (`packages/cli`, `sudo-cli`) and the MCP server share
   `packages/client`, a fetch wrapper for `/api/v1`. See [the API reference](api.md).

@@ -3,15 +3,16 @@
 An MCP server so Claude, Cursor and other MCP clients can find, create, update and complete Sudo
 Sapient tasks. It uses a personal API key, so the assistant has exactly your permissions (private
 projects and Guest limits included), and its changes show in Activity as "you via Claude" (or Cursor,
-…). No dependencies.
+…). Its only dependency is [`@sudosapient/client`](../client), the API client it shares with the
+CLI.
 
 Two ways to connect:
 
 - **Remote (HTTP):** the app hosts it at `https://<your workspace>/api/mcp`. Send the key as
   `Authorization: Bearer ssk_…`.
-- **Local (stdio):** run `sudo-mcp`, which talks to your workspace's `/api/v1`. Not on npm yet; run
-  it from a checkout: `pnpm install`, then `node packages/mcp/bin/sudo-mcp.js` (or symlink that file
-  onto your PATH as `sudo-mcp`).
+- **Local (stdio):** run `npx -y @sudosapient/mcp` (Node 20 or later), which talks to your
+  workspace's `/api/v1`; `npm install -g @sudosapient/mcp` gives you the `sudo-mcp` command. From a
+  checkout of this repo: `pnpm install`, then `node packages/mcp/bin/sudo-mcp.js`.
 
 ## Configure your client
 
@@ -38,8 +39,8 @@ claude mcp add --transport http sudo-sapient https://sudo.example.com/api/mcp --
 {
   "mcpServers": {
     "sudo-sapient": {
-      "command": "node",
-      "args": ["/path/to/project-tracker/packages/mcp/bin/sudo-mcp.js"],
+      "command": "npx",
+      "args": ["-y", "@sudosapient/mcp"],
       "env": { "SUDO_URL": "https://sudo.example.com", "SUDO_API_KEY": "ssk_…" }
     }
   }
@@ -54,7 +55,7 @@ claude mcp add --transport http sudo-sapient https://sudo.example.com/api/mcp --
 
 **MCP Inspector:** `npx @modelcontextprotocol/inspector`, then connect to `https://…/api/mcp`
 (Streamable HTTP, header `Authorization: Bearer ssk_…`, through the Inspector's proxy), or choose
-STDIO with `node packages/mcp/bin/sudo-mcp.js` and the two `SUDO_` variables.
+STDIO with `npx -y @sudosapient/mcp` and the two `SUDO_` variables.
 
 ## Tools
 
@@ -92,3 +93,8 @@ Tool text and results are kept small on purpose: one-line descriptions, no per-p
 server's instructions explain keys once), and compact JSON with names and keys instead of ids. All of
 `tools/list` is about 950 tokens, a third of it the annotations. `node packages/mcp/scripts/budget.js`
 prints the sizes per tool; `node packages/mcp/scripts/results.js` compares tool results with raw API responses.
+
+## License
+
+UNLICENSED, all rights reserved. The package is public on npm so anyone can install and run it, but
+no license to copy, modify or redistribute the code is granted.

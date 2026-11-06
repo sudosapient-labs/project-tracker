@@ -1,4 +1,4 @@
-# sudo-cli
+# @sudosapient/cli (`sudo-cli`)
 
 Sudo Sapient from the terminal: capture, list, assign, comment on and complete tasks, with `--json`
 for scripts. It talks only to the public API (`/api/v1`) with a personal API key, so it can do exactly
@@ -6,8 +6,16 @@ what you can do in the app, and its changes show in Activity as "you via CLI".
 
 ## Install
 
-Not on npm yet (and note that the unscoped `sudo-cli` package on npm is **someone else's**; don't
-`npx` it). From a checkout of this repo, with Node 20+:
+With Node 20 or later, run it straight from npm, or install it to get the `sudo-cli` command:
+
+```bash
+npx @sudosapient/cli login --url https://sudo.example.com
+npm install -g @sudosapient/cli    # then: sudo-cli …
+```
+
+Mind the scope: the unscoped `sudo-cli` package on npm is **someone else's**; don't `npx sudo-cli`.
+
+From a checkout of this repo instead:
 
 ```bash
 pnpm install
@@ -50,3 +58,8 @@ sudo-cli tasks --json | jq '.[].key'
 Due dates: `today`, `tomorrow`, a weekday (`friday`, `fri`; today counts), `next week`, `+3d`, `+2w`, or
 `2026-11-20`. Set `SUDO_PROJECT=WEB` to skip `-p`. Exit codes: `0` ok, `1` the API refused (the
 message says why; with `--json` it's `{ error, code }` on stderr), `2` a usage error.
+
+## License
+
+UNLICENSED, all rights reserved. The package is public on npm so anyone can install and run it, but
+no license to copy, modify or redistribute the code is granted.
