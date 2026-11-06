@@ -345,6 +345,16 @@ describe('lifecycle', () => {
     expect((await keyClient(t.app, b.token).get('/me')).status).toBe(401);
   });
 
+  it('changing an admin’s password also revokes bot keys they made, and returns the updated bots', async () => {
+    const { t, ada } = await workspace();
+    const b = await bot(ada);
+    const r = await ada.post('/api/auth/password', { current: PW, password: 'another-pass-2' });
+    expect(r.status).toBe(200);
+    expect(r.body.bots.find(x => x.id === b.id).keys).toEqual([]);
+    expect((await keyClient(t.app, b.token).get('/me')).body.code).toBe('invalid_key');
+    expect(t.db.get('SELECT kind FROM users WHERE id = ?', b.id).kind).toBe('bot');
+  });
+
   it('recovering an admin’s account with a password reset also revokes bot keys they made', async () => {
     const { t, ada } = await workspace();
     const b = await bot(ada);

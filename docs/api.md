@@ -14,7 +14,7 @@ open tabs, and show in Activity as "Ada via CLI" or "Ada via Claude".
 
 Create one in **Settings → API**: a name, **Read and write** or **Read only**, an expiry (30, 90, 365
 days or never) and your current password. The key (`ssk_…`) is shown once; only its hash is stored.
-Revoking it stops it straight away, and a password reset revokes all of yours. Send it as `Authorization: Bearer ssk_…`. Session cookies are not accepted on
+Revoking it stops it straight away, and changing or resetting your password revokes all of yours. Send it as `Authorization: Bearer ssk_…`. Session cookies are not accepted on
 `/api/v1`, and no CSRF header is needed.
 
 Optionally send `X-Sudo-Client: <name>` to label your changes in Activity ("via <name>"); otherwise
@@ -34,8 +34,8 @@ projects and Can view / Can comment apply to it exactly as to a person.
   **Bot** badge, and comments and tasks have the bot as their author.
 - A bot can't sign in, use the app or `/api/sync`, or be sent sign-in, reset, verify or invite
   email. It gets no notifications, emails or push, and isn't offered in assignee or @mention pickers.
-- Removing a bot revokes its keys. Removing the admin who made a key doesn't; a password reset of
-  that admin's account (account recovery) does.
+- Removing a bot revokes its keys. Removing the admin who made a key doesn't; that admin changing or
+  resetting their password does.
 - It has its own rate-limit budget, separate from any person's.
 - `GET /me` and `GET /members` report `kind: "bot"` (or `"person"`); a bot's `email` is empty.
 - Bots are managed with a signed-in session only (`/api/bots`); API keys, including a bot's own, get
