@@ -86,24 +86,28 @@ They stay `UNLICENSED` with no license file: visible, but all rights reserved.
   (`client-vX.Y.Z`, `cli-vX.Y.Z`, `mcp-vX.Y.Z`). A commit counts for a package when it touches files in
   that package's folder; the app (`.`) ignores commits that only touch `packages/`. The same release PR
   carries every component that has something to release.
-- Merging the release PR runs two jobs in `release-please.yml`, only when a package was released:
+- Merging the release PR runs three jobs in `release-please.yml`, only when a package was released:
 
   ```
-  release-please ─► pack-npm ─► publish-npm (environment: npm)
+                 ┌─► check-npm ─┐
+  release-please ┤              ├─► publish-npm (environment: npm)
+                 └─► pack-npm ──┘
   ```
 
   | Job           | Permissions                 | Runs                                                                                                                                              |
   | ------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `pack-npm`    | `contents: read`            | `pnpm install`, then `lint`, `typecheck` and `test` again (CI runs on the same push in parallel), then `pnpm pack` for each released package      |
+  | `check-npm`   | `contents: read`            | `pnpm install`, then `lint`, `typecheck` and `test` again (CI runs on the same push in parallel); publishing waits for it                         |
+  | `pack-npm`    | `contents: read`            | `pnpm pack` for each released package, with nothing installed: no dependency's code runs in the job whose output is published                     |
   | `publish-npm` | `id-token: write`, no other | downloads those tarballs and runs `npm publish <tarball> --access public --provenance` on each, `client` first; no checkout, no install, no cache |
 
-  `pnpm pack` turns `workspace:*` into the real version (`pack-npm` fails if a tarball still has a
-  `workspace:` dependency), and the tarballs reach `publish-npm` as the `npm-tarballs` artifact. A version
+  `pnpm pack` turns `workspace:*` into the real version from the workspace's own `package.json` files,
+  which needs no `node_modules` (`pack-npm` fails if a tarball still has a `workspace:` dependency, or
+  if anything was installed), and the tarballs reach `publish-npm` as the `npm-tarballs` artifact. A version
   that's already on npm is skipped, so re-running `publish-npm` is safe; the artifact is kept for 7 days.
 
 - `publish-npm` is the only job in the repository with `id-token: write`, the permission that lets a job
   ask GitHub for the OIDC token npm accepts. Keeping it apart means the dev dependencies and tests that
-  `pack-npm` runs can't reach that token.
+  `check-npm` runs can't reach that token, and they never touch the tarballs either.
 - It authenticates with [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC):
   there is no npm token in GitHub. npm checks that `repository.url` in the package's `package.json` is
   this repository, so keep it. Each version gets a provenance attestation linking it to the workflow run.
