@@ -27,8 +27,8 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@hono/node-server": "^2.1.6",
-    "hono": "^4.13.16",
+    "@hono/node-server": "^2.1.5",
+    "hono": "^4.9.0",
     "qrcode": "^1.5.4",
     "sanitize-html": "^2.18.1",
     "web-push": "^3.6.7",
