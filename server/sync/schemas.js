@@ -10,10 +10,13 @@ const id = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Invalid id');
 const ref = id.nullable().optional();
 const text = (max = 500) => z.string().max(max);
 const ts = z.number().finite().nonnegative();
-// Dates are 'YYYY-MM-DD' (all day) or an ISO instant like '2026-11-02T09:30:00.000Z' (timed).
+// Dates are 'YYYY-MM-DD' (all day) or an ISO instant like '2026-11-02T09:30:00.000Z' (timed). The day
+// must exist: 2026-02-31 would break scheduling the next repeat (as api/schemas.js checks for the API).
+const realDate = v => !Number.isNaN(Date.parse(v)) && new Date(v.slice(0, 10) + 'T00:00:00Z').toISOString().startsWith(v.slice(0, 10));
 const date = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/, 'Invalid date')
+  .refine(realDate, 'Invalid date')
   .nullable()
   .optional();
 const color = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid colour');
