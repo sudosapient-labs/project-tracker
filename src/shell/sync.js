@@ -379,7 +379,9 @@ addEventListener('online', () => retryNow());
 const stateBody = () => ({ prefs: S.prefs, views: S.views, collapsed: !!S.ui.collapsed });
 function saveState() {
   try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify(S.prefs));
+    // Display preferences only: name and title are the person's, and the browser may be shared.
+    const { name, title, ...cached } = S.prefs;
+    localStorage.setItem(PREFS_KEY, JSON.stringify(cached));
   } catch {
     /* storage blocked: the server copy is the one that matters */
   }

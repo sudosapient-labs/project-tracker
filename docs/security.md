@@ -21,6 +21,9 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   production); only its SHA-256 is stored, so a database leak doesn't hand out live sessions. "Remember
   me" sessions last 30 days, others one day (and end with the browser).
 - Settings → Sessions lists sessions and can end any of them, or all others.
+- Signing out (or a session ending) reloads the tab, so nothing of the person stays in memory for
+  whoever uses it next (a key just created, recovery codes, drafts, forms). The browser keeps only
+  display preferences (theme, accent, density); name and title are never cached there.
 - Changing the password or email signs out every other session; resetting the password signs out all
   of them. Live-update streams close when their session ends, and push subscriptions are deleted with
   it.

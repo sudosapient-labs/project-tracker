@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { OWNER_AFTER_RESET, signIn, watchErrors } from './helpers.js';
+import { OWNER_AFTER_RESET, signIn, signOut, synced, toastWith, watchErrors } from './helpers.js';
 
 // 05-settings changes the owner's password to this.
 const OWNER = { ...OWNER_AFTER_RESET, password: 'jacquard-loom-42' };
@@ -100,4 +100,45 @@ test('closing the tab mid-save sends the change with keepalive, after asking', a
   await page.goto('about:blank');
   await expect.poll(async () => (await serverTask(page, 'tkeep1'))?.title, { timeout: 15_000 }).toBe('Saved on the way out');
   expect(asked).toContain('beforeunload');
+});
+
+test('signing out leaves nothing of the person in the tab', async ({ page }) => {
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  await page.goto('/#settings/api');
+  await page.fill('#api-name', 'Left behind?');
+  await page.fill('#api-pw', OWNER.password);
+  await page.click('#api-create');
+  await expect(page.locator('#api-token')).toHaveValue(/^ssk_/);
+  await page.evaluate(() => (window.__sameTab = true));
+
+  await signOut(page);
+  // The page was reloaded, so no in-memory state (like the key just shown) survives...
+  expect(await page.evaluate(() => window.__sameTab)).toBeUndefined();
+  // ...and the browser keeps only display preferences.
+  const cached = await page.evaluate(() => JSON.parse(localStorage.getItem('sudo-sapient.prefs') || '{}'));
+  expect(cached).not.toHaveProperty('name');
+  expect(cached).not.toHaveProperty('title');
+
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  await page.goto('/#settings/api');
+  await expect(page.locator('.srow', { hasText: 'Left behind?' })).toBeVisible();
+  await expect(page.locator('#api-token')).toHaveCount(0);
+
+  // A session that ends elsewhere closes the live stream; the tab signs out, reloads and says why.
+  await page.request.post('/api/auth/logout', { headers });
+  await toastWith(page, 'Your session ended');
+  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
+});
+
+test.afterAll(async ({ browser }) => {
+  // Leave no key behind for later runs against this database.
+  const page = await browser.newPage();
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  const keys = await (await page.request.get('/api/keys')).json();
+  for (const k of keys.filter(k => k.name === 'Left behind?')) await page.request.delete(`/api/keys/${k.id}`, { headers });
+  await synced(page);
+  await page.close();
 });

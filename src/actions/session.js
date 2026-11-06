@@ -5,7 +5,7 @@
 import { $ } from '../core/utils.js';
 import { setTimeZone } from '../core/utils.js';
 import { validTz } from '../core/constants.js';
-import { D, DEFAULT_PREFS, S, allTasks, canSee, emptyData, me, proj } from '../core/store.js';
+import { D, DEFAULT_PREFS, PREFS_KEY, S, allTasks, canSee, emptyData, me, proj } from '../core/store.js';
 import { ApiError, get, post } from '../core/api.js';
 import { toast } from '../ui/toast.js';
 import { hashFor, render, routeFromHash } from '../shell/render.js';
@@ -120,6 +120,7 @@ function show(screen) {
 const clearHash = () => history.replaceState(null, '', location.pathname + location.search);
 
 export async function boot() {
+  const flash = takeFlash();
   S.ui.af = { email: '', name: '' };
   S.ui.auth = 'boot';
   render();
@@ -189,6 +190,7 @@ export async function boot() {
       }
     }
     await route(s, ['verify', 'reset', 'invite', 'join', 'setup', 'email'].includes(kind) ? '' : hash);
+    if (flash) toast(flash, { kind: 'info', ms: 6000 });
   } catch (e) {
     S.ui.auth = 'boot-error';
     S.ui.bootError = e.message;
@@ -406,16 +408,45 @@ A.doReset = async () => {
 };
 
 /* ---------- sign out ---------- */
+/* A message for the next page load to show (signing out reloads the page). */
+const FLASH_KEY = 'sudo-sapient.flash';
+/* Display preferences the browser may keep for whoever signs in next (so the theme applies before
+   the first request); everything else in them is the person's. */
+const DEVICE_PREFS = ['theme', 'accent', 'side', 'density', 'motion'];
+
+/* Signed out (or the session ended): nothing of this person may stay in the tab for whoever uses it
+   next. Personal preferences leave the browser and the page reloads, so no state survives: a new
+   API key or bot key, recovery codes, two-factor setup, drafts, half-filled forms, searches. */
+let leaving = false;
 export function signedOut(msg) {
+  // Once: the live stream closing can report the same sign-out again before the reload.
+  if (leaving) return;
+  leaving = true;
   stopSync();
   S.data = emptyData();
   S.views = {};
   Object.assign(S.ui, { pop: null, palette: null, drawer: null, modals: [], route: 'home', params: {}, history: [], errors: {}, me: null, offline: false });
   S.ui.sel.clear();
+  try {
+    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null') || {};
+    localStorage.setItem(PREFS_KEY, JSON.stringify(Object.fromEntries(DEVICE_PREFS.filter(k => k in p).map(k => [k, p[k]]))));
+    if (msg) sessionStorage.setItem(FLASH_KEY, msg);
+    else sessionStorage.removeItem(FLASH_KEY);
+  } catch {
+    /* storage blocked: nothing was kept there either */
+  }
   clearHash();
-  S.ui.auth = 'login';
-  render();
-  if (msg) toast(msg, { kind: 'info', ms: 6000 });
+  location.reload();
+}
+/* The message signedOut left for this page load, once. */
+function takeFlash() {
+  try {
+    const m = sessionStorage.getItem(FLASH_KEY);
+    sessionStorage.removeItem(FLASH_KEY);
+    return m;
+  } catch {
+    return null;
+  }
 }
 A.signOut = async () => {
   S.ui.pop = null;
