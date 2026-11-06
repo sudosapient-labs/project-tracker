@@ -107,7 +107,8 @@ and whichever one a change sets wins.
 
 Levels match the share dialog: **Can view**, **Can comment** (own comments and reactions), **Can
 edit** (tasks, files, events, saved views) and **Full access** (also the project's members, privacy,
-permissions, lead, archiving and deleting). One helper, `src/core/access.js`, decides a person's
+permissions, lead, archiving and deleting). Only a comment's author can edit it, and only its text;
+everyone adds and removes only their own reactions. One helper, `src/core/access.js`, decides a person's
 level for the server (sync rules, uploads, file downloads, notifications, digests, bootstrap, live
 updates) and the client (which hides what the server would refuse):
 

@@ -13,6 +13,57 @@ const invite = (id, email, role = 'Member') => ({
   v: { id, name: id, email, role, team: '', title: '', c: '#6B7280', status: 'invited', tz: '' },
 });
 const tokenOf = (link, kind) => link.split(`#${kind}/`)[1];
+const project = (id, extra = {}) => ({
+  id,
+  key: 'WEB',
+  name: 'Website',
+  icon: 'globe',
+  color: 'indigo',
+  status: 'planning',
+  team: '',
+  lead: null,
+  due: null,
+  start: null,
+  members: [],
+  desc: '',
+  milestones: [],
+  ...extra,
+});
+const task = (id, pid, extra = {}) => ({
+  id,
+  key: 'WEB-201',
+  project: pid,
+  title: 'Write copy',
+  status: 'todo',
+  assignee: null,
+  priority: 'medium',
+  due: null,
+  start: null,
+  labels: [],
+  subtasks: [],
+  attachments: [],
+  deps: [],
+  desc: '',
+  estimate: null,
+  created: Date.now(),
+  updated: Date.now(),
+  order: 1,
+  recur: null,
+  ...extra,
+});
+const put = (c, v, extra = {}) => ({ c, id: v.id, k: 'put', v, ...extra });
+const patch = (c, id, v, extra = {}) => ({ c, id, k: 'patch', v, ...extra });
+const del = (c, id) => ({ c, id, k: 'del' });
+const oks = r => r.body.results.map(x => x.ok);
+
+/* The Owner (ada) and a signed-up Member (bob). */
+async function team() {
+  const t = setup();
+  const { c: ada, user } = await account(t);
+  await ada.sync([invite('mbob', 'bob@example.com')]);
+  const { c: bob } = await account(t, { name: 'Bob', email: 'bob@example.com', invite: tokenOf(t.lastLink('bob@example.com'), 'invite') });
+  return { t, ada, adaId: user.id, bob };
+}
 
 describe('sign-up in an invite-only workspace', () => {
   it('answers the same for an existing account, a pending invite and a stranger', async () => {
@@ -125,5 +176,25 @@ describe('rate-limit keys and the proxy setting', () => {
     const other = createApp({ db: openDb(':memory:'), config: behind, log: { info() {}, error: l => quiet.push(l) }, pushSend: async () => {} });
     await other.app.request('/api/health', { headers: { 'x-forwarded-for': '198.51.100.1' } });
     expect(quiet).toEqual([]);
+  });
+});
+
+describe('editing a comment', () => {
+  it('lets its author change the text and their own reactions only', async () => {
+    const { t, ada, adaId, bob } = await team();
+    await ada.sync([put('projects', project('p1')), put('tasks', task('t1', 'p1')), put('comments', { id: 'c1', task: 't1', by: adaId, at: 1, text: 'hi', re: {} })]);
+    await bob.sync([patch('comments', 'c1', { re: { '👍': ['mbob'] } })]);
+    const stored = t.repo.get('comments', 'c1');
+    const tries = [
+      { at: 1 },
+      { re: { '👍': [] } },
+      { re: { '👍': ['mbob', adaId], '🎉': ['mbob'] } },
+      { text: 'edited', at: stored.at - 86_400_000 },
+      { flag: true },
+    ];
+    for (const v of tries) expect(oks(await ada.sync([patch('comments', 'c1', v)]))).toEqual([false]);
+    expect(t.repo.get('comments', 'c1')).toEqual(stored);
+    expect(oks(await ada.sync([patch('comments', 'c1', { text: 'edited', re: { '👍': ['mbob', adaId] } })]))).toEqual([true]);
+    expect(t.repo.get('comments', 'c1')).toMatchObject({ text: 'edited', at: stored.at, by: adaId, re: { '👍': ['mbob', adaId] } });
   });
 });

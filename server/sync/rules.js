@@ -397,15 +397,17 @@ export const RULES = {
       cm.by = before.by;
       cm.task = before.task;
       cm.project = before.project;
-      if (before.by === ctx.uid) return cm;
-      // Other people may only add or remove their own reactions.
+      // The author may change the text; everyone (the author too) may only add or remove their own
+      // reactions. Who wrote it and when stay the server's.
       const mine = (a = {}, b = {}) =>
         [...new Set([...Object.keys(a), ...Object.keys(b)])].every(e => {
           const x = new Set(a[e] || []),
             y = new Set(b[e] || []);
           return [...x].every(i => y.has(i) || i === ctx.uid) && [...y].every(i => x.has(i) || i === ctx.uid);
         });
-      if (keys.some(k => k !== 're') || !mine(before.re, cm.re)) throw new Reject('You can only edit your own comments.');
+      const editable = before.by === ctx.uid ? ['text', 're'] : ['re'];
+      if (keys.some(k => !editable.includes(k))) throw new Reject('You can only edit your own comments.');
+      if (!mine(before.re, cm.re)) throw new Reject('You can only add or remove your own reactions.');
       return cm;
     },
     remove(ctx, cm) {
