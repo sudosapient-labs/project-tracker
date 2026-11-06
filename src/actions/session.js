@@ -9,7 +9,7 @@ import { D, DEFAULT_PREFS, PREFS_KEY, S, allTasks, canSee, emptyData, me, proj }
 import { ApiError, get, post } from '../core/api.js';
 import { toast } from '../ui/toast.js';
 import { hashFor, render, routeFromHash } from '../shell/render.js';
-import { collect, commit, connectLive, loadingFresh, onSync, pendingCount, prime, reloadWhenSaved, stopSync } from '../shell/sync.js';
+import { collect, commit, connectLive, flush, loadingFresh, onSync, pendingCount, prime, reloadWhenSaved, settled, stopSync } from '../shell/sync.js';
 import { A, EMAIL_RE } from './actions.js';
 import { disablePushHere, refreshPush } from './push.js';
 
@@ -32,8 +32,9 @@ export function reload() {
     try {
       // Send what's queued first, even if the last attempt left us offline (the live stream that
       // asked for this reload just reconnected). If it still can't be saved, keep it and reload
-      // once it is: a bootstrap mustn't replace local changes the server hasn't seen.
-      await commit({ retry: true });
+      // once it is: a bootstrap mustn't replace local changes the server hasn't seen. Refused
+      // changes are reported as usual (not taken from a commit() someone else is waiting on).
+      await settled({ retry: true });
       if (pendingCount()) return reloadWhenSaved();
       // Edits keep flowing while the bootstrap loads: what the server confirms meanwhile, and what
       // is still waiting out the save delay when it arrives, are laid over it (see prime).
@@ -41,7 +42,7 @@ export function reload() {
       const b = await get('/api/bootstrap');
       collect(false);
       hydrate(b);
-      if (pendingCount()) commit().catch(() => {});
+      if (pendingCount()) flush();
       if (S.ui.drawer && !allTasks().some(t => t.id === S.ui.drawer)) S.ui.drawer = null;
       if (S.ui.route === 'project' && !proj(S.ui.params.id)) {
         S.ui.route = 'projects';
