@@ -49,10 +49,14 @@ export const bearer =
     const m = /^Bearer\s+(\S+)$/i.exec(c.req.header('authorization') || '');
     if (!m) return fail(c, 401, 'Send a personal API key: Authorization: Bearer <key>. Create one in Settings → API.');
     const { db, config } = c.var;
-    // Check the key once the whole request has arrived, not before a slow body (writes check it
-    // again in their transaction; see engine.apply).
-    if (c.req.method !== 'GET' && c.req.method !== 'HEAD') await c.req.arrayBuffer();
-    const a = readKey(db, m[1]);
+    // A bad key is refused before the body is read. A good one is checked again once the whole
+    // request has arrived, not only before a slow body (writes check it again in their
+    // transaction; see engine.apply).
+    let a = readKey(db, m[1]);
+    if (!a.error && c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+      await c.req.arrayBuffer();
+      a = readKey(db, m[1]);
+    }
     if (a.error) return fail(c, 401, KEY_ERRORS[a.error], a.error);
     // A bot has no email to verify (see bots.js); its keys were made by a signed-in admin.
     if (config.requireVerification && a.user.kind !== 'bot' && !a.user.email_verified_at)

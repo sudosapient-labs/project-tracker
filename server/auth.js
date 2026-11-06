@@ -128,15 +128,22 @@ export const GONE = { error: 'Your session ended while this was being saved. Sig
 
 /* Middleware: populate c.var.auth. `level` decides what a request needs:
    'session' any signed-in session (even mid-2FA), 'account' 2FA complete, 'member' also email verified.
-   The body is read first, so the session is checked once the whole request has arrived, not before
-   a slow body (writes re-check it in their transaction too, see currentAuth). `stream: true` leaves
-   the body unread for routes that stream it (uploads), which re-check in their transaction. */
+   A request without a valid session is refused before its body is read (nobody unauthenticated
+   gets a body buffered). Otherwise the body is read and the session checked again once the whole
+   request has arrived, not only before a slow body (writes re-check it in their transaction too,
+   see currentAuth). `stream: true` leaves the body unread for routes that stream it (uploads),
+   which re-check in their transaction. */
 export const requireAuth =
   (level = 'member', { stream = false } = {}) =>
   async (c, next) => {
-    if (!stream && c.req.method !== 'GET' && c.req.method !== 'HEAD') await c.req.arrayBuffer();
-    const a = readSession(c, c.get('db'));
-    if (!a) return c.json({ error: 'Sign in to continue.', code: 'unauthenticated' }, 401);
+    const unauthenticated = () => c.json({ error: 'Sign in to continue.', code: 'unauthenticated' }, 401);
+    let a = readSession(c, c.get('db'));
+    if (!a) return unauthenticated();
+    if (!stream && c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+      await c.req.arrayBuffer();
+      a = readSession(c, c.get('db'));
+      if (!a) return unauthenticated();
+    }
     if (level !== 'session' && a.session.pending_2fa) return c.json({ error: 'Enter your two-factor code to continue.', code: 'two_factor' }, 401);
     if (level === 'member' && c.get('config').requireVerification && !a.user.email_verified_at)
       return c.json({ error: 'Verify your email to continue.', code: 'unverified' }, 403);

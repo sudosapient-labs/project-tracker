@@ -351,6 +351,45 @@ const authOf = (t, uid) => ({
   member: t.repo.get('members', uid),
 });
 
+describe('requests without credentials are refused before their body is read', () => {
+  const never = () => {
+    const read = { n: 0 };
+    // highWaterMark 0: pull runs only when someone reads.
+    return { read, body: new ReadableStream({ pull: () => void read.n++ }, { highWaterMark: 0 }) };
+  };
+  const within = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`no answer in ${ms} ms`)), ms))]);
+  it('a session route answers 401 without waiting for (or reading) a large body', async () => {
+    const { t } = await workspace();
+    const { read, body } = never();
+    const res = await within(
+      t.app.request('/api/sync', {
+        method: 'POST',
+        duplex: 'half',
+        body,
+        headers: { 'content-type': 'application/json', 'content-length': String(5 * 1024 * 1024), 'x-requested-with': 'sudo-sapient', cookie: 'ss_sid=bogus' },
+      }),
+      1000,
+    );
+    expect(res.status).toBe(401);
+    expect(read.n).toBe(0);
+  });
+  it('the API answers 401 for a bad key without reading the body', async () => {
+    const { t } = await workspace();
+    const { read, body } = never();
+    const res = await within(
+      t.app.request('/api/v1/tasks', {
+        method: 'POST',
+        duplex: 'half',
+        body,
+        headers: { 'content-type': 'application/json', 'content-length': String(512 * 1024), authorization: 'Bearer ssk_not-a-key' },
+      }),
+      1000,
+    );
+    expect(res.status).toBe(401);
+    expect(read.n).toBe(0);
+  });
+});
+
 describe('H2 access is checked again when the write happens', () => {
   it('a key requested with a stolen session is refused once the password changes, even if the body arrives later', async () => {
     const { t, ada } = await workspace();
