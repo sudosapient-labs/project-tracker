@@ -54,6 +54,7 @@ export function client(app, { ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)
     get: (u, h) => req('GET', u, null, h),
     post: (u, b = {}, h) => req('POST', u, b, h),
     put: (u, b = {}, h) => req('PUT', u, b, h),
+    patch: (u, b = {}, h) => req('PATCH', u, b, h),
     del: (u, h) => req('DELETE', u, null, h),
     sync: ops => req('POST', '/api/sync', { ops }),
     get cookie() {
@@ -96,6 +97,15 @@ export async function apiKey(c, { name = 'Test key', scope = 'write', expiresInD
   const r = await c.post('/api/keys', { name, scope, expiresInDays, password: PW });
   if (r.status !== 201) throw new Error(`key failed: ${r.status} ${JSON.stringify(r.body)}`);
   return r.body.token;
+}
+
+/* A bot member (Settings → API → Bots) made by a signed-in Owner/Admin, and a key for it. */
+export async function bot(c, { name = 'Release Bot', role = 'Member', projects = [], key = 'GitHub Actions', scope = 'write' } = {}) {
+  const r = await c.post('/api/bots', { name, role, projects });
+  if (r.status !== 201) throw new Error(`bot failed: ${r.status} ${JSON.stringify(r.body)}`);
+  const k = await c.post(`/api/bots/${r.body.id}/keys`, { name: key, scope, expiresInDays: null, password: PW });
+  if (k.status !== 201) throw new Error(`bot key failed: ${k.status} ${JSON.stringify(k.body)}`);
+  return { id: r.body.id, token: k.body.token, keyId: k.body.key.id };
 }
 
 /* Calls /api/v1 with a bearer key, the way scripts do: no cookies, no CSRF header. */

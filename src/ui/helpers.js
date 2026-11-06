@@ -3,7 +3,7 @@ import DOMPurify from 'dompurify';
 import { diffD, dueSoon, esc, hasTime, isPast, parse, relDate, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { LB, PR, PSTAT, ST } from '../core/constants.js';
-import { D, mem, pColor } from '../core/store.js';
+import { D, isBot, mem, pColor } from '../core/store.js';
 import { RICH_ATTRS, RICH_SCHEMES, RICH_TAGS } from '../core/rich-text.js';
 
 /* A task description (or pasted HTML) cut down to what the editor produces (core/rich-text.js). */
@@ -28,6 +28,8 @@ export function av(id, cls = '', tip = true) {
     .slice(0, 2);
   return `<span class="av ${cls}" style="--c:${esc(m.c)}" ${tip ? `data-tip="${esc(m.name)}"` : ''} aria-label="${esc(m.name)}">${esc(ini)}</span>`;
 }
+/* The badge after a bot's name, wherever it appears (Activity, comments, members). */
+export const botBadge = id => (isBot(mem(id)) ? ' <span class="badge accent bot-badge" data-tip="Bot: acts through API keys">Bot</span>' : '');
 export function avStack(ids, max = 4, cls = 'sm') {
   const v = ids.slice(0, max);
   return `<span class="avs">${v.map(i => av(i, cls)).join('')}${ids.length > max ? `<span class="av ${cls} more" style="--c:var(--gray)">+${ids.length - max}</span>` : ''}</span>`;

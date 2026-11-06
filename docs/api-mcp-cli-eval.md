@@ -8,7 +8,7 @@ again. Background: [API reference](api.md), [MCP server](../packages/mcp/README.
 
 ```bash
 pnpm test                                # everything below plus the existing suites
-pnpm exec vitest run test/server/api.test.js packages/mcp packages/cli
+pnpm exec vitest run test/server/api.test.js test/server/bots.test.js packages/mcp packages/cli
 pnpm test:e2e                            # all journeys; 09-api signs in as the owner the earlier ones create
 node packages/mcp/scripts/budget.js      # MCP context budget (tables below)
 node packages/mcp/scripts/results.js     # tool results vs raw API responses
@@ -31,6 +31,12 @@ node packages/mcp/scripts/results.js     # tool results vs raw API responses
 | One person's keys share one rate limit; each MCP batch message counts              | `api.test.js › limits each person’s keys together, …`; `mcp.test.js › limits protocol messages per person too, counting each message in a batch`                                      |
 | A broken live stream can't stop fan-out to others or a removed person's disconnect | `api.test.js › a broken stream doesn’t keep changes from other apps, or keep a removed person connected`                                                                              |
 | No API key over plain http to another machine without `--insecure`                 | `cli.test.js › treats only plain http to another machine as insecure` and the happy path; `mcp.test.js › won’t send the key over plain http …`                                        |
+| Bots: Owner/Admin manage them and their keys; Members, Guests and keys get 403     | `bots.test.js › managing bots` (create, rename, re-scope, remove, keys with password; 403s; sync can't edit or mint a bot)                                                            |
+| Bots: a bot key gets the bot's role and projects, and its own rate limit           | `bots.test.js › a bot key acts with the bot’s role and projects only` (Guest bot, Member bot, Can view / Can comment, private projects, separate budget)                              |
+| Bots: work by a bot key is by the bot; `me.kind`                                   | `bots.test.js › attribution`; `e2e/10-bots.spec.js` (bot made in Settings, its key used, "Release Bot" + Bot badge in the open app's Activity and comments)                           |
+| Bots never sign in, get links, email, notifications or push                        | `bots.test.js › bots never sign in or get mail`                                                                                                                                       |
+| Bots outlive the admin who made the key; removing a bot revokes its keys           | `bots.test.js › lifecycle`                                                                                                                                                            |
+| MCP and CLI work unchanged with a bot key                                          | `mcp.test.js › works unchanged with a bot’s key …`; `cli.test.js › works unchanged with a bot’s key, as the bot`                                                                      |
 
 ## Try it by hand
 

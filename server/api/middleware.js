@@ -51,7 +51,9 @@ export const bearer =
     const { db, config } = c.var;
     const a = readKey(db, m[1]);
     if (a.error) return fail(c, 401, KEY_ERRORS[a.error], a.error);
-    if (config.requireVerification && !a.user.email_verified_at) return fail(c, 403, 'Verify your email to use the API.', 'unverified');
+    // A bot has no email to verify (see bots.js); its keys were made by a signed-in admin.
+    if (config.requireVerification && a.user.kind !== 'bot' && !a.user.email_verified_at)
+      return fail(c, 403, 'Verify your email to use the API.', 'unverified');
     const r = limit.take(`api:${a.user.id}`, config.apiRateLimit, MIN);
     c.header('RateLimit-Limit', String(r.limit));
     c.header('RateLimit-Remaining', String(Math.max(0, r.remaining)));

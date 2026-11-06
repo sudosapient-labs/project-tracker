@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { account, apiKey, setup } from '../../../test/server/helpers.js';
+import { account, apiKey, bot, setup } from '../../../test/server/helpers.js';
 import { parseDue, run } from '../src/cli.js';
 import { plainHttpRemote } from '@sudosapient/client';
 
@@ -149,5 +149,35 @@ describe('against a workspace', () => {
     expect((await c('logout')).code).toBe(0);
     expect(fs.existsSync(file)).toBe(false);
     expect((await c('whoami')).err).toContain('Not logged in');
+  });
+
+  it('works unchanged with a bot’s key, as the bot', async () => {
+    const t = setup();
+    const ada = await account(t);
+    const b = await bot(ada.c, { role: 'Member' });
+    await ada.c.sync([
+      {
+        c: 'projects',
+        id: 'pweb',
+        k: 'put',
+        v: {
+          id: 'pweb',
+          key: 'WEB',
+          name: 'Website',
+          icon: 'globe',
+          color: 'indigo',
+          status: 'active',
+          team: '',
+          lead: null,
+          members: [],
+          desc: '',
+          milestones: [],
+        },
+      },
+    ]);
+    const c = cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: b.token });
+    expect((await c('whoami')).out).toBe('Release Bot (bot) · Member in http://localhost · write key “GitHub Actions”\n');
+    expect((await c('new', 'Release', '1.4', '-p', 'WEB')).out).toMatch(/^Created WEB-201 Release 1\.4/);
+    expect(t.db.get("SELECT json_extract(data, '$.by') by, json_extract(data, '$.via') via FROM activity")).toEqual({ by: b.id, via: 'CLI' });
   });
 });

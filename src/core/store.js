@@ -41,6 +41,7 @@ export const emptyData = () => ({
   recentSearches: [],
   sessions: [],
   apiKeys: [],
+  bots: [],
   tfa: false,
   notifPrefs: {},
 });
@@ -119,6 +120,11 @@ export function save() {
 export const D = () => S.data;
 export const me = () => D().members.find(m => m.id === D().me);
 export const mem = id => D().members.find(m => m.id === id);
+/* Bot members (Settings → API → Bots) act through API keys only: they're shown with a badge and
+   left out of assignee and @mention pickers. */
+export const isBot = m => m?.kind === 'bot';
+/* People work can be handed to, or who can be @mentioned. */
+export const people = () => D().members.filter(m => m.status !== 'deactivated' && !isBot(m));
 /* A person's name; references to someone who has left the workspace read "Former member". */
 export const memName = id => mem(id)?.name || (id ? 'Former member' : '');
 export const proj = id => D().projects.find(p => p.id === id);

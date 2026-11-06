@@ -167,7 +167,8 @@ export async function run(argv, io = {}) {
       case 'whoami': {
         const me = await api().get('/me');
         if (o.json) json(me);
-        else print(`${me.name} <${me.email}> · ${me.role} in ${me.workspace || url} · ${me.key.scope} key “${me.key.name}”`);
+        else
+          print(`${me.name}${me.kind === 'bot' ? ' (bot)' : ` <${me.email}>`} · ${me.role} in ${me.workspace || url} · ${me.key.scope} key “${me.key.name}”`);
         return 0;
       }
       case 'ls': {

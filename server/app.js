@@ -18,6 +18,7 @@ import { dataRoutes } from './routes/data.js';
 import { fileRoutes } from './routes/files.js';
 import { workspaceRoutes } from './routes/workspace.js';
 import { keyRoutes } from './routes/keys.js';
+import { botRoutes } from './routes/bots.js';
 import { docsRoutes } from './routes/docs.js';
 import { v1Routes } from './api/v1.js';
 import { openapi } from './api/openapi.js';
@@ -118,6 +119,7 @@ export function createApp({ db, config, log = console, pushSend }) {
   // MCP tools call /api/v1 in-process, through the same middleware as any other API request.
   api.route('/mcp', mcpRoutes({ limit, request: (url, init) => app.request(url, init) }));
   api.route('/keys', keyRoutes({ limit }));
+  api.route('/bots', botRoutes({ limit }));
   api.route('/auth', authRoutes({ limit }));
   api.route('/files', fileRoutes());
   api.route('/', dataRoutes());

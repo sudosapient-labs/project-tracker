@@ -35,18 +35,23 @@ export const ErrorBody = named(
   'Every error response has this shape.',
 );
 
+const Kind = z
+  .enum(['person', 'bot'])
+  .describe('“bot”: a bot member an Owner or Admin made in Settings → API → Bots. It acts only through its keys and never signs in.');
+
 export const Member = named(
   'Member',
   z.object({
     id: z.string(),
     name: z.string(),
-    email: z.string().describe('Empty for Guests looking at people they share no project with'),
+    email: z.string().describe('Empty for bots, and for Guests looking at people they share no project with'),
     role: z.enum(ROLES),
     title: z.string(),
     team: z.string().describe('Team id, or empty'),
     status: z.enum(['active', 'invited']),
+    kind: Kind,
   }),
-  'A person in the workspace.',
+  'A person or bot in the workspace.',
 );
 
 export const Me = named(
@@ -54,15 +59,16 @@ export const Me = named(
   z.object({
     id: z.string(),
     name: z.string(),
-    email: z.string(),
+    email: z.string().describe('Empty for a bot'),
     role: z.enum(ROLES),
     title: z.string(),
     team: z.string(),
     status: z.enum(['active', 'invited']),
+    kind: Kind,
     workspace: z.string(),
     key: z.object({ id: z.string(), name: z.string(), scope: z.enum(['read', 'write']), expiresAt: ms.nullable() }),
   }),
-  'The person the API key belongs to.',
+  'The person or bot the API key belongs to.',
 );
 
 export const Subtask = z.object({ id: z.string(), title: z.string(), done: z.boolean(), assignee: z.string().nullable() });
