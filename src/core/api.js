@@ -17,13 +17,15 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(method, url, body) {
+/* `keepalive`: the request outlives the page (closing the tab doesn't cancel it). */
+export async function api(method, url, body, { keepalive = false } = {}) {
   const form = typeof FormData !== 'undefined' && body instanceof FormData;
   let res;
   try {
     res = await fetch(url, {
       method,
       credentials: 'same-origin',
+      ...(keepalive ? { keepalive } : {}),
       headers: {
         'x-requested-with': 'sudo-sapient',
         'x-client-id': CLIENT_ID,

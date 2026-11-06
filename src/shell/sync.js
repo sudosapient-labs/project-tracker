@@ -228,15 +228,21 @@ function adopt(c, id, v) {
 }
 
 export async function flush() {
-  if (flushing || !queue.length || !shadow) return;
+  // While what pagehide sent is unanswered (back from the back/forward cache), wait for it.
+  if (flushing || !queue.length || !shadow || exitSends) return;
   flushing = true;
   inflight = queue.splice(0, BATCH);
   syncState();
   let ops = inflight;
+  // A small batch goes with keepalive, so closing the tab doesn't cancel it; pagehide then only
+  // has to send what's still queued behind it, in the keepalive budget that's left.
+  const body = JSON.stringify({ ops });
+  inflightBytes = bytes(body) <= KEEPALIVE_BYTES / 2 ? bytes(body) : 0;
   try {
-    const res = await api('POST', '/api/sync', { ops });
+    const res = await api('POST', '/api/sync', { ops }, { keepalive: inflightBytes > 0 });
     collect(); // move any edits made meanwhile into the queue before adopting server values
     inflight = [];
+    inflightBytes = 0;
     online();
     const errs = [];
     let changed = false;
@@ -250,6 +256,7 @@ export async function flush() {
     if (changed) refresh();
   } catch (e) {
     inflight = [];
+    inflightBytes = 0;
     if (e.status === 401) hooks.signedOut(e);
     else if (e.offline || e.status >= 500 || e.status === 429) {
       queue.unshift(...ops);
@@ -284,7 +291,8 @@ export async function commit({ retry = false } = {}) {
   const errs = (errSink = []);
   try {
     while (shadow && (queue.length || flushing) && !S.ui.offline) {
-      if (flushing) await new Promise(r => setTimeout(r, 25));
+      if (exitSends) await exitSends;
+      else if (flushing) await new Promise(r => setTimeout(r, 25));
       else await flush();
     }
   } finally {
@@ -327,19 +335,25 @@ export async function retryNow() {
   if (!live && shadow) connectLive();
 }
 
-/* Before the tab goes away, send whatever hasn't been confirmed (queued, and the batch on its way,
-   which the browser cancels on unload) with keepalive requests, which outlive the page. Browsers
-   allow about 64 KB of keepalive bodies at once, so as many ops as fit, in order; the rest stay
-   queued (the beforeunload prompt below warns about them). */
+/* Before the tab goes away, send what's still queued with keepalive requests, which outlive the
+   page. Browsers allow about 64 KB of keepalive bodies at once (the batch already on its way, sent
+   with keepalive by flush, counts too), so as many ops as fit, in order. Nothing leaves the queue
+   until the server confirms it: the page may only be going into the back/forward cache, or be
+   offline, and then the queue must still be there when it comes back. Sending an op twice is
+   harmless (a put becomes an update, a delete of something gone does nothing). */
 const KEEPALIVE_BYTES = 60_000;
+const enc = new TextEncoder();
+const bytes = s => enc.encode(s).length;
+let inflightBytes = 0;
+/* The keepalive requests pagehide sent, until they're all answered. */
+let exitSends = null;
 export function keepaliveBatches(ops, budget = KEEPALIVE_BYTES) {
-  const enc = new TextEncoder();
   const out = [];
   let left = budget;
   for (const op of ops) {
     const fresh = !out.length || out.at(-1).length >= BATCH;
     // The op and its comma, plus the {"ops":[]} around a new request.
-    const cost = enc.encode(JSON.stringify(op)).length + 1 + (fresh ? 12 : 0);
+    const cost = bytes(JSON.stringify(op)) + 1 + (fresh ? 12 : 0);
     if (cost > left) break;
     if (fresh) out.push([]);
     out.at(-1).push(op);
@@ -348,22 +362,33 @@ export function keepaliveBatches(ops, budget = KEEPALIVE_BYTES) {
   return out;
 }
 addEventListener('pagehide', () => {
-  if (!shadow) return;
+  if (!shadow || exitSends) return;
   collect(false);
-  const batches = keepaliveBatches([...inflight, ...queue]);
-  const sent = new Set(batches.flat());
-  for (const ops of batches)
-    fetch('/api/sync', {
-      method: 'POST',
-      keepalive: true,
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json', 'x-requested-with': 'sudo-sapient', 'x-client-id': CLIENT_ID },
-      body: JSON.stringify({ ops }),
-    }).catch(() => {});
-  queue = queue.filter(op => !sent.has(op));
+  const batches = keepaliveBatches(queue, KEEPALIVE_BYTES - inflightBytes);
+  if (!batches.length) return;
+  exitSends = Promise.allSettled(
+    batches.map(async ops => {
+      const res = await fetch('/api/sync', {
+        method: 'POST',
+        keepalive: true,
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json', 'x-requested-with': 'sudo-sapient', 'x-client-id': CLIENT_ID },
+        body: JSON.stringify({ ops }),
+      });
+      if (!res.ok) return;
+      // Confirmed: these are saved (the resync on pageshow brings back what the server made of them).
+      const done = new Set(ops);
+      queue = queue.filter(op => !done.has(op));
+    }),
+  ).finally(() => (exitSends = null));
 });
-// Back from the back/forward cache: what was sent on the way out may or may not have arrived.
-addEventListener('pageshow', e => e.persisted && shadow && hooks.resync());
+// Back from the back/forward cache: once what pagehide sent is answered, catch up (that also sends
+// whatever is still queued, then reloads).
+addEventListener('pageshow', async e => {
+  if (!e.persisted || !shadow) return;
+  await exitSends;
+  hooks.resync();
+});
 // Leaving with changes the server hasn't confirmed: ask first (they're sent meanwhile).
 addEventListener('beforeunload', e => {
   if (!shadow) return;

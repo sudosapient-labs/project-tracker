@@ -84,22 +84,69 @@ test('closing the tab mid-save sends the change with keepalive, after asking', a
   await page.locator('[data-a="openTask"]', { hasText: 'Keepalive draft' }).first().click();
   await expect(page.locator('#d-title')).toHaveValue('Keepalive draft');
 
-  // The ordinary save never gets an answer (the browser cancels it on unload); later requests (the
-  // keepalive one sent on the way out) go through.
-  let n = 0;
-  await page.route('**/api/sync', route => (n++ === 0 ? undefined : route.continue()));
+  // The first save is held up on its way; the change made behind it is still queued when the tab
+  // goes. pagehide sends only the queue (the batch on its way went with keepalive itself, and
+  // re-sending it could land after the queue). The event is dispatched here, because Playwright
+  // can't reliably route requests from a page that has really unloaded.
+  let held = null;
+  const sent = [];
+  await page.route('**/api/sync', route => {
+    if (!held) return void (held = route);
+    sent.push(
+      route
+        .request()
+        .postDataJSON()
+        .ops.map(op => op.c + ':' + Object.keys(op.v || {}).join(',')),
+    );
+    return route.continue();
+  });
   await page.fill('#d-title', 'Saved on the way out');
   await page.locator('#d-title').blur();
+  await expect.poll(() => !!held).toBe(true);
+  await page.fill('#d-sub', 'Queued behind it');
+  await page.press('#d-sub', 'Enter');
   await expect(page.locator('html')).toHaveAttribute('data-sync', 'saving');
+  await page.evaluate(() => dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })));
+  await expect.poll(async () => (await serverTask(page, 'tkeep1'))?.subtasks?.map(x => x.title)).toEqual(['Queued behind it']);
+  // One keepalive request, with the queued change and not the batch still on its way.
+  expect(sent).toHaveLength(1);
+  expect(sent[0]).toContain('tasks:subtasks,updated');
+  expect(sent[0]).not.toContain('tasks:title,updated');
 
+  // Really leaving while the first save is still unanswered asks first.
   const asked = [];
   page.on('dialog', d => {
     asked.push(d.type());
     d.accept();
   });
   await page.goto('about:blank');
-  await expect.poll(async () => (await serverTask(page, 'tkeep1'))?.title, { timeout: 15_000 }).toBe('Saved on the way out');
   expect(asked).toContain('beforeunload');
+  await held.continue().catch(() => {});
+});
+
+test('changes queued offline survive the page going into the back/forward cache', async ({ page }) => {
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  const r = await page.request.post('/api/sync', { headers, data: { ops: [project('pbf', 'BF'), task('tbf1', 'pbf', 'BF-201', 'Before the trip')] } });
+  expect(r.ok()).toBe(true);
+  await page.goto('/#project/bf/list');
+  await page.locator('[data-a="openTask"]', { hasText: 'Before the trip' }).first().click();
+
+  // Offline: the edit waits in the queue.
+  await page.route('**/api/sync', route => route.abort('internetdisconnected'));
+  await page.fill('#d-title', 'Made offline, kept through Back');
+  await page.locator('#d-title').blur();
+  await expect(page.locator('html')).toHaveAttribute('data-sync', 'offline');
+
+  // The tab goes into the back/forward cache (Playwright's Chromium has the cache turned off, so
+  // the browser's own events are dispatched): the keepalive send fails, offline, so the edit stays.
+  await page.evaluate(() => dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  await page.waitForTimeout(300);
+  // Back, and online again: the queued edit is saved, not overwritten by the reload.
+  await page.unroute('**/api/sync');
+  await page.evaluate(() => dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await expect.poll(async () => (await serverTask(page, 'tbf1'))?.title, { timeout: 20_000 }).toBe('Made offline, kept through Back');
+  await expect(page.locator('#d-title')).toHaveValue('Made offline, kept through Back');
 });
 
 test('signing out leaves nothing of the person in the tab', async ({ page }) => {
