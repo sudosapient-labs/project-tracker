@@ -182,8 +182,12 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   fallback, `noscript`, `noembed`, `noframes`) is dropped instead. As a backstop that doesn't rely on
   any of that, one request may have at most 1,000,000 characters of descriptions checked and
   sanitised and spend at most 500 ms doing it; the rest of a batch is refused (`413`, which the app
-  retries in a later request). Any synced value over 256 KB is refused before rules look at it. A
-  description stored before these limits may still be copied as it is (into a task's next repeat).
+  retries in a later request). Any synced value over 256 KB is refused before rules look at it. One
+  exception, so tasks stored before the nesting limit keep working (e.g. their next repeat copies
+  the description): a description nested too deeply is still accepted, as it is and unsanitised,
+  when it exactly equals one already stored on a task in the same project. That holds for any create
+  or update in that project, by anyone who may edit there, through the app or the API; such markup
+  was sanitised when it was first stored, and the length limit still applies.
 - Task keys and each project's key counter are the server's: a client can't set the counter or edit
   a key, and an optimistic key is only kept if it doesn't skip ahead of the counter, so nobody can
   run a project out of task numbers.
