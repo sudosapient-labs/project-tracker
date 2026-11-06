@@ -76,8 +76,11 @@ deploys it like any other change.
 ## npm packages
 
 `packages/client`, `packages/cli` and `packages/mcp` are released on their own and published to npm as
-`@sudosapient/client`, `@sudosapient/cli` and `@sudosapient/mcp` (the `sudosapient` npm org, free plan,
-public packages).
+`@sudosapient/client`, `@sudosapient/cli` and `@sudosapient/mcp`: **private** packages in the `sudosapient`
+npm org. They are closed source (`UNLICENSED`, no license file), so they're published with
+`access: restricted` and only members of the org can install them. npm's free org plan only allows
+public packages, so publishing needs a paid org plan; on the free plan `npm publish` fails rather than
+make the code public. Never publish them with `--access public`: npm packages ship their source.
 
 - release-please treats each one as a component with its own version, `CHANGELOG.md` and tag
   (`client-vX.Y.Z`, `cli-vX.Y.Z`, `mcp-vX.Y.Z`). A commit counts for a package when it touches files in
@@ -88,8 +91,8 @@ public packages).
   with `pnpm pack` (which turns `workspace:*` into the real version) and runs `npm publish`, `client`
   first. A version that's already on npm is skipped, so re-running the job is safe.
 - It authenticates with [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC):
-  there is no npm token in GitHub, and npm adds a provenance attestation to each version. npm checks
-  that `repository.url` in the package's `package.json` is this repository, so keep it.
+  there is no npm token in GitHub. npm checks that `repository.url` in the package's `package.json` is
+  this repository, so keep it.
 - The job runs in the `npm` GitHub environment. Add required reviewers there (Settings → Environments
   → npm) if a person should approve each publish.
 
@@ -106,7 +109,7 @@ is published by hand, once:
 
    ```bash
    pnpm install --frozen-lockfile
-   for p in client cli mcp; do (cd packages/$p && pnpm publish --access public --no-git-checks); done
+   for p in client cli mcp; do (cd packages/$p && pnpm publish --access restricted --no-git-checks); done
    ```
 
 3. On npmjs.com, for each of the three packages: **Settings → Trusted publishing → GitHub Actions**, with

@@ -90,10 +90,10 @@ jobs:
               echo "::notice::$name@$version is already on npm, skipping"
               continue
             fi
-            # pnpm pack turns workspace:* into the real version; npm publish then signs in with OIDC
-            # and attaches provenance on its own.
+            # pnpm pack turns workspace:* into the real version; npm publish then signs in with OIDC.
+            # The packages are closed source (UNLICENSED): restricted, so only org members can install them.
             rm -f "$out"/*.tgz
             (cd "$dir" && pnpm pack --pack-destination "$out")
-            npm publish "$out"/*.tgz --access public
+            npm publish "$out"/*.tgz --access restricted
             echo "::notice::published $name@$version"
           done
