@@ -2,7 +2,7 @@
 
 The small fetch client that [`@sudosapient/cli`](../cli) and [`@sudosapient/mcp`](../mcp) use to talk
 to a Sudo Sapient workspace's public API (`/api/v1`), plus the config file they share. It has no
-dependencies and runs on any `fetch` (Node 20 or later). It is a library, not a command; you get it
+dependencies and runs on any `fetch` (Node 22 or later). It is a library, not a command; you get it
 with the CLI or the MCP server, or on its own:
 
 ```bash

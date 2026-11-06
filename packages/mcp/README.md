@@ -10,7 +10,7 @@ Two ways to connect:
 
 - **Remote (HTTP):** the app hosts it at `https://<your workspace>/api/mcp`. Send the key as
   `Authorization: Bearer ssk_…`.
-- **Local (stdio):** run `npx -y @sudosapient/mcp` (Node 20 or later), which talks to your
+- **Local (stdio):** run `npx -y @sudosapient/mcp` (Node 22 or later), which talks to your
   workspace's `/api/v1`; `npm install -g @sudosapient/mcp` gives you the `sudo-mcp` command. From a
   checkout of this repo: `pnpm install`, then `node packages/mcp/bin/sudo-mcp.js`.
 

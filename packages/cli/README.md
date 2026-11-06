@@ -6,7 +6,7 @@ what you can do in the app, and its changes show in Activity as "you via CLI".
 
 ## Install
 
-With Node 20 or later, run it straight from npm, or install it to get the `sudo-cli` command:
+With Node 22 or later, run it straight from npm, or install it to get the `sudo-cli` command:
 
 ```bash
 npx @sudosapient/cli login --url https://sudo.example.com
