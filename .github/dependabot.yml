@@ -21,3 +21,11 @@ updates:
     groups:
       actions:
         patterns: ['*']
+
+  # The Dockerfile's base image, pinned by digest.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: 'chore(deps)'

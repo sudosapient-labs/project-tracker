@@ -147,9 +147,12 @@ the publish step sees the version is already on npm and skips it.
 ## Dependencies
 
 Dependabot (`.github/dependabot.yml`) opens a weekly PR for npm (minor and patch updates grouped;
-majors come one by one) and one for GitHub Actions. Their titles are already Conventional Commits
-(`chore(deps)`, `ci(deps)`).
+majors come one by one), one for GitHub Actions and one for the Dockerfile's base image. Their titles
+are already Conventional Commits (`chore(deps)`, `ci(deps)`).
 
 Every third-party action, in the workflows and in `.github/actions/setup`, is pinned to a full commit SHA
 with the version in a comment (`uses: actions/checkout@<sha> # v4.4.0`), so a moved tag can't change
 what runs. Dependabot updates the SHA and the comment together; keep the comment when pinning by hand.
+The Dockerfile's base image is pinned the same way, by the digest of its multi-arch index
+(`FROM node:24-slim@sha256:…`); to move it by hand, take the digest from
+`docker buildx imagetools inspect node:24-slim` and update both `FROM` lines.
