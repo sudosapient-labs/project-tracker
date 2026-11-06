@@ -198,3 +198,23 @@ describe('editing a comment', () => {
     expect(t.repo.get('comments', 'c1')).toMatchObject({ text: 'edited', at: stored.at, by: adaId, re: { '👍': ['mbob', adaId] } });
   });
 });
+
+describe('favourites', () => {
+  it('answers a favourite of a record someone can’t open like a missing record, and stores nothing', async () => {
+    const { t, ada, bob } = await team();
+    await ada.sync([put('projects', project('p2', { key: 'SEC', private: true })), put('tasks', task('t2', 'p2', { key: 'SEC-201' }))]);
+    const missing = (await bob.sync([patch('tasks', 'nope', { fav: true })])).body.results[0];
+    for (const [c, id] of [
+      ['tasks', 't2'],
+      ['projects', 'p2'],
+    ]) {
+      const r = (await bob.sync([patch(c, id, { fav: true })])).body.results[0];
+      expect(r).toMatchObject({ ok: false, status: 404, error: missing.error });
+    }
+    expect(t.db.get("SELECT COUNT(*) n FROM favorites WHERE user_id = 'mbob'").n).toBe(0);
+    // Once they can open it, it works.
+    await ada.sync([patch('projects', 'p2', { private: false })]);
+    expect(oks(await bob.sync([patch('tasks', 't2', { fav: true })]))).toEqual([true]);
+    expect(t.db.get("SELECT COUNT(*) n FROM favorites WHERE user_id = 'mbob'").n).toBe(1);
+  });
+});

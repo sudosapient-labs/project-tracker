@@ -189,7 +189,11 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
       if (c === 'notifs') ctx.changes.push({ c, id, v: after, uid: ctx.uid });
       else ctx.emit(c, after, before && scopeOf(c, before) !== scopeOf(c, after) ? scopeOf(c, before) : null);
     }
-    if ('fav' in personal && (c === 'projects' || c === 'tasks')) {
+    // A favourite needs a record this person can open: for one they can't, a change of only the
+    // favourite answers like a missing record, and none is stored.
+    const favOk = 'fav' in personal && canSee(c === 'projects' ? after : repo.get('projects', after.project), ctx.me);
+    if ('fav' in personal && !favOk && !changed) throw new Reject('This item was deleted.', 404);
+    if (favOk && (c === 'projects' || c === 'tasks')) {
       const on = !!personal.fav;
       if (favs[c].has(id) !== on) {
         repo.setFavorite(ctx.uid, c, id, on);
