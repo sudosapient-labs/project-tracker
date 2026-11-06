@@ -39,6 +39,8 @@ const restoring = new Map();
 /* What the server had of a record when this tab queued its deletion: `collection:id` → its shadow
    fields (see collect: an Undo of the delete restores the server's copy). */
 const gone = new Map();
+/* Records someone else changed while a change of ours to them was on its way (see settle). */
+const crossed = new Set();
 const hooks = { signedOut: () => {}, resync: () => {} };
 export const onSync = h => Object.assign(hooks, h);
 
@@ -59,25 +61,37 @@ export function prime(data) {
   (data.projects || []).forEach(p => fill('projects', p));
   for (const c of COLLS) shadow[c] = new Map((data[c] || []).map(e => [e.id, fields(e)]));
   for (const d of DOCS) shadow.docs[d] = JSON.stringify(data[d] ?? null);
-  // Changes the server hasn't confirmed yet stay queued and visible: lay them over the fresh data
-  // (and its shadow, as already sent), so reloading while some are still on their way loses none.
-  // Before them, what the server confirmed while this data was loading (it may predate those).
-  for (const op of [...(confirmed || []).filter(Boolean), ...inflight, ...queue]) replay(data, op);
-  confirmed = null;
+  // First what the server did while this data was loading, in the order it reached this tab: our
+  // changes it confirmed and other people's from the live stream. The data may have been read
+  // before or after any of them; laid over it in that order, each record ends at its latest.
+  for (const op of landed || []) replay(data, op, true);
+  landed = null;
+  // Then the changes the server hasn't confirmed yet: they stay queued and visible (and in the
+  // shadow, as already sent), so reloading while some are still on their way loses none.
+  for (const op of [...inflight, ...queue]) replay(data, op);
   stateSent = JSON.stringify(stateBody());
   syncState();
 }
-/* While a reload's bootstrap is loading, the changes the server confirms meanwhile, as it saved
-   them: the bootstrap may have been read before they were, so prime lays them over it. */
-let confirmed = null;
+/* While a reload's bootstrap is loading, what the server saved meanwhile (as ops), for prime. */
+let landed = null;
 /* Call before fetching the bootstrap a reload will prime with; `false` stops (the reload failed). */
 export function loadingFresh(on = true) {
-  confirmed = on && shadow ? [] : null;
+  landed = on && shadow ? [] : null;
 }
 const asSaved = ({ c, id }, v) =>
   DOCS.includes(c) ? (v == null ? null : { c, k: 'put', v }) : v == null ? { c, id, k: 'del' } : { c, id, k: 'put', v: fill(c, clone(v)) };
-/* Apply a queued operation to freshly loaded `data` and the shadow. */
-function replay(data, op) {
+/* The server's state of a record (or doc) reached this tab: note it for a bootstrap still loading. */
+function land(c, id, v) {
+  if (!landed || !(COLLS.includes(c) || DOCS.includes(c))) return;
+  if (c === 'ws' && v) {
+    const { onboarded, ...rest } = v;
+    v = rest;
+  }
+  const op = asSaved({ c, id }, v);
+  if (op) landed.push(op);
+}
+/* Apply an op to freshly loaded `data` and the shadow. `saved`: the server's own state of the record. */
+function replay(data, op, saved = false) {
   if (DOCS.includes(op.c)) {
     data[op.c] = clone(op.v);
     shadow.docs[op.c] = JSON.stringify(data[op.c] ?? null);
@@ -100,15 +114,23 @@ function replay(data, op) {
     Object.assign(arr[i], clone(op.v));
     shadow[op.c].set(op.id, fields(arr[i]));
   }
+  // A project that came or went keeps the sidebar order in step, as adopt does.
+  if (saved && op.c === 'projects' && Array.isArray(data.projOrder)) {
+    const has = data.projOrder.includes(op.id);
+    if (op.k === 'del' && has) data.projOrder = data.projOrder.filter(x => x !== op.id);
+    else if (op.k === 'put' && !has) data.projOrder.unshift(op.id);
+    shadow.docs.projOrder = JSON.stringify(data.projOrder);
+  }
 }
 export function stopSync() {
   shadow = null;
   queue = [];
   inflight = [];
-  confirmed = null;
+  landed = null;
   resyncWhenSaved = false;
   restoring.clear();
   gone.clear();
+  crossed.clear();
   clearTimeout(retryT);
   disconnectLive();
 }
@@ -210,14 +232,15 @@ const kind = v => {
    different records never changes. Never folded into: an Undo restore (the server rebuilds it from
    its own copy and ignores its value, so a later edit must travel as its own patch), an op pagehide
    already handed to a keepalive request (it is dropped when that request is answered, which would
-   take the later edit with it), and a different kind of change: a description and other fields
-   go apart (a refused op is rolled back whole), and a description isn't folded into a new record
-   (refused, it would take the record with it). */
+   take the later edit with it), a re-read (see settle), and a different kind of change: a
+   description and other fields go apart (a refused op is rolled back whole), and a description
+   isn't folded into a new record (refused, it would take the record with it). */
 function enqueue(op) {
   const tail = queue.at(-1);
   const foldable =
     tail &&
     !tail.restore &&
+    !tail.read &&
     !keptAlive.has(tail) &&
     op.k === 'patch' &&
     tail.c === op.c &&
@@ -256,7 +279,7 @@ function takeBatch() {
 function pendingKeys(c, id) {
   let out = null;
   for (const op of [...inflight, ...queue]) {
-    if (op.c !== c || op.id !== id) continue;
+    if (op.c !== c || op.id !== id || op.read) continue;
     if (op.k === 'del' || !op.v || typeof op.v !== 'object' || Array.isArray(op.v)) return ALL;
     out ||= new Set();
     Object.keys(op.v).forEach(k => out.add(k));
@@ -335,10 +358,19 @@ function settle(ops, results) {
   results.forEach((r, i) => {
     const op = ops[i];
     if (!op || (!r.ok && r.retry)) return;
-    if (!r.ok) errs.push(r.error);
-    else if (confirmed) confirmed.push(asSaved(op, r.v));
+    if (!r.ok && !op.read) errs.push(r.error);
+    land(op.c, op.id, r.v);
     changed = adopt(op.c, op.id, r.v) || changed;
   });
+  // Someone else changed one of these records while ours was on its way. The server's answer to
+  // ours is the record as our change left it, which may be from before theirs (the live stream
+  // can bring a later change before our answer), so ask for it once more: an empty patch changes
+  // nothing and answers with the record as it is now. (Not needed while a later change of ours to
+  // it is still to be sent: its answer comes after theirs.)
+  for (const op of ops) {
+    if (!crossed.delete(keyOf(op.c, op.id)) || op.k === 'del' || DOCS.includes(op.c) || pendingKeys(op.c, op.id)) continue;
+    if (D()[op.c]?.some(e => e.id === op.id)) enqueue({ c: op.c, id: op.id, k: 'patch', v: {}, read: true });
+  }
   if (errs.length) {
     if (errSinks.size) for (const sink of errSinks) sink.push(...errs);
     else toast(errs[0] + (errs.length > 1 ? ` (and ${errs.length - 1} more)` : ''), { kind: 'err', ms: 6000 });
@@ -602,8 +634,11 @@ export function disconnectLive() {
 export function applyRemote(list) {
   if (!shadow) return;
   collect();
+  const sending = [...inflight, ...queue.filter(op => keptAlive.has(op))];
   let changed = false;
   for (const ch of list) {
+    land(ch.c, ch.id, ch.v);
+    if (sending.some(op => op.c === ch.c && op.id === ch.id)) crossed.add(keyOf(ch.c, ch.id));
     changed = adopt(ch.c, ch.id, ch.v) || changed;
     if (ch.c === 'projects' && ch.v == null) {
       D().projOrder = D().projOrder.filter(x => x !== ch.id);
