@@ -84,7 +84,17 @@ const views = config => ({
     openTasks: counts?.get(p.id)?.open || 0,
     doneTasks: counts?.get(p.id)?.done || 0,
   }),
-  member: m => ({ id: m.id, name: m.name, email: m.email || '', role: m.role, title: m.title || '', team: m.team || '', status: m.status }),
+  // A bot's address is a placeholder nobody can mail (api/bots.js), so it isn't shown.
+  member: m => ({
+    id: m.id,
+    name: m.name,
+    email: m.kind === 'bot' ? '' : m.email || '',
+    role: m.role,
+    title: m.title || '',
+    team: m.team || '',
+    status: m.status,
+    kind: m.kind === 'bot' ? 'bot' : 'person',
+  }),
   comment: c => ({ id: c.id, task: c.task, author: c.by, text: c.text, createdAt: c.at }),
   activity: a => ({ id: a.id, by: a.by, verb: a.verb, extra: a.extra || '', via: a.via ?? null, task: a.task ?? null, at: a.at }),
 });
@@ -249,13 +259,13 @@ export function v1Routes({ limit }) {
   route('get', '/me', {
     id: 'getMe',
     tag: 'Me',
-    summary: 'The person this key acts as',
+    summary: 'The person or bot this key acts as',
     ok: ok(S.Me),
     run: x => {
       const { key, user } = x.c.var.auth;
       return {
         ...x.V.member(x.me),
-        email: user.email,
+        email: user.kind === 'bot' ? '' : user.email,
         workspace: x.repo.workspace()?.name || '',
         key: { id: key.id, name: key.name, scope: key.scope, expiresAt: key.expires_at },
       };

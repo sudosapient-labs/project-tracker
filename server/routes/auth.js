@@ -44,6 +44,8 @@ const TFA_LOCK_MS = 15 * MIN;
 /* Single-use tokens. Issuing a new verify/reset token retires older unused ones for that email, and
    a new email-change token retires the person's earlier ones. */
 export function issueToken(db, config, kind, emailAddr, userId = null) {
+  // Bots can't sign in, so nothing may mint them a sign-in, reset, verify, invite or email link.
+  if (db.get("SELECT 1 FROM users WHERE kind = 'bot' AND (id = ? OR email = ?)", userId, emailAddr)) throw new Error('Bots can’t be sent sign-in links.');
   const raw = token();
   const now = Date.now();
   if (kind === 'verify' || kind === 'reset')
@@ -118,6 +120,10 @@ export const disableTwoFactor = (db, userId) =>
     "UPDATE users SET totp_enabled = 0, totp_secret = NULL, recovery_codes = '[]', totp_last_step = NULL, tfa_failed = 0, tfa_failed_since = NULL, tfa_locked_until = NULL WHERE id = ?",
     userId,
   );
+
+/* The person signing in, resetting or verifying with `em`. Bots (users.kind = 'bot', see
+   api/bots.js) are never returned: they have no password and can't sign in or recover one. */
+const personByEmail = (db, em) => db.get("SELECT * FROM users WHERE email = ? AND kind = 'person'", em);
 
 /* Whether another account or member already has `em`. */
 const emailTaken = ({ db }, em, exceptId) =>
@@ -254,7 +260,7 @@ export function authRoutes({ limit }) {
     if (!t) return c.json({ error: 'This verification link has expired or was already used. Request a new one.' }, 400);
     db.tx(() => {
       useToken(db, t);
-      db.run('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE email = ?', Date.now(), t.email);
+      db.run("UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE email = ? AND kind = 'person'", Date.now(), t.email);
     });
     return c.json(sessionState(c));
   });
@@ -281,7 +287,7 @@ export function authRoutes({ limit }) {
     const b = await parseBody(c, z.object({ email, password: z.string().min(1, 'Enter your password').max(200), remember: z.boolean().optional() }));
     if (b.error) return b.error;
     const { db } = c.var;
-    const user = db.get('SELECT * FROM users WHERE email = ?', b.data.email);
+    const user = personByEmail(db, b.data.email);
     // Guessing one account's password from many addresses still hits the per-email limit. A browser
     // that signed in to this account before (device cookie) only answers for its own failures, so
     // failing on purpose elsewhere can't lock the owner out; once it uses those up it's a stranger.
@@ -356,8 +362,8 @@ export function authRoutes({ limit }) {
     const b = await parseBody(c, z.object({ email }));
     if (b.error) return b.error;
     const { db, config, mailer } = c.var;
-    const user = db.get('SELECT * FROM users WHERE email = ?', b.data.email);
-    // Same response whether or not the account exists.
+    const user = personByEmail(db, b.data.email);
+    // Same response whether or not the account exists (or is a bot, which has no password to reset).
     if (!user) return c.json({ ok: true });
     const link = issueToken(db, config, 'reset', user.email, user.id);
     mailer.queue({
@@ -385,7 +391,7 @@ export function authRoutes({ limit }) {
     const t = findToken(db, 'reset', b.data.token);
     if (!t) return c.json({ error: 'This reset link has expired or was already used. Request a new one.' }, 400);
     const hash = await hashPassword(b.data.password);
-    const user = db.get('SELECT id FROM users WHERE email = ?', t.email);
+    const user = personByEmail(db, t.email);
     if (!user) return c.json({ error: 'This reset link has expired or was already used. Request a new one.' }, 400);
     const ids = db.all('SELECT id FROM sessions WHERE user_id = ?', user.id).map(s => s.id);
     db.tx(() => {
@@ -395,8 +401,9 @@ export function authRoutes({ limit }) {
       db.run('DELETE FROM sessions WHERE user_id = ?', user.id);
       retireEmailChanges(db, user.id);
       forgetDevices(db, user.id);
-      // Recovering the account revokes its API keys: whoever had control may have made one.
-      db.run('DELETE FROM api_keys WHERE user_id = ?', user.id);
+      // Recovering the account revokes its API keys: whoever had control may have made one, for
+      // themselves or (as an admin) for a bot.
+      db.run('DELETE FROM api_keys WHERE user_id = ? OR created_by = ?', user.id, user.id);
     });
     ids.forEach(id => engine.disconnectSession(id));
     clearSessionCookie(c);
