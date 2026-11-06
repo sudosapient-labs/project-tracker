@@ -406,11 +406,8 @@ export async function flush() {
    changes are reported as usual. `retry`: try even if the last attempt left us offline (the live
    stream just reconnected, so the server may be back). */
 export async function settled({ retry = false } = {}) {
-  if (retry && shadow && S.ui.offline) {
-    S.ui.offline = false;
-    clearTimeout(retryT);
-  }
-  collect();
+  if (retry && shadow && S.ui.offline) await retryNow();
+  else collect();
   while (shadow && (queue.length || flushing) && !S.ui.offline) {
     if (exitSends) await exitSends;
     else if (flushing) await new Promise(r => setTimeout(r, 25));
@@ -433,11 +430,14 @@ export async function commit(opts) {
   return errs;
 }
 
+/* Going offline or back only re-renders when that doesn't disturb someone typing (the backoff
+   below retries every few seconds); <html data-sync> shows the state meanwhile. */
 function offline() {
   if (!S.ui.offline) {
     S.ui.offline = true;
-    render();
+    refresh();
   }
+  document.querySelector('[data-a="retryOnline"].is-loading')?.classList.remove('is-loading');
   syncState();
   clearTimeout(retryT);
   retryT = setTimeout(retryNow, retryMs);
@@ -448,13 +448,15 @@ function online() {
   clearTimeout(retryT);
   if (S.ui.offline) {
     S.ui.offline = false;
-    render();
+    refresh();
     toast('Back online. All changes are synced.');
   }
 }
+/* Try the server again (the backoff timer, the browser coming online, "Try again"). The tab stays
+   offline until it answers. */
 export async function retryNow() {
   if (!shadow) return;
-  S.ui.offline = false;
+  clearTimeout(retryT);
   if (queue.length) await flush();
   else
     try {
@@ -614,12 +616,23 @@ export function applyRemote(list) {
 
 /* Re-render for changes that came from elsewhere, without disturbing someone mid-edit or mid-drag. */
 let refreshT = null;
-function refresh() {
+let blurWait = null;
+export function refresh() {
   clearTimeout(refreshT);
   const a = document.activeElement;
   const editing = a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) && a.type !== 'checkbox';
   if (editing) {
-    a.addEventListener('blur', () => setTimeout(refresh, 0), { once: true });
+    if (blurWait !== a) {
+      blurWait = a;
+      a.addEventListener(
+        'blur',
+        () => {
+          blurWait = null;
+          setTimeout(refresh, 0);
+        },
+        { once: true },
+      );
+    }
     return;
   }
   if ($('.dragging') || S.ui.pop?.type === 'date') {

@@ -9,7 +9,7 @@ import { D, DEFAULT_PREFS, PREFS_KEY, S, allTasks, canSee, emptyData, me, proj }
 import { ApiError, get, post } from '../core/api.js';
 import { toast } from '../ui/toast.js';
 import { hashFor, render, routeFromHash } from '../shell/render.js';
-import { collect, commit, connectLive, flush, loadingFresh, onSync, pendingCount, prime, reloadWhenSaved, settled, stopSync } from '../shell/sync.js';
+import { collect, commit, connectLive, flush, loadingFresh, onSync, pendingCount, prime, refresh, reloadWhenSaved, settled, stopSync } from '../shell/sync.js';
 import { A, EMAIL_RE } from './actions.js';
 import { disablePushHere, refreshPush } from './push.js';
 
@@ -48,7 +48,8 @@ export function reload() {
         S.ui.route = 'projects';
         S.ui.params = {};
       }
-      render();
+      // Not under someone's caret: shown once they leave the field they're typing in.
+      refresh();
     } catch (e) {
       if (e.status === 401 || e.status === 403) signedOut();
     } finally {
