@@ -8,7 +8,8 @@ import { parseArgs } from 'node:util';
 import { ApiError, createClient, plainHttpRemote, seg } from '@sudosapient/client';
 import { clearConfig, configPath, loadConfig, saveConfig } from '@sudosapient/client/config';
 
-export const VERSION = '0.1.0';
+// Kept equal to package.json by release-please (extra-files in release-please-config.json).
+export const VERSION = '0.1.0'; // x-release-please-version
 const STATUSES = ['backlog', 'todo', 'progress', 'review', 'done'];
 const PRIORITIES = ['urgent', 'high', 'medium', 'low', 'none'];
 

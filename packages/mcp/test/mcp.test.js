@@ -399,3 +399,15 @@ describe('context budget', () => {
     expect(clientLabel(undefined)).toBe('MCP');
   });
 });
+
+describe('version', () => {
+  it('matches package.json (release-please bumps both)', async () => {
+    const fs = await import('node:fs');
+    const { VERSION } = await import('../src/protocol.js');
+    const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    expect(VERSION).toBe(pkg.version);
+    const config = JSON.parse(fs.readFileSync(new URL('../../../release-please-config.json', import.meta.url), 'utf8'));
+    expect(config.packages['packages/mcp']['extra-files']).toContain('src/protocol.js');
+    expect(fs.readFileSync(new URL('../src/protocol.js', import.meta.url), 'utf8')).toMatch(/VERSION = '[^']+'; \/\/ x-release-please-version/);
+  });
+});

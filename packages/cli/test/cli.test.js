@@ -181,3 +181,14 @@ describe('against a workspace', () => {
     expect(t.db.get("SELECT json_extract(data, '$.by') by, json_extract(data, '$.via') via FROM activity")).toEqual({ by: b.id, via: 'CLI' });
   });
 });
+
+describe('version', () => {
+  it('matches package.json (release-please bumps both)', async () => {
+    const { VERSION } = await import('../src/cli.js');
+    const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    expect(VERSION).toBe(pkg.version);
+    const config = JSON.parse(fs.readFileSync(new URL('../../../release-please-config.json', import.meta.url), 'utf8'));
+    expect(config.packages['packages/cli']['extra-files']).toContain('src/cli.js');
+    expect(fs.readFileSync(new URL('../src/cli.js', import.meta.url), 'utf8')).toMatch(/VERSION = '[^']+'; \/\/ x-release-please-version/);
+  });
+});

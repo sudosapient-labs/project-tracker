@@ -116,6 +116,11 @@ They stay `UNLICENSED` with no license file: visible, but all rights reserved.
   reviewers, on purpose: a publish waiting for approval keeps the release run open, and Railway's
   "Wait for CI" would wait on it.
 
+The version `sudo-cli --version` and `sudo-mcp --version` print (and the MCP server reports) is a
+constant in `packages/cli/src/cli.js` and `packages/mcp/src/protocol.js`, marked
+`// x-release-please-version`; release-please bumps it with `package.json` (`extra-files`), and a
+test fails if the two differ.
+
 `cli` and `mcp` pin the exact `client` version they were released with. A `client`-only release
 doesn't reach them until they're released again.
 
