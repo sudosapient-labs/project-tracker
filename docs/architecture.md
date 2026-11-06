@@ -15,7 +15,10 @@ proxies `/api` to the API on :8787.
   effects (task keys, cascading deletes, notifications, invite emails) and returns the canonical
   record; a rejected change is rolled back on the client with a toast. Each batch runs in one SQLite
   transaction. `<html data-sync>` shows `saving` / `saved` / `offline`; changes made while offline
-  are retried.
+  are retried. Consecutive changes to the same record are folded into one queued operation (the
+  later value of each field wins), and each request stays within the server's limits (500 ops,
+  4 MB, 900,000 characters of descriptions); an op the server defers because its per-request
+  budget is spent (`retry`) is sent again, and a batch refused as too large (`413`) is split.
 - **Lists and maps merge.** A project's `members` and `perms` and a task's `subtasks`, `labels` and
   `deps` are whole values, so the client sends each one with the value it edited from (`base`) and
   the server applies only that client's additions, removals and changes onto the current value

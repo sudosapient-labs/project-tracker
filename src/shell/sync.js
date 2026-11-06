@@ -112,7 +112,7 @@ export function collect(send = true) {
       if (!prev) {
         // A record Undo put back is restored by the server as it was (rules.js `restore`).
         const restore = restoring.delete(`${c}:${e.id}`);
-        queue.push({ c, id: e.id, k: 'put', v: clone(e), ...(restore ? { restore } : {}) });
+        enqueue({ c, id: e.id, k: 'put', v: clone(e), ...(restore ? { restore } : {}) });
         sh.set(e.id, fields(e));
         continue;
       }
@@ -134,7 +134,7 @@ export function collect(send = true) {
           prev.delete(k);
           n++;
         }
-      if (n) queue.push({ c, id: e.id, k: 'patch', v: set, ...(Object.keys(base).length ? { base } : {}) });
+      if (n) enqueue({ c, id: e.id, k: 'patch', v: set, ...(Object.keys(base).length ? { base } : {}) });
     }
     for (const id of [...sh.keys()])
       if (!seen.has(id)) {
@@ -151,6 +151,39 @@ export function collect(send = true) {
   }
   if (queue.length && !S.ui.offline && send) flush();
   else syncState();
+}
+
+/* Queue an op. A change to the same record as the op at the end of the queue is folded into it
+   (typing saves on every keystroke; offline, that would otherwise queue one full copy of the
+   description per key): the later value of each field wins, and for merged fields the base stays
+   the value before the first unsent edit. Only the tail is folded, so the order of changes to
+   different records never changes. */
+function enqueue(op) {
+  const tail = queue.at(-1);
+  if (!tail || op.k !== 'patch' || tail.c !== op.c || tail.id !== op.id || (tail.k !== 'patch' && tail.k !== 'put')) return void queue.push(op);
+  if (tail.k === 'patch' && op.base) for (const [f, b] of Object.entries(op.base)) if (!(f in tail.v)) (tail.base ||= {})[f] = b;
+  Object.assign(tail.v, op.v);
+}
+
+/* What one flush may carry: the server takes at most 500 ops, 10 MB, and 1,000,000 characters of
+   descriptions a request (more is refused), so batches stay well inside all three. */
+const FLUSH_BYTES = 4_000_000;
+const FLUSH_DESC = 900_000;
+let flushBytes = FLUSH_BYTES;
+function takeBatch() {
+  const out = [];
+  let size = 0;
+  let desc = 0;
+  for (const op of queue) {
+    const n = bytes(JSON.stringify(op));
+    const d = typeof op.v?.desc === 'string' ? op.v.desc.length : 0;
+    if (out.length && (out.length >= BATCH || size + n > flushBytes || desc + d > FLUSH_DESC)) break;
+    out.push(op);
+    size += n;
+    desc += d;
+  }
+  queue.splice(0, out.length);
+  return out;
 }
 
 /* Fields of a record that still have unconfirmed local edits. */
@@ -231,7 +264,7 @@ export async function flush() {
   // While what pagehide sent is unanswered (back from the back/forward cache), wait for it.
   if (flushing || !queue.length || !shadow || exitSends) return;
   flushing = true;
-  inflight = queue.splice(0, BATCH);
+  inflight = takeBatch();
   syncState();
   let ops = inflight;
   // A small batch goes with keepalive, so closing the tab doesn't cancel it; pagehide then only
@@ -246,10 +279,16 @@ export async function flush() {
     online();
     const errs = [];
     let changed = false;
+    const again = [];
     res.results.forEach((r, i) => {
+      // Refused only because the request had done enough (the server's per-request budget): sent
+      // again next, ahead of anything queued since, rather than undone.
+      if (!r.ok && r.retry) return void again.push(ops[i]);
       if (!r.ok) errs.push(r.error);
       changed = adopt(ops[i].c, ops[i].id, r.v) || changed;
     });
+    queue.unshift(...again);
+    flushBytes = FLUSH_BYTES;
     if (res.links?.length) S.ui.devLinks = res.links;
     errSink?.push(...errs);
     if (errs.length && !errSink) toast(errs[0] + (errs.length > 1 ? ` (and ${errs.length - 1} more)` : ''), { kind: 'err', ms: 6000 });
@@ -258,7 +297,11 @@ export async function flush() {
     inflight = [];
     inflightBytes = 0;
     if (e.status === 401) hooks.signedOut(e);
-    else if (e.offline || e.status >= 500 || e.status === 429) {
+    else if (e.status === 413 && ops.length > 1) {
+      // The batch as a whole was too large: send it again in smaller ones.
+      queue.unshift(...ops);
+      flushBytes = Math.max(64_000, Math.floor(flushBytes / 4));
+    } else if (e.offline || e.status >= 500 || e.status === 429) {
       queue.unshift(...ops);
       offline();
     } else {

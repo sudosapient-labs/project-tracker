@@ -149,6 +149,32 @@ test('changes queued offline survive the page going into the back/forward cache'
   await expect(page.locator('#d-title')).toHaveValue('Made offline, kept through Back');
 });
 
+test('typing offline in a long description is saved once back, not cut off by the server’s limits', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  const long = 'a'.repeat(20_000);
+  const t = task('tlong1', 'pbf', 'BF-301', 'Long notes');
+  t.v.desc = `<p>${long}</p>`;
+  expect((await page.request.post('/api/sync', { headers, data: { ops: [project('pbf', 'BF'), t] } })).ok()).toBe(true);
+  await page.goto('/#project/bf/list');
+  await page.locator('[data-a="openTask"]', { hasText: 'Long notes' }).first().click();
+  await page.locator('#d-desc').click();
+
+  // Offline: every keystroke saves (saves are debounced by 150 ms, so type slower than that), each
+  // with a full copy of the 20 KB description: 1.2 MB in all, past what one request may carry.
+  await page.route('**/api/sync', route => route.abort('internetdisconnected'));
+  await page.keyboard.type('b'.repeat(60), { delay: 200 });
+  await expect(page.locator('html')).toHaveAttribute('data-sync', 'offline');
+  await page.unroute('**/api/sync');
+  await expect(page.locator('html')).toHaveAttribute('data-sync', 'saved', { timeout: 40_000 });
+  // All 60 keystrokes arrive (wherever the caret was), none undone.
+  await expect.poll(async () => (await serverTask(page, 'tlong1'))?.desc?.split('b').length - 1).toBe(60);
+  expect((await serverTask(page, 'tlong1')).desc.split('a').length - 1).toBe(long.length);
+  expect(((await page.locator('#d-desc').textContent()) || '').split('b').length - 1).toBe(60);
+  expect(await errors(['offline'])).toEqual([]);
+});
+
 test('signing out leaves nothing of the person in the tab', async ({ page }) => {
   await signIn(page, OWNER);
   await expect(page.locator('.side')).toBeVisible();
