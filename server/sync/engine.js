@@ -193,12 +193,7 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
       if (!failed || e !== failed) throw e;
       return { results, links: [], failed };
     }
-    // The batch is saved; a failure fanning it out (a broken stream, mail) mustn't report it unsaved.
-    try {
-      afterCommit(ctx, clientId);
-    } catch (e) {
-      log.error?.('[sync] after-commit work failed', e);
-    }
+    afterCommit(ctx, clientId);
     return { results, links: ctx.links, failed };
   }
 
@@ -221,16 +216,32 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
     afterCommit(ctx, null);
   }
 
+  /* The batch is saved: a failure fanning it out (a broken stream, mail) mustn't report it unsaved,
+     and each step runs on its own, so one failing can't stop e.g. people just removed from being
+     disconnected. */
   function afterCommit(ctx, clientId) {
-    mailer.drain();
-    publish(ctx.changes, { exceptClient: clientId });
-    for (const uid of ctx.removedUsers) for (const k of conns) if (k.uid === uid) k.close();
-    if (ctx.resync.has('*')) conns.forEach(k => k.send('resync', {}));
-    else for (const k of conns) if (ctx.resync.has(k.uid)) k.send('resync', {});
-    for (const key of ctx.blobGc) {
-      if (db.get('SELECT 1 FROM files WHERE storage_key = ?', key)) continue;
-      fs.rm(path.join(config.uploadDir, key), { force: true }, () => {});
-    }
+    const steps = [
+      () => mailer.drain(),
+      () => publish(ctx.changes, { exceptClient: clientId }),
+      () => {
+        for (const uid of ctx.removedUsers) for (const k of conns) if (k.uid === uid) k.close();
+      },
+      () => {
+        for (const k of conns) if (ctx.resync.has('*') || ctx.resync.has(k.uid)) k.send('resync', {});
+      },
+      () => {
+        for (const key of ctx.blobGc) {
+          if (db.get('SELECT 1 FROM files WHERE storage_key = ?', key)) continue;
+          fs.rm(path.join(config.uploadDir, key), { force: true }, () => {});
+        }
+      },
+    ];
+    for (const step of steps)
+      try {
+        step();
+      } catch (e) {
+        log.error?.('[sync] after-commit work failed', e);
+      }
   }
 
   /* ---------- fan-out ---------- */
@@ -272,7 +283,12 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
         }
         out.push(DOCS.has(ch.c) ? { c: ch.c, v } : { c: ch.c, id: ch.id, v });
       }
-      if (out.length) k.send('changes', out);
+      try {
+        if (out.length) k.send('changes', out);
+      } catch (e) {
+        // One broken stream mustn't keep the changes from everyone after it.
+        log.error?.('[sync] sending changes failed', e);
+      }
     }
   }
 

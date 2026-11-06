@@ -448,6 +448,33 @@ describe('API conventions', () => {
     expect(t.db.get('SELECT COUNT(*) n FROM tasks').n).toBe(1);
   });
 
+  it('a broken stream doesn’t keep changes from other apps, or keep a removed person connected', async () => {
+    const { t, ada, adaId } = await workspace();
+    t.engine.connect(
+      { uid: 'mgus', sessionId: 's1', clientId: 'broken' },
+      () => {
+        throw new Error('stream broke');
+      },
+      () => {},
+    );
+    let bobClosed = false;
+    t.engine.connect(
+      { uid: 'mbob', sessionId: 's2', clientId: 'bob' },
+      () => {},
+      () => (bobClosed = true),
+    );
+    const got = [];
+    t.engine.connect(
+      { uid: adaId, sessionId: 's3', clientId: 'other' },
+      (ev, data) => got.push(ev, data),
+      () => {},
+    );
+    const r = await ada.sync([{ c: 'members', id: 'mbob', k: 'del' }]);
+    expect(r.body.results[0].ok).toBe(true);
+    expect(bobClosed).toBe(true);
+    expect(got[0]).toBe('changes');
+  });
+
   it('limits each key with RateLimit headers and 429 + Retry-After', async () => {
     const { t, ada } = await workspace({ DISABLE_RATE_LIMIT: 'false', API_RATE_LIMIT: '2' });
     const api = await as(t, ada);
