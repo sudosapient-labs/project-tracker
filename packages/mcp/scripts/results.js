@@ -4,7 +4,7 @@
    calls each read tool as the demo Owner, and compares sizes. Usage:
      node packages/mcp/scripts/results.js */
 import { createClient } from '@sudosapient/client';
-import { TOOLS } from '../src/tools.js';
+import { TOOLS, fence } from '../src/tools.js';
 import { TEAMS_SEED } from '../../../src/core/constants.js';
 import { loadConfig } from '../../../server/config.js';
 import { openDb } from '../../../server/db.js';
@@ -53,7 +53,7 @@ const cases = [
 console.log(`Demo workspace: ${d.tasks.length} tasks, ${d.comments.length} comments, ${d.members.length} people\n`);
 console.log('| Tool (args) | Raw REST chars | Tool result chars | Saved |\n|---|---:|---:|---:|');
 for (const [name, args, rest] of cases) {
-  const out = JSON.stringify(await TOOLS[name].run(api, args)).length;
+  const out = fence(await TOOLS[name].run(api, args)).length;
   const r = await rest();
   console.log(`| \`${name}\` ${JSON.stringify(args)} | ${r} | ${out} | ${Math.round((1 - out / r) * 100)}% |`);
 }

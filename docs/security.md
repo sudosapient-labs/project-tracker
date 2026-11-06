@@ -108,6 +108,12 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   many MCP protocol messages to `/api/mcp`, each message in a batch counting once (`RateLimit-*`
   headers, `429` with `Retry-After`). Making more keys doesn't raise the limit. Changes show in Activity
   as "Ada via CLI" (the client's label or the key's name), set by the server; the app can't forge one.
+- MCP tool results carry text other members wrote, which may try to instruct the assistant (prompt
+  injection), so each result is fenced as `<untrusted-user-content>` with every `<` inside escaped
+  (it can't close the fence), and read tools and the server instructions say it's data, not
+  instructions. Tools carry explicit `readOnlyHint` / `destructiveHint` annotations so clients
+  confirm writes; `sudo-mcp --read-only` (or `SUDO_MCP_READ_ONLY=1`) and Read only keys offer
+  reads only. See the [MCP README](../packages/mcp/README.md#untrusted-content).
 - `sudo-cli` strips control characters from workspace text before printing it, so a task title
   can't send escape sequences to someone's terminal.
 

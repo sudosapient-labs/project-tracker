@@ -3,7 +3,8 @@
      sudo-mcp                      stdio (Claude Desktop, Cursor, Claude Code, …)
      sudo-mcp --http [--port 3333] Streamable HTTP on 127.0.0.1; each request brings its own
                                    Authorization: Bearer <key>
-   Options: --url, --key (else SUDO_URL / SUDO_API_KEY, else `sudo-cli login`'s config), --read-only,
+   Options: --url, --key (else SUDO_URL / SUDO_API_KEY, else `sudo-cli login`'s config),
+   --read-only (or SUDO_MCP_READ_ONLY=1: register only the read tools, so write tools are unknown),
    --insecure (allow a plain http:// URL to another machine). */
 import http from 'node:http';
 import { parseArgs } from 'node:util';
@@ -17,7 +18,7 @@ const { values: o } = parseArgs({
   options: {
     url: { type: 'string' },
     key: { type: 'string' },
-    'read-only': { type: 'boolean', default: process.env.SUDO_MCP_READ_ONLY === '1' },
+    'read-only': { type: 'boolean', default: ['1', 'true'].includes(String(process.env.SUDO_MCP_READ_ONLY).toLowerCase()) },
     insecure: { type: 'boolean', default: false },
     http: { type: 'boolean', default: false },
     port: { type: 'string', default: '3333' },
