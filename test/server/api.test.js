@@ -287,6 +287,10 @@ describe('writes behave like the app’s', () => {
     ]);
     expect(r.body.results[0].ok).toBe(true);
     expect(r.body.results[0].v.via).toBeUndefined();
+    // A key name is cleaned like a client label: no control or bidi characters reach Activity.
+    const odd = await as(t, ada, { name: 'Laptop‮\u0007\nevil' });
+    const t2 = (await odd.post('/tasks', { project: 'WEB', title: 'Odd' })).body;
+    expect((await odd.get(`/tasks/${t2.key}/activity`)).body.data[0].via).toBe('Laptopevil');
   });
 
   it('refuses dates that don’t exist, which would otherwise break repeating tasks', async () => {

@@ -25,6 +25,11 @@ export const fail = (c, status, error, code = CODES[status] || 'server_error', f
 
 /* What made a change, for "Ada via Claude" in activity: the client's own label (X-Sudo-Client, sent
    by the CLI and MCP server), else the key's name. Printable text only, kept short. */
+const printable = s =>
+  String(s || '')
+    .replace(/[^\p{L}\p{N} ._()-]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 export function viaLabel(c, key) {
   let raw = c.req.header('x-sudo-client') || '';
   try {
@@ -32,11 +37,7 @@ export function viaLabel(c, key) {
   } catch {
     /* not encoded: use it as sent */
   }
-  raw = raw
-    .replace(/[^\p{L}\p{N} ._()-]/gu, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return (raw || key.name || 'API').slice(0, 40);
+  return (printable(raw) || printable(key.name) || 'API').slice(0, 40);
 }
 
 /* Authorization: Bearer <key>. Sets c.var.auth ({ key, user, member }, the shape the sync engine
