@@ -86,15 +86,31 @@ They stay `UNLICENSED` with no license file: visible, but all rights reserved.
   (`client-vX.Y.Z`, `cli-vX.Y.Z`, `mcp-vX.Y.Z`). A commit counts for a package when it touches files in
   that package's folder; the app (`.`) ignores commits that only touch `packages/`. The same release PR
   carries every component that has something to release.
-- Merging the release PR runs the `publish-npm` job in `release-please.yml`. It runs `lint`,
-  `typecheck` and `test` again (CI runs on the same push in parallel), then packs each released package
-  with `pnpm pack` (which turns `workspace:*` into the real version) and runs `npm publish`, `client`
-  first. A version that's already on npm is skipped, so re-running the job is safe.
+- Merging the release PR runs two jobs in `release-please.yml`, only when a package was released:
+
+  ```
+  release-please ─► pack-npm ─► publish-npm (environment: npm)
+  ```
+
+  | Job           | Permissions                 | Runs                                                                                                                                              |
+  | ------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `pack-npm`    | `contents: read`            | `pnpm install`, then `lint`, `typecheck` and `test` again (CI runs on the same push in parallel), then `pnpm pack` for each released package      |
+  | `publish-npm` | `id-token: write`, no other | downloads those tarballs and runs `npm publish <tarball> --access public --provenance` on each, `client` first; no checkout, no install, no cache |
+
+  `pnpm pack` turns `workspace:*` into the real version (`pack-npm` fails if a tarball still has a
+  `workspace:` dependency), and the tarballs reach `publish-npm` as the `npm-tarballs` artifact. A version
+  that's already on npm is skipped, so re-running `publish-npm` is safe; the artifact is kept for 7 days.
+
+- `publish-npm` is the only job in the repository with `id-token: write`, the permission that lets a job
+  ask GitHub for the OIDC token npm accepts. Keeping it apart means the dev dependencies and tests that
+  `pack-npm` runs can't reach that token.
 - It authenticates with [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC):
   there is no npm token in GitHub. npm checks that `repository.url` in the package's `package.json` is
-  this repository, so keep it.
-- The job runs in the `npm` GitHub environment. Add required reviewers there (Settings → Environments
-  → npm) if a person should approve each publish.
+  this repository, so keep it. Each version gets a provenance attestation linking it to the workflow run.
+- `publish-npm` runs in the `npm` GitHub environment (Settings → Environments → npm), which the trusted
+  publisher on npm also names. Its deployment branch policy allows only `prod`. It has no required
+  reviewers, on purpose: a publish waiting for approval keeps the release run open, and Railway's
+  "Wait for CI" would wait on it.
 
 `cli` and `mcp` pin the exact `client` version they were released with. A `client`-only release
 doesn't reach them until they're released again.
@@ -129,3 +145,7 @@ the publish step sees the version is already on npm and skips it.
 Dependabot (`.github/dependabot.yml`) opens a weekly PR for npm (minor and patch updates grouped;
 majors come one by one) and one for GitHub Actions. Their titles are already Conventional Commits
 (`chore(deps)`, `ci(deps)`).
+
+Every third-party action, in the workflows and in `.github/actions/setup`, is pinned to a full commit SHA
+with the version in a comment (`uses: actions/checkout@<sha> # v4.4.0`), so a moved tag can't change
+what runs. Dependabot updates the SHA and the comment together; keep the comment when pinning by hand.
