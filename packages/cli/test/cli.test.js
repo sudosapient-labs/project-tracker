@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { account, apiKey, bot, setup } from '../../../test/server/helpers.js';
-import { parseDue, run } from '../src/cli.js';
+import { parseDue, run, sameOrigin } from '../src/cli.js';
 import { plainHttpRemote } from '@sudosapient/client';
 
 /* Runs the CLI with captured output and its own config directory. */
@@ -190,5 +190,53 @@ describe('version', () => {
     const config = JSON.parse(fs.readFileSync(new URL('../../../release-please-config.json', import.meta.url), 'utf8'));
     expect(config.packages['packages/cli']['extra-files']).toContain('src/cli.js');
     expect(fs.readFileSync(new URL('../src/cli.js', import.meta.url), 'utf8')).toMatch(/VERSION = '[^']+'; \/\/ x-release-please-version/);
+  });
+});
+
+describe('output the server controls', () => {
+  /* run() against a fake workspace that answers every request with `body` (and `status`). */
+  async function against(body, status = 200, ...argv) {
+    let out = '',
+      err = '';
+    const fetch = async () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    const code = await run(argv, {
+      env: { SUDO_URL: 'https://sudo.example.com', SUDO_API_KEY: 'ssk_x', NO_COLOR: '1', XDG_CONFIG_HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'sudo-cli-')) },
+      stdout: { write: s => (out += s), isTTY: true },
+      stderr: { write: s => (err += s) },
+      fetch,
+    });
+    return { code, out, err };
+  }
+
+  it('opens only links on the workspace’s own origin', async () => {
+    for (const url of [
+      'https://evil.example/#task/WEB-1',
+      'file:///etc/passwd',
+      'http://sudo.example.com/#task/WEB-1',
+      'https://sudo.example.com.evil.example/',
+      '--help',
+      'calc.exe',
+    ]) {
+      for (const flags of [['--print'], ['--json'], []]) {
+        const r = await against({ key: 'WEB-1', url }, 200, 'open', 'WEB-1', ...flags);
+        expect(r.code).toBe(1);
+        expect(r.out).toBe('');
+        expect(r.err).toContain('not opening it');
+      }
+    }
+    expect(sameOrigin('https://sudo.example.com/#task/WEB-1', 'https://sudo.example.com')).toBe(true);
+    expect((await against({ key: 'WEB-1', url: 'https://sudo.example.com/#task/WEB-1' }, 200, 'open', 'WEB-1', '--print')).out).toBe(
+      'https://sudo.example.com/#task/WEB-1\n',
+    );
+  });
+
+  it('strips control characters from error messages', async () => {
+    const evil = { error: 'Nope\x1b]52;c;cm0gLXJmIH4=\x07\x1b[2J', code: 'forbidden\x1b[31m' };
+    const plain = await against(evil, 403, 'whoami');
+    expect(plain.code).toBe(1);
+    expect(plain.err).toBe('sudo-cli: Nope]52;c;cm0gLXJmIH4=[2J\n');
+    const json = await against(evil, 403, 'whoami', '--json');
+    for (const bad of ['\x1b', '\\u001b', '\\u0007']) expect(json.err).not.toContain(bad);
+    expect(JSON.parse(json.err)).toMatchObject({ error: 'Nope]52;c;cm0gLXJmIH4=[2J', code: 'forbidden[31m' });
   });
 });

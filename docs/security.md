@@ -139,8 +139,9 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   instructions. Tools carry explicit `readOnlyHint` / `destructiveHint` annotations so clients
   confirm writes; `sudo-mcp --read-only` (or `SUDO_MCP_READ_ONLY=1`) and Read only keys offer
   reads only. See the [MCP README](../packages/mcp/README.md#untrusted-content).
-- `sudo-cli` strips control characters from workspace text before printing it, so a task title
-  can't send escape sequences to someone's terminal.
+- `sudo-cli` strips control characters from workspace text (error messages included) before
+  printing it, so a task title can't send escape sequences to someone's terminal, and `sudo-cli
+open` only opens (or prints) a link on the workspace's own origin.
 
 ## Bot members
 

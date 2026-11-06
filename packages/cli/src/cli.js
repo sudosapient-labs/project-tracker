@@ -72,6 +72,16 @@ export function parseDue(s, now = new Date()) {
 
 class UsageError extends Error {}
 
+/* `link` is on the same site as the workspace (scheme, host and port), so nothing the server sends
+   can make the CLI open some other page or program. */
+export function sameOrigin(link, workspace) {
+  try {
+    return new URL(link).origin === new URL(workspace).origin;
+  } catch {
+    return false;
+  }
+}
+
 /* Text from the workspace is printed to a terminal: drop control characters (escape sequences could
    rewrite the screen or the clipboard), keeping newlines and tabs. */
 // eslint-disable-next-line no-control-regex -- matching control characters is the point
@@ -270,6 +280,12 @@ export async function run(argv, io = {}) {
         need(url, 'Not logged in. Run: sudo-cli login');
         // Keys look like WEB-12 (a task) or WEB (a project); resolve through the API so typos fail here.
         const target = /-\d+$/.test(k) ? (await api().get(`/tasks/${seg(k)}`)).url : (await api().get(`/projects/${seg(k)}`)).url;
+        // The link comes from the server and goes to xdg-open / open / explorer, which would run or
+        // open anything: only a page of the workspace itself is opened (or printed).
+        if (!sameOrigin(target, url)) {
+          err.write(`sudo-cli: the workspace answered with a link outside ${new URL(url).origin}; not opening it.\n`);
+          return 1;
+        }
         if (o.json) {
           json({ url: target });
           return 0;
@@ -293,8 +309,10 @@ export async function run(argv, io = {}) {
       return 2;
     }
     if (e instanceof ApiError) {
-      if (o.json) err.write(JSON.stringify({ error: e.message, code: e.code, ...(e.field ? { field: e.field } : {}) }) + '\n');
-      else err.write(`sudo-cli: ${e.message}${e.status === 401 ? ' Run sudo-cli login.' : ''}\n`);
+      // The message is the server's text: stripped of control characters like everything else it sends.
+      const msg = clean(e.message);
+      if (o.json) err.write(JSON.stringify(clean({ error: msg, code: e.code, ...(e.field ? { field: e.field } : {}) })) + '\n');
+      else err.write(`sudo-cli: ${msg}${e.status === 401 ? ' Run sudo-cli login.' : ''}\n`);
       return 1;
     }
     throw e;
