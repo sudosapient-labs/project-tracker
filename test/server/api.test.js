@@ -395,7 +395,12 @@ describe('API conventions', () => {
   it('paginates with cursors and filters', async () => {
     const { t, ada } = await workspace();
     const api = await as(t, ada);
-    for (const title of ['one', 'two', 'three']) await api.post('/tasks', { project: 'WEB', title, assignee: title === 'two' ? 'me' : null });
+    // Newest first is by created_at, then id; ids are random, so give each task its own millisecond.
+    for (const title of ['one', 'two', 'three']) {
+      const at = Date.now();
+      while (Date.now() === at) await new Promise(r => setTimeout(r, 1));
+      await api.post('/tasks', { project: 'WEB', title, assignee: title === 'two' ? 'me' : null });
+    }
     const p1 = (await api.get('/tasks?limit=2')).body;
     expect(p1.data.map(x => x.title)).toEqual(['three', 'two']);
     const p2 = (await api.get(`/tasks?limit=2&cursor=${p1.nextCursor}`)).body;
