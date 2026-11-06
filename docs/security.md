@@ -152,6 +152,9 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   Before sanitising, a description must be text of at most 100,000 characters with tags nested at
   most 64 deep (sanitising gets superlinear with depth, so huge or deeply nested markup could stall
   the server), and any synced value over 256 KB is refused before rules look at it.
+- Task keys and each project's key counter are the server's: a client can't set the counter or edit
+  a key, and an optimistic key is only kept if it doesn't skip ahead of the counter, so nobody can
+  run a project out of task numbers.
 - Fields the UI only offers choices for are checked on write too: repeat settings, event times,
   reaction emoji, saved-view filters. File type and size come from the stored file, and attachments
   and file links only ever point at `/api/files/`.

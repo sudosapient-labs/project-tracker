@@ -24,9 +24,12 @@ export const A = {},
   BLUR = {};
 
 /* ---------- task mutations ---------- */
+/* The next key this tab expects the server to give: one past the project's counter (which only the
+   server moves) and every key already in the project. The server keeps it if it's still free. */
 export function nextKey(p) {
-  p.seq = (p.seq || 200) + 1;
-  return p.key + '-' + p.seq;
+  const prefix = p.key + '-';
+  const top = D().tasks.reduce((n, t) => (t.key?.startsWith(prefix) ? Math.max(n, +t.key.slice(prefix.length) || 0) : n), p.seq || 200);
+  return prefix + (top + 1);
 }
 export function createTask(f) {
   const p = proj(f.project) || visibleProjects().find(canSee);

@@ -120,6 +120,10 @@ const dueSnippet = t =>
     .join(' · ');
 
 /* ---------- task keys ---------- */
+/* Task keys are PROJECT-1234567 at most (schemas.js). The project's counter (`seq`) is the server's:
+   clients can't set it, and a client's optimistic key is only kept when it doesn't jump past the
+   counter, so nobody can push the numbers to the end and stop task creation. */
+const MAX_KEY_NUM = 9_999_999;
 function keyTaken(ctx, key, id) {
   return !!ctx.db.get("SELECT 1 FROM tasks WHERE json_extract(data, '$.key') = ? AND id != ?", key, id);
 }
@@ -129,19 +133,29 @@ function bumpSeq(ctx, p, n) {
   ctx.repo.put('projects', p);
   ctx.emit('projects', p);
 }
-/* Keep the client's optimistic key when it is free; otherwise take the project's next number. */
+/* Keep the client's optimistic key when it is free and no higher than the project's next number;
+   otherwise take the next number, or once those run out, the lowest free one. */
 function settleKey(ctx, t, p) {
   const prefix = p.key + '-';
   const n = +t.key?.slice(prefix.length);
-  if (t.key?.startsWith(prefix) && Number.isInteger(n) && !keyTaken(ctx, t.key, t.id)) return bumpSeq(ctx, p, n);
-  const row = ctx.db.get(
-    "SELECT MAX(CAST(substr(json_extract(data, '$.key'), ?) AS INTEGER)) n FROM tasks WHERE json_extract(data, '$.key') LIKE ?",
-    prefix.length + 1,
-    prefix + '%',
-  );
-  const next = Math.max(p.seq || 200, row?.n || 0) + 1;
-  t.key = prefix + next;
-  bumpSeq(ctx, p, next);
+  if (t.key?.startsWith(prefix) && Number.isInteger(n) && n > 0 && n <= Math.min((p.seq || 200) + 1, MAX_KEY_NUM) && !keyTaken(ctx, t.key, t.id))
+    return bumpSeq(ctx, p, n);
+  const nums = "SELECT CAST(substr(json_extract(data, '$.key'), ?) AS INTEGER) n FROM tasks WHERE json_extract(data, '$.key') LIKE ? AND id != ?";
+  const args = [prefix.length + 1, prefix + '%', t.id];
+  const top = ctx.db.get(`SELECT MAX(n) n FROM (${nums})`, ...args)?.n || 0;
+  const next = Math.max(p.seq || 200, top) + 1;
+  if (next <= MAX_KEY_NUM) {
+    t.key = prefix + next;
+    return bumpSeq(ctx, p, next);
+  }
+  const free = ctx.db.get(
+    `SELECT MIN(n + 1) n FROM (SELECT n FROM (${nums}) UNION SELECT 200) WHERE n + 1 <= ? AND n + 1 NOT IN (SELECT n FROM (${nums}))`,
+    ...args,
+    MAX_KEY_NUM,
+    ...args,
+  )?.n;
+  if (!free) throw new Reject('This project has run out of task numbers.', 409);
+  t.key = prefix + free;
 }
 
 function deleteTaskCascade(ctx, t) {
@@ -234,8 +248,9 @@ export const RULES = {
       // Moving needs edit rights in both projects.
       const moved = keys.includes('project');
       const p = moved ? needProject(ctx, t.project) : from;
+      // A key only changes when the task moves to another project.
       if (moved) settleKey(ctx, t, p);
-      else if (keys.includes('key') && keyTaken(ctx, t.key, t.id)) t.key = before.key;
+      else if (keys.includes('key')) t.key = before.key;
       if (moved || keys.includes('assignee')) needAssignee(ctx, p, t.assignee);
       if (moved || keys.includes('subtasks')) needSubAssignees(ctx, p, t, moved ? null : before);
       if (keys.includes('desc')) t.desc = richDesc(t.desc);
@@ -270,9 +285,11 @@ export const RULES = {
 
   projects: {
     personal: ['fav'],
-    serverOwned: ['key', 'last'],
+    // `seq` is the task-key counter, moved on only by settleKey.
+    serverOwned: ['key', 'last', 'seq'],
     create(ctx, p) {
       notGuest(ctx, 'create projects');
+      delete p.seq;
       needMember(ctx, p.lead, 'project lead');
       while (ctx.db.get("SELECT 1 FROM projects WHERE json_extract(data, '$.key') = ?", p.key)) p.key += 'X';
       p.members = [...new Set([ctx.uid, ...(p.members || [])])].filter(m => ctx.repo.get('members', m));
@@ -287,7 +304,6 @@ export const RULES = {
       if (settings.length && !canManageProject(before, ctx.me))
         throw new Reject(canSee(before, ctx.me) ? DENIED[EDIT] : "You don't have access to that project.");
       if (keys.includes('lead')) needMember(ctx, p.lead, 'project lead');
-      if (keys.includes('seq')) p.seq = Math.max(before.seq || 0, p.seq || 0);
       if (keys.includes('members')) p.members = [...new Set(p.members)].filter(m => ctx.repo.get('members', m));
       if (keys.includes('perms')) p.perms = validPerms(p.perms);
       settlePrivacy(p, keys);

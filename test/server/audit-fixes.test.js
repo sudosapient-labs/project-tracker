@@ -298,3 +298,42 @@ describe('H2 access is checked again when the write happens', () => {
     expect(t.repo.all('members').filter(m => m.role === 'Owner')).toHaveLength(1);
   });
 });
+
+describe('M3 the task-key counter is the server’s', () => {
+  const keyOf = (t, id) => t.repo.get('tasks', id)?.key;
+  it('ignores seq from clients and keys that jump ahead', async () => {
+    const { t, ada } = await workspace();
+    await ada.sync([put('projects', project('p1', 'WEB', { seq: 9_999_999 }))]);
+    expect(t.repo.get('projects', 'p1').seq).toBeUndefined();
+    await ada.sync([patch('projects', 'p1', { seq: 9_999_999 })]);
+    expect(t.repo.get('projects', 'p1').seq).toBeUndefined();
+
+    // An optimistic key far past the counter is replaced by the next number.
+    await ada.sync([put('tasks', task('t1', 'p1', { key: 'WEB-9999999' }))]);
+    expect(keyOf(t, 't1')).toBe('WEB-201');
+    // The next one the client expects is kept.
+    await ada.sync([put('tasks', task('t2', 'p1', { key: 'WEB-202' }))]);
+    expect(keyOf(t, 't2')).toBe('WEB-202');
+    // A key can't be edited in place.
+    await ada.sync([patch('tasks', 't2', { key: 'WEB-9999999' })]);
+    expect(keyOf(t, 't2')).toBe('WEB-202');
+    expect(t.repo.get('projects', 'p1').seq).toBe(202);
+
+    const r = await ada.sync([put('tasks', task('t3', 'p1', { key: undefined }))]);
+    expect(r.body.results[0].ok).toBe(true);
+    expect(keyOf(t, 't3')).toBe('WEB-203');
+  });
+
+  it('keeps creating tasks when the numbers already reached the end (older data)', async () => {
+    const { t, ada } = await workspace();
+    await ada.sync([put('projects', project('p1')), put('tasks', task('t1', 'p1', { key: 'WEB-201' }))]);
+    const p = t.repo.get('projects', 'p1');
+    t.repo.put('projects', { ...p, seq: 9_999_999 });
+    const t1 = t.repo.get('tasks', 't1');
+    t.repo.put('tasks', { ...t1, key: 'WEB-9999999' }, 'p1');
+    const r = await ada.sync([put('tasks', task('t2', 'p1', { key: 'WEB-9999999' })), put('tasks', task('t3', 'p1', { key: 'WEB-1' }))]);
+    expect(r.body.results.map(x => x.ok)).toEqual([true, true]);
+    expect(keyOf(t, 't2')).toBe('WEB-201');
+    expect(keyOf(t, 't3')).toBe('WEB-1');
+  });
+});
