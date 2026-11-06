@@ -1,7 +1,7 @@
 /* =====================================================================
    ACTIONS · BOT MEMBERS (Settings → API → Bots, Owners and Admins)
    ===================================================================== */
-import { $ } from '../core/utils.js';
+import { $, esc } from '../core/utils.js';
 import { D, S, me } from '../core/store.js';
 import { del, get, patch, post } from '../core/api.js';
 import { toast } from '../ui/toast.js';
@@ -136,7 +136,7 @@ A.revokeBotKey = el => {
   if (!k) return;
   confirmDlg({
     title: `Revoke “${k.name}”?`,
-    body: `Anything using this key as ${b.name} stops working straight away.`,
+    body: `Anything using this key as ${esc(b.name)} stops working straight away.`,
     ok: 'Revoke key',
     danger: true,
     icon: 'key-round',
