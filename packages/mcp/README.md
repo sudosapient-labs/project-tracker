@@ -52,7 +52,9 @@ claude mcp add --transport http sudo-sapient https://sudo.example.com/api/mcp --
 warns about it. Options: `--url`, `--key`,
 `--read-only` (or `SUDO_MCP_READ_ONLY=1`) to register only the read tools even with a write key
 (write tools aren't listed, and calling one is an "Unknown tool" error; off by default),
-`--http [--port 3333]` to serve Streamable HTTP on 127.0.0.1 (each request brings its own key), and
+`--http [--port 3333]` to serve Streamable HTTP on 127.0.0.1 (each request brings its own key; bodies
+over 1 MB are refused; `--host <address>` listens elsewhere, with a warning, since anything but this
+machine lets other machines reach it over plain http), `--help`, and
 `--insecure` to allow a plain `http://` workspace URL that isn't this machine (refused otherwise).
 
 **MCP Inspector:** `npx @modelcontextprotocol/inspector`, then connect to `https://…/api/mcp`

@@ -411,3 +411,55 @@ describe('version', () => {
     expect(fs.readFileSync(new URL('../src/protocol.js', import.meta.url), 'utf8')).toMatch(/VERSION = '[^']+'; \/\/ x-release-please-version/);
   });
 });
+
+describe('sudo-mcp --http’s request listener', () => {
+  async function listening(handle, opts) {
+    const http = await import('node:http');
+    const { nodeListener } = await import('../src/http.js');
+    const server = http.createServer(nodeListener(handle, { log: { error() {} }, ...opts }));
+    await new Promise(r => server.listen(0, '127.0.0.1', r));
+    return { url: `http://127.0.0.1:${server.address().port}/`, close: () => new Promise(r => server.close(r)) };
+  }
+
+  it('caps the body and answers 500, without crashing, when handling fails', async () => {
+    let calls = 0;
+    const s = await listening(
+      async req => {
+        calls++;
+        if ((await req.text()) === 'boom') throw new Error('boom');
+        return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } });
+      },
+      { maxBody: 1000 },
+    );
+    try {
+      expect((await fetch(s.url, { method: 'POST', body: 'x'.repeat(1001) })).status).toBe(413);
+      // Without a Content-Length up front (streamed), it's cut off as it arrives.
+      const stream = new ReadableStream({
+        start(c) {
+          for (let i = 0; i < 20; i++) c.enqueue(new TextEncoder().encode('y'.repeat(100)));
+          c.close();
+        },
+      });
+      expect((await fetch(s.url, { method: 'POST', body: stream, duplex: 'half' })).status).toBe(413);
+      expect(calls).toBe(0);
+      const failed = await fetch(s.url, { method: 'POST', body: 'boom' });
+      expect(failed.status).toBe(500);
+      expect((await failed.json()).error).toMatchObject({ code: -32603 });
+      // Still serving.
+      expect((await fetch(s.url, { method: 'POST', body: '{}' })).status).toBe(200);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('documents --host and warns when it isn’t this machine', () => {
+    const help = spawnSync(process.execPath, [BIN, '--help'], { encoding: 'utf8' });
+    expect(help.status).toBe(0);
+    expect(help.stdout).toContain('--host <address>');
+    // A TEST-NET address (RFC 5737) this machine doesn't have: the warning comes before the listen
+    // fails, so nothing is ever reachable from elsewhere.
+    const env = { ...process.env, SUDO_URL: 'https://sudo.example.com', SUDO_API_KEY: '' };
+    const away = spawnSync(process.execPath, [BIN, '--http', '--port', '0', '--host', '192.0.2.1'], { env, encoding: 'utf8', timeout: 10_000 });
+    expect(away.stderr).toContain('warning: listening on 192.0.2.1, not just this machine');
+  });
+});
