@@ -160,6 +160,7 @@ function settleKey(ctx, t, p) {
 
 function deleteTaskCascade(ctx, t) {
   for (const c of ctx.repo.all('comments', "WHERE json_extract(data, '$.task') = ?", t.id)) {
+    ctx.keepDeleted?.('comments', c);
     ctx.repo.del('comments', c.id);
     ctx.emitDel('comments', c.id, c.project ?? t.project);
   }
@@ -224,7 +225,8 @@ export function removeMemberCascade(ctx, m) {
   }
   ctx.removedUsers.push(m.id);
   // Sessions take their push subscriptions with them; devices go with the user row.
-  for (const t of ['sessions', 'favorites', 'user_state', 'notifications', 'push_subscriptions']) ctx.db.run(`DELETE FROM ${t} WHERE user_id = ?`, m.id);
+  for (const t of ['sessions', 'favorites', 'user_state', 'notifications', 'push_subscriptions', 'recent_deletes'])
+    ctx.db.run(`DELETE FROM ${t} WHERE user_id = ?`, m.id);
   ctx.db.run('DELETE FROM users WHERE id = ?', m.id);
   ctx.db.run('UPDATE auth_tokens SET used_at = ? WHERE (email = ? OR user_id = ?) AND used_at IS NULL', ctx.now, m.email, m.id);
 }
@@ -280,6 +282,19 @@ export const RULES = {
     remove(ctx, t) {
       needProject(ctx, t.project);
       deleteTaskCascade(ctx, t);
+    },
+    /* Undo of a delete, from the server's copy: the same access as creating it, but nobody is told
+       again. An assignee who can no longer open the project is dropped; a key taken meanwhile moves on. */
+    restore(ctx, t) {
+      const p = needProject(ctx, t.project);
+      if (t.assignee != null && !canSee(p, ctx.repo.get('members', t.assignee))) t.assignee = null;
+      t.subtasks = (t.subtasks || []).map(s => (s.assignee != null && !canSee(p, ctx.repo.get('members', s.assignee)) ? { ...s, assignee: null } : s));
+      settleAttachments(ctx, t);
+      if (keyTaken(ctx, t.key, t.id)) {
+        t.key = null;
+        settleKey(ctx, t, p);
+      }
+      return t;
     },
   },
 
@@ -364,6 +379,15 @@ export const RULES = {
     remove(ctx, cm) {
       if (cm.project) needProject(ctx, cm.project, COMMENT);
       if (cm.by !== ctx.uid && !isAdmin(ctx)) throw new Reject('You can only delete your own comments.');
+    },
+    /* Undo of a delete, from the server's copy: its author, time and reactions stay, and nobody is
+       notified again. The task must still exist and the person may still comment there. */
+    restore(ctx, cm) {
+      const t = ctx.repo.get('tasks', cm.task);
+      if (!t) throw new Reject('That task no longer exists.', 404);
+      needProject(ctx, t.project, COMMENT);
+      cm.project = t.project;
+      return cm;
     },
   },
 

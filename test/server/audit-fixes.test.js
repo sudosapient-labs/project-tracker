@@ -496,3 +496,65 @@ describe('M2 stale list and map edits only apply their own changes', () => {
     expect(t.repo.get('tasks', 't1').labels).toEqual(['z']);
   });
 });
+
+describe('M5 undoing a delete restores the record as it was', () => {
+  const comment = (id, by, extra = {}) => ({ id, task: 't1', by, at: 1, text: 'Looks good @Ada', re: {}, ...extra });
+  async function thread() {
+    const w = await workspace([
+      ['mbob', 'Bob', 'Member'],
+      ['mcarol', 'Carol', 'Member'],
+    ]);
+    const adaId = w.t.repo.all('members').find(m => m.role === 'Owner').id;
+    await w.ada.sync([put('projects', project('p1')), put('tasks', task('t1', 'p1', { assignee: 'mcarol' }))]);
+    await w.bob.sync([put('comments', comment('c1', 'mbob'))]);
+    await w.ada.sync([patch('comments', 'c1', { re: { '👍': [adaId] } })]);
+    return { ...w, adaId, original: w.t.repo.get('comments', 'c1') };
+  }
+  const notifs = t => t.db.get('SELECT COUNT(*) n FROM notifications').n;
+
+  it('keeps the author, time and reactions, and notifies nobody again', async () => {
+    const { t, ada, original } = await thread();
+    const before = notifs(t);
+    await ada.sync([{ c: 'comments', id: 'c1', k: 'del' }]);
+    expect(t.repo.get('comments', 'c1')).toBeNull();
+    // The client re-sends its copy; the server uses its own, even where the client's differs.
+    const r = await ada.sync([{ c: 'comments', id: 'c1', k: 'put', v: { ...original, by: 'mcarol', at: 5, re: {} }, restore: true }]);
+    expect(r.body.results[0].ok).toBe(true);
+    expect(t.repo.get('comments', 'c1')).toEqual(original);
+    expect(notifs(t)).toBe(before);
+    // The kept copy is used once.
+    expect(t.db.get("SELECT COUNT(*) n FROM recent_deletes WHERE id = 'c1'").n).toBe(0);
+  });
+
+  it('can’t be used by someone else, or to forge an author', async () => {
+    const { t, ada, carol, original } = await thread();
+    await ada.sync([{ c: 'comments', id: 'c1', k: 'del' }]);
+    await carol.sync([{ c: 'comments', id: 'c1', k: 'put', v: { ...original, by: 'mbob', at: 1 }, restore: true }]);
+    expect(t.repo.get('comments', 'c1')).toMatchObject({ by: 'mcarol', re: {} });
+    expect(t.repo.get('comments', 'c1').at).toBeGreaterThan(1);
+  });
+
+  it('only shortly after the delete', async () => {
+    const { t, ada, adaId, original } = await thread();
+    await ada.sync([{ c: 'comments', id: 'c1', k: 'del' }]);
+    t.db.run('UPDATE recent_deletes SET deleted_at = deleted_at - ?', 11 * 60_000);
+    await ada.sync([{ c: 'comments', id: 'c1', k: 'put', v: original, restore: true }]);
+    expect(t.repo.get('comments', 'c1')).toMatchObject({ by: adaId, re: {} });
+  });
+
+  it('a deleted task comes back with its comments, without re-notifying its assignee', async () => {
+    const { t, ada, original } = await thread();
+    const task1 = t.repo.get('tasks', 't1');
+    const before = notifs(t);
+    await ada.sync([{ c: 'tasks', id: 't1', k: 'del' }]);
+    expect(t.repo.get('comments', 'c1')).toBeNull();
+    const r = await ada.sync([
+      { c: 'tasks', id: 't1', k: 'put', v: task1, restore: true },
+      { c: 'comments', id: 'c1', k: 'put', v: original, restore: true },
+    ]);
+    expect(r.body.results.map(x => x.ok)).toEqual([true, true]);
+    expect(t.repo.get('tasks', 't1')).toMatchObject({ key: task1.key, assignee: 'mcarol', created: task1.created });
+    expect(t.repo.get('comments', 'c1')).toEqual(original);
+    expect(notifs(t)).toBe(before);
+  });
+});

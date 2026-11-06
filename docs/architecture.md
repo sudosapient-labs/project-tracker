@@ -22,6 +22,10 @@ proxies `/api` to the API on :8787.
   (`server/sync/merge.js`). A stale write (an offline queue, a tab behind) can't undo someone else's
   change: a person taken off a project stays off. A patch without `base` (the REST API, which
   reads and writes in one request) replaces the whole value.
+- **Undo.** Undo puts back only the records the action changed. A record it deleted is re-sent
+  with `restore: true`; the server then restores its own copy, kept in `recent_deletes` for 10
+  minutes and only for the person who deleted it, so a comment keeps its author, time and
+  reactions, a task its key, and nobody is notified again. Otherwise it's created like anything new.
 - **Live updates.** Other people's changes arrive over Server-Sent Events (`GET /api/events`) and are
   merged in, filtered to what each person can see. A tab's own changes aren't echoed back to it
   (`x-client-id`). When the stream drops, the client reconnects and bootstraps again.

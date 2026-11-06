@@ -2,7 +2,8 @@
    they render; the engine checks each against RULES, writes it, and pushes the resulting records
    to every other connected client that is allowed to see them (Server-Sent Events).
 
-   Operation:  { c: collection, id, k: 'put' | 'patch' | 'del', v: object, base?: object }
+   Operation:  { c: collection, id, k: 'put' | 'patch' | 'del', v: object, base?: object, restore?: true }
+               `restore`: a put that undoes this person's recent delete of the record (rules.js `restore`).
                `base`: for list and map fields in a patch, the values the client edited from (merge.js).
    Result:     { ok: true, v: canonical } | { ok: false, error, v: canonical-or-null }
    A rejected op is rolled back alone (savepoint) and the client resets that record to `v`. */
@@ -16,6 +17,8 @@ import { MERGED, mergeField } from './merge.js';
 import { RULES, canSee, isAdmin, memberFor, projectFor, removeMemberCascade } from './rules.js';
 
 const PROJECT_SCOPED = new Set(['tasks', 'comments', 'activity', 'files', 'events', 'savedViews']);
+/* How long a deleted record can be restored by Undo (see `restore` in rules.js). */
+export const RESTORE_MS = 10 * 60_000;
 const PERSONAL_DOCS = new Set(['projOrder', 'recentSearches', 'notifPrefs']);
 const DOCS = new Set(['ws', ...PERSONAL_DOCS]);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -57,6 +60,19 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
          (even when the project itself is being deleted in the same batch). */
       emitDel(c, id, pid) {
         ctx.changes.push({ c, id, v: null, pid, ...(pid ? { proj: repo.get('projects', pid) } : {}) });
+      },
+      /* Keep a deleted record for a while, so the person who deleted it can Undo it as it was. */
+      keepDeleted(c, v) {
+        if (!RULES[c]?.restore) return;
+        db.run('DELETE FROM recent_deletes WHERE deleted_at < ?', ctx.now - RESTORE_MS);
+        db.run(
+          'INSERT OR REPLACE INTO recent_deletes (coll, id, user_id, data, deleted_at) VALUES (?, ?, ?, ?, ?)',
+          c,
+          v.id,
+          ctx.uid,
+          JSON.stringify(v),
+          ctx.now,
+        );
       },
     };
     return ctx;
@@ -110,6 +126,7 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
     if (k === 'del') {
       if (!before) return null;
       rule.remove(ctx, before);
+      ctx.keepDeleted(c, before);
       repo.del(c, id);
       ctx.emitDel(c, id, scopeOf(c, before));
       return null;
@@ -133,7 +150,17 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
     let changed = true;
     if (!before) {
       if (k === 'patch') throw new Reject('This item was deleted.', 404);
-      after = rule.create(ctx, { ...v, id });
+      // Undo of a delete: the server's own copy comes back as it was (author, time, reactions; no
+      // notifications), only for the person who deleted it and only shortly after. Otherwise (or
+      // when it's no longer kept) it's created like anything new.
+      const kept =
+        op.restore === true &&
+        rule.restore &&
+        db.get('SELECT data FROM recent_deletes WHERE coll = ? AND id = ? AND user_id = ? AND deleted_at >= ?', c, id, ctx.uid, ctx.now - RESTORE_MS);
+      if (kept) {
+        db.run('DELETE FROM recent_deletes WHERE coll = ? AND id = ?', c, id);
+        after = rule.restore(ctx, { ...JSON.parse(kept.data), id });
+      } else after = rule.create(ctx, { ...v, id });
     } else {
       after = k === 'put' ? { ...v, id } : { ...before, ...v, id };
       for (const f of rule.serverOwned || []) {

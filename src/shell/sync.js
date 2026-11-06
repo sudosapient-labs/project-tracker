@@ -26,6 +26,8 @@ let retryT = null;
 let retryMs = 1000;
 let stateSent = '';
 let errSink = null;
+/* `collection:id` of records restoreSnapshot put back after they were deleted. */
+const restoring = new Set();
 const hooks = { signedOut: () => {}, resync: () => {} };
 export const onSync = h => Object.assign(hooks, h);
 
@@ -46,6 +48,7 @@ export function prime(data) {
   for (const c of COLLS) shadow[c] = new Map((data[c] || []).map(e => [e.id, fields(e)]));
   for (const d of DOCS) shadow.docs[d] = JSON.stringify(data[d] ?? null);
   queue = [];
+  restoring.clear();
   stateSent = JSON.stringify(stateBody());
   syncState();
 }
@@ -73,7 +76,9 @@ export function collect() {
       seen.add(e.id);
       const prev = sh.get(e.id);
       if (!prev) {
-        queue.push({ c, id: e.id, k: 'put', v: clone(e) });
+        // A record Undo put back is restored by the server as it was (rules.js `restore`).
+        const restore = restoring.delete(`${c}:${e.id}`);
+        queue.push({ c, id: e.id, k: 'put', v: clone(e), ...(restore ? { restore } : {}) });
         sh.set(e.id, fields(e));
         continue;
       }
@@ -410,6 +415,7 @@ export function restoreSnapshot(snap) {
         // Put it back where it was relative to its old neighbours.
         const pos = (before[c] || []).findIndex(e => e.id === id);
         d[c].splice(Math.min(pos, d[c].length), 0, b.get(id));
+        if (shadow && !shadow[c].has(id)) restoring.add(`${c}:${id}`);
       }
     }
   }
