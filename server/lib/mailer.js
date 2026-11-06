@@ -17,6 +17,8 @@ export function createMailer(db, config, log = console, fetchImpl = globalThis.f
   let draining = false;
 
   function queue({ to, subject, intro, action, link, outro = '' }) {
+    // Bots' addresses are on the reserved `.invalid` TLD (api/bots.js): never mail one, whatever asked.
+    if (/@bot\.invalid$/i.test(String(to))) return;
     const text = `${intro}\n\n${action}: ${link}\n\n${outro}`.trim();
     const html = `<div style="font:14px/1.5 -apple-system,Segoe UI,sans-serif;color:#1d1c1a;max-width:480px">
       <p>${esc(intro).replace(/\n/g, '<br>')}</p>

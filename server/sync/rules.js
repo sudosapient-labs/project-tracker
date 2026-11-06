@@ -352,6 +352,9 @@ export const RULES = {
       needProject(ctx, a.project, a.verb === 'commented on' ? COMMENT : EDIT);
       a.by = ctx.uid;
       if (!(Math.abs(a.at - ctx.now) < 5 * 60_000)) a.at = ctx.now;
+      // "Ada via Claude": set by the server from the API key or client, never taken from the record.
+      if (ctx.via) a.via = ctx.via;
+      else delete a.via;
       return a;
     },
     update() {
@@ -365,9 +368,11 @@ export const RULES = {
   },
 
   members: {
-    serverOwned: ['email', 'status', 'last'],
+    // `kind` ('bot' for bot members) is only ever set by /api/bots.
+    serverOwned: ['email', 'status', 'last', 'kind'],
     create(ctx, m) {
       notGuest(ctx, 'invite people');
+      delete m.kind;
       m.email = m.email.trim().toLowerCase();
       if (ctx.db.get("SELECT 1 FROM members WHERE lower(json_extract(data, '$.email')) = ?", m.email))
         throw new Reject(`${m.email} is already in the workspace.`, 409);
@@ -389,6 +394,8 @@ export const RULES = {
       return m;
     },
     update(ctx, before, m, keys) {
+      // A bot's name and role change in Settings → API → Bots, which keeps it a Member or Guest.
+      if (before.kind === 'bot') throw new Reject('Manage bots in Settings → API → Bots.');
       const self = before.id === ctx.uid;
       const adminKeys = ['role', 'team', 'title', 'name'];
       const selfKeys = ['name', 'title', 'c', 'tz', 'team'];

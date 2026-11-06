@@ -2,7 +2,7 @@
 import { $, MOD, MONL, WD, addD, dOff, dayKey, diffD, esc, fmtDate, fmtHM, fmtTime, hasTime, instant, iso, parse, timeOf, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { LABELS, PRIOS, PSTAT, REACTIONS, RECUR, STATUSES } from '../core/constants.js';
-import { D, S, allTasks, canEdit, me, mem, pColor, proj, task, visibleProjects } from '../core/store.js';
+import { D, S, allTasks, canEdit, me, mem, pColor, people, proj, task, visibleProjects } from '../core/store.js';
 import { av, avStack, prIcon, stIcon } from '../ui/helpers.js';
 import { focusKey, render } from '../shell/render.js';
 import { FIELDS, viewOf } from '../shell/view-engine.js';
@@ -124,9 +124,7 @@ export function popHtml(p) {
       inner = popList(
         [
           { id: '', name: 'Unassigned', html: av(null, 'sm', false), on: !sb.assignee },
-          ...D()
-            .members.filter(m => m.status !== 'deactivated')
-            .map(m => ({ id: m.id, name: m.name + (m.id === D().me ? ' (you)' : ''), html: av(m.id, 'sm', false), on: sb.assignee === m.id })),
+          ...people().map(m => ({ id: m.id, name: m.name + (m.id === D().me ? ' (you)' : ''), html: av(m.id, 'sm', false), on: sb.assignee === m.id })),
         ],
         { search: 'Assign subtask to…' },
       );
@@ -142,9 +140,7 @@ export function popHtml(p) {
       inner = popList(
         [
           { id: '', name: 'Unassigned', html: av(null, 'sm', false), on: !t?.assignee },
-          ...D()
-            .members.filter(m => m.status !== 'deactivated')
-            .map(m => ({ id: m.id, name: m.name + (m.id === D().me ? ' (you)' : ''), html: av(m.id, 'sm', false), on: t?.assignee === m.id })),
+          ...people().map(m => ({ id: m.id, name: m.name + (m.id === D().me ? ' (you)' : ''), html: av(m.id, 'sm', false), on: t?.assignee === m.id })),
         ],
         { search: 'Assign to…' },
       );
@@ -384,7 +380,7 @@ export function popHtml(p) {
       inner = PRIOS.map(s => `<button class="mi" data-a="bulkSet" data-f="priority" data-v="${s.id}">${prIcon(s.id)}${s.name}</button>`).join('');
       break;
     case 'bulk-assignee':
-      inner = [{ id: '', name: 'Unassigned' }, ...D().members]
+      inner = [{ id: '', name: 'Unassigned' }, ...people()]
         .map(m => `<button class="mi" data-a="bulkSet" data-f="assignee" data-v="${m.id}">${av(m.id || null, 'sm', false)}${esc(m.name)}</button>`)
         .join('');
       break;

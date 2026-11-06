@@ -17,6 +17,12 @@ import { authRoutes } from './routes/auth.js';
 import { dataRoutes } from './routes/data.js';
 import { fileRoutes } from './routes/files.js';
 import { workspaceRoutes } from './routes/workspace.js';
+import { keyRoutes } from './routes/keys.js';
+import { botRoutes } from './routes/bots.js';
+import { docsRoutes } from './routes/docs.js';
+import { v1Routes } from './api/v1.js';
+import { openapi } from './api/openapi.js';
+import { mcpRoutes } from './routes/mcp.js';
 
 const KB = 1024;
 const tooLarge = c => c.json({ error: 'This request is too large.' }, 413);
@@ -104,7 +110,16 @@ export function createApp({ db, config, log = console, pushSend }) {
     if (c.req.method === 'POST' && /^\/api\/files\/?$/.test(p)) return next();
     return (p.startsWith('/api/auth/') ? caps.auth : p === '/api/sync' ? caps.sync : caps.other)(c, next);
   });
-  api.use('*', csrfGuard);
+  // The token API only takes bearer keys, never the session cookie, so it needs no CSRF header.
+  const tokenApi = p => p.startsWith('/api/v1/') || p === '/api/mcp';
+  api.use('*', (c, next) => (tokenApi(c.req.path) ? next() : csrfGuard(c, next)));
+  const v1 = v1Routes({ limit });
+  api.route('/v1', v1.routes);
+  api.route('/docs', docsRoutes({ spec: c => openapi(v1.R, { appUrl: c.var.config.appUrl }) }));
+  // MCP tools call /api/v1 in-process, through the same middleware as any other API request.
+  api.route('/mcp', mcpRoutes({ limit, request: (url, init) => app.request(url, init) }));
+  api.route('/keys', keyRoutes({ limit }));
+  api.route('/bots', botRoutes({ limit }));
   api.route('/auth', authRoutes({ limit }));
   api.route('/files', fileRoutes());
   api.route('/', dataRoutes());

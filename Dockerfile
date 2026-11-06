@@ -3,6 +3,9 @@ FROM node:24-slim AS build
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/client/package.json packages/client/
+COPY packages/mcp/package.json packages/mcp/
+COPY packages/cli/package.json packages/cli/
 RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build && pnpm prune --prod
@@ -14,6 +17,9 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/src/core ./src/core
+# The hosted MCP endpoint (/api/mcp) runs the MCP package's server code; it has no dependencies.
+COPY --from=build /app/packages/client ./packages/client
+COPY --from=build /app/packages/mcp/src ./packages/mcp/src
 COPY package.json ./
 COPY docker-entrypoint.sh /usr/local/bin/
 # The database and uploaded files live on /data: mount a persistent volume there. (No VOLUME line:

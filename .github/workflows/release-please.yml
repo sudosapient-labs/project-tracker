@@ -1,20 +1,31 @@
 name: Release
 
-# Keeps a release PR open on prod with the next version and changelog, built from Conventional Commit
-# messages. Merging that PR tags the version (vX.Y.Z) and creates the GitHub release. Nothing deploys here.
+# Keeps a release PR open on prod with the next versions and changelogs, built from Conventional Commit
+# messages. Merging that PR tags each released component and creates its GitHub release:
+#   - the app (root): vX.Y.Z. Railway deploys prod on its own once CI passes; nothing deploys here.
+#   - the npm packages: client-vX.Y.Z, cli-vX.Y.Z, mcp-vX.Y.Z. The publish-npm job below publishes them.
+#
+# npm trusted publishing (OIDC) authorizes this file by name, so keep `npm publish` in release-please.yml
+# and don't move it into a reusable workflow. See docs/ci-and-releases.md#npm-packages.
 on:
   push:
     branches: [prod]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      paths_released: ${{ steps.release.outputs.paths_released }}
     steps:
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           # GITHUB_TOKEN works, but PRs it opens don't start CI. Add a RELEASE_PLEASE_TOKEN secret (a PAT
           # or app token with contents + pull-requests write) if the release PR should run the checks.
@@ -22,3 +33,72 @@ jobs:
           target-branch: ${{ github.ref_name }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  publish-npm:
+    needs: release-please
+    if: contains(needs.release-please.outputs.paths_released, 'packages/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Add required reviewers to this environment (Settings → Environments → npm) to approve each publish.
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing: no npm token is stored anywhere
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # No dependency cache in a release job (a poisoned cache could reach the published package), so
+      # this doesn't use ./.github/actions/setup. setup-node@v4 caches only when `cache:` is set.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: pnpm install --frozen-lockfile
+
+      # CI runs on this same push in parallel, so check again here rather than publish an unchecked commit.
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+
+      - name: Check the npm CLI supports trusted publishing
+        run: |
+          npm --version
+          node -e '
+            const [a, b, c] = process.argv[1].split(".").map(Number);
+            if (a < 11 || (a === 11 && (b < 5 || (b === 5 && c < 1)))) {
+              console.error(`npm ${process.argv[1]} is too old for trusted publishing (needs 11.5.1+)`);
+              process.exit(1);
+            }' "$(npm --version)"
+
+      - name: Publish released packages
+        env:
+          PATHS_RELEASED: ${{ needs.release-please.outputs.paths_released }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/npm-pack"
+          mkdir -p "$out"
+          # client first: cli and mcp depend on it.
+          for dir in packages/client packages/cli packages/mcp; do
+            if ! jq -e --arg d "$dir" 'any(.[]; . == $d)' <<<"$PATHS_RELEASED" >/dev/null; then
+              continue
+            fi
+            name=$(jq -r .name "$dir/package.json")
+            version=$(jq -r .version "$dir/package.json")
+            # pnpm pack turns workspace:* into the real version; npm publish then signs in with OIDC.
+            # The packages are closed source (UNLICENSED): restricted, so only org members can install them.
+            rm -f "$out"/*.tgz
+            (cd "$dir" && pnpm pack --pack-destination "$out")
+            # A re-run, or the one-time manual first publish, may have published this version already.
+            # `npm view` can't see a private package without a token, so the signed-in publish decides:
+            # npm refuses a version that exists, and that counts as done.
+            if log=$(npm publish "$out"/*.tgz --access restricted 2>&1); then
+              echo "$log"
+              echo "::notice::published $name@$version"
+            elif grep -qE 'EPUBLISHCONFLICT|cannot publish over (the )?previously published version' <<<"$log"; then
+              echo "::notice::$name@$version is already on npm, skipping"
+            else
+              echo "$log"
+              exit 1
+            fi
+          done

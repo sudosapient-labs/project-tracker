@@ -5,7 +5,7 @@ import { ago, esc, relDate } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { PR, ST } from '../core/constants.js';
 import { D, S, commentsOf, isOver, mem, pColor, proj, roAttr, task } from '../core/store.js';
-import { av, dueHtml, empty, lbl, prIcon, prPill, stIcon, stPill } from '../ui/helpers.js';
+import { av, botBadge, dueHtml, empty, lbl, prIcon, prPill, stIcon, stPill } from '../ui/helpers.js';
 import { fxc } from '../shell/render.js';
 
 /* ---------- shared list renderer ---------- */
@@ -131,7 +131,7 @@ export function actHtml(a, opt = {}) {
     : p
       ? `<span class="obj" data-a="go" data-r="project" data-id="${p.id}">${esc(p.name)}</span>`
       : '';
-  return `<div class="fitem">${av(a.by, 'sm')}<div class="grow"><b>${esc(m?.id === D().me ? 'You' : m?.name || 'Someone')}</b> <span class="muted">${esc(a.verb)}</span> ${obj} ${a.extra ? `<span class="muted">${esc(a.extra)}</span>` : ''}${opt.proj && p && t ? ` <span class="faint">in ${esc(p.name)}</span>` : ''}</div><time>${ago(a.at)}</time></div>`;
+  return `<div class="fitem">${av(a.by, 'sm')}<div class="grow"><b>${esc(m?.id === D().me ? 'You' : m?.name || 'Someone')}</b>${botBadge(a.by)}${a.via ? ` <span class="faint">via ${esc(a.via)}</span>` : ''} <span class="muted">${esc(a.verb)}</span> ${obj} ${a.extra ? `<span class="muted">${esc(a.extra)}</span>` : ''}${opt.proj && p && t ? ` <span class="faint">in ${esc(p.name)}</span>` : ''}</div><time>${ago(a.at)}</time></div>`;
 }
 export function miniRow(t, opt = {}) {
   const p = proj(t.project);

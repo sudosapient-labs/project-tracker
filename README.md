@@ -48,12 +48,21 @@ link directly. The local database is `data/sudo-sapient.db`; delete `data/` to s
 
 The e2e journeys need a browser once: `pnpm exec playwright install chromium`.
 
+### Scripts, terminal and AI assistants
+
+Create a personal API key in **Settings → API**, then use the REST API (`/api/docs`), the
+[`sudo-cli`](packages/cli/README.md) command, or connect Claude, Cursor or another MCP client to
+`/api/mcp` ([setup](packages/mcp/README.md)). Keys act as you, and changes show live in the app as
+"you via CLI" or "via Claude". See [Public API, MCP and CLI](docs/api.md).
+
 ## Documentation
 
 - [Architecture](docs/architecture.md): how data flows, layers, conventions and the permission model
 - [Configuration](docs/configuration.md): every environment variable and its default
 - [Deployment](docs/deployment.md): Railway, and any other Docker host
-- [Security](docs/security.md): authentication, sessions, CSRF, rate limits, content security
+- [Security](docs/security.md): authentication, sessions, API keys, CSRF, rate limits, content security
+- [Public API, MCP and CLI](docs/api.md): personal keys, `/api/v1`, the MCP server and `sudo-cli`
+  ([evaluation](docs/api-mcp-cli-eval.md))
 - [Operations](docs/operations.md): backups and restore, logging, scheduled jobs, known limits
 - [CI and releases](docs/ci-and-releases.md): the checks, versioning, the `main` → `prod` rename
 - [Changelog](CHANGELOG.md)
@@ -90,13 +99,19 @@ server/
   config.js             environment → config (see docs/configuration.md)
   db.js  repo.js        SQLite connection, migrations, transactions; one table per synced collection
   auth.js               sessions, device cookies, CSRF guard
+  api/                  public API (/api/v1): route table, schemas + OpenAPI, personal keys, middleware
   notify.js  jobs.js    notifications (+ email, push); reminders, digests, housekeeping
-  routes/               /api/auth, /api/files, data (bootstrap, sync, events, export, push), workspace
+  routes/               /api/auth, /api/files, data (bootstrap, sync, events, export, push), workspace,
+                        /api/keys, /api/docs, /api/mcp
   sync/                 bootstrap graph, sync engine, per-collection rules and schemas
   lib/                  backup, crypto, http helpers, mailer (Resend), push, rate-limit, rich-text
   migrations/           applied on start in name order: .sql, or .js exporting `default (db)` for data fixes
   scripts/              backup.js; seed-demo.js + demo-data.js (development only)
-test/server/            API tests (Vitest)
+packages/
+  client/               @sudosapient/client: fetch client for /api/v1, shared CLI/MCP config
+  mcp/                  @sudosapient/mcp: MCP server (stdio `sudo-mcp`; hosted at /api/mcp)
+  cli/                  @sudosapient/cli: the `sudo-cli` command
+test/server/            API tests (Vitest); packages/*/test hold the MCP and CLI tests
 e2e/                    user journeys (Playwright); serve.js starts the throwaway server
 docs/                   documentation and the README screenshot
 Dockerfile              production image (see docs/deployment.md)

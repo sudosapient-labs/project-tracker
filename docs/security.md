@@ -78,6 +78,51 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 - **Logging:** production logs one line per request (method, path, status, time), never bodies,
   cookies, query strings or tokens; tokens in auth link paths are replaced by `…`.
 
+## Personal API keys
+
+- Created and revoked in Settings → API with a signed-in session (and its CSRF header); creating one
+  also needs the current password, so a signed-in browser alone (say, a stolen session) can't mint a
+  credential that outlives it. A key can't create, list or revoke keys. A key is `ssk_` + 32 random
+  bytes, shown once; only its SHA-256 is stored (like session tokens it's high-entropy, so a slow
+  hash adds nothing), with a 12-character prefix for the list. Each has a last-used time and an
+  optional expiry (30, 90 or 365 days); at most 25 per person.
+- A key acts as the person who made it, read fresh on every request: their current role, the
+  projects they can open, and Guest limits. Removing someone deletes their keys, and so does a
+  password reset (account recovery). A routine password change or "Sign out of all other sessions"
+  keeps them; revoke keys in Settings → API. Keys skip two-factor, as every bearer token does.
+- Scopes: `read` (GET only) or `write`. Writes go through the same sync rules as the app (see
+  [architecture](architecture.md#public-api-mcp-and-cli)); work in projects a key can't open answers
+  404, never 403, so it doesn't reveal what exists.
+- `/api/v1` and `/api/mcp` accept only `Authorization: Bearer`, never the session cookie, so they
+  need no CSRF header: a cross-site page can't make a browser attach a bearer key, and no CORS is
+  offered. `/api/mcp` also refuses browser `Origin`s other than the app's.
+- Each person's keys together may make `API_RATE_LIMIT` requests a minute to `/api/v1`, and as
+  many MCP protocol messages to `/api/mcp`, each message in a batch counting once (`RateLimit-*`
+  headers, `429` with `Retry-After`). Making more keys doesn't raise the limit. Changes show in Activity
+  as "Ada via CLI" (the client's label or the key's name), set by the server; the app can't forge one.
+- `sudo-cli` strips control characters from workspace text before printing it, so a task title
+  can't send escape sequences to someone's terminal.
+
+## Bot members
+
+- A bot is a `users` row with `kind = 'bot'`, no password and an address on the reserved `.invalid`
+  TLD (RFC 2606), plus a member record with `kind: 'bot'`. Every sign-in path refuses it by that
+  column, not by accident: sign-in and password reset look up people only, verify links never mark
+  one, no sign-in, reset, verify, invite or email-change link can be issued for one, a session row
+  for one is ignored, and the mailer drops any `.invalid` address. Notifications (and so email and
+  push) skip bots, and @mentions can't reach them.
+- Only Owners and Admins, with a signed-in session and its CSRF header, create, rename, re-scope and
+  remove bots and their keys (`/api/bots`); creating a key also needs the admin's current password.
+  Requests carrying a bearer key are refused (`403`), even alongside a session. Bots can only be
+  Members or Guests, and `kind` is server-owned: sync can't rename or promote a bot, or turn a
+  person into one.
+- A bot key acts as the bot (`by` is the bot, never the admin), with the bot's role and projects
+  read fresh on each request, and its own `api:<bot id>` rate-limit budget.
+- `api_keys.created_by` records the admin who made a bot's key, as an audit trail only:
+  `ON DELETE SET NULL`, so removing that admin keeps the key. Removing the bot deletes its keys
+  (cascade from its `users` row). A password reset of an admin's account revokes the bot keys they
+  made as well as their own, since whoever had control may have made one.
+
 ## Content security
 
 - Every response carries a strict CSP: scripts only from the app, `base-uri 'none'`,

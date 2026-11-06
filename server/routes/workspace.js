@@ -53,6 +53,7 @@ export function workspaceRoutes({ limit }) {
       if (me.role === 'Guest') return c.json({ error: "Guests can't invite people." }, 403);
       const m = repo.get('members', c.req.param('id'));
       if (!m) return c.json({ error: 'That person is no longer in the workspace.' }, 404);
+      if (m.kind === 'bot') return c.json({ error: 'Bots can’t be invited: they only use API keys.' }, 400);
       if (m.status !== 'invited') return c.json({ error: `${m.name} has already joined.` }, 400);
       const ws = repo.workspace();
       const link = db.tx(() => {

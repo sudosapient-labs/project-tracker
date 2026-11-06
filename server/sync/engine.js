@@ -27,7 +27,7 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
     return { ...v, fav: favs[c].has(v.id) };
   }
 
-  function makeCtx(auth) {
+  function makeCtx(auth, via = null) {
     const ctx = {
       db,
       repo,
@@ -35,6 +35,8 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
       mailer,
       me: auth.member,
       uid: auth.member.id,
+      // What made the change when it wasn't the app (an API key, the CLI, an MCP client), for activity.
+      via,
       now: Date.now(),
       changes: [],
       resync: new Set(),
@@ -157,33 +159,42 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
     return after;
   }
 
-  /* Apply a batch for one signed-in person. Each op gets its own savepoint inside one transaction. */
-  function apply(auth, ops, clientId) {
-    const ctx = makeCtx(auth);
+  /* Apply a batch for one signed-in person. Each op gets its own savepoint inside one transaction.
+     `atomic` (the public API): the first rejected op rolls the whole batch back, so a request never
+     half-applies; its result is `failed`. */
+  function apply(auth, ops, clientId, { via = null, atomic = false } = {}) {
+    const ctx = makeCtx(auth, via);
     const favs = repo.favorites(ctx.uid);
     const results = [];
-    db.tx(() => {
-      ops.forEach((op, i) => {
-        const mark = ctx.changes.length;
-        db.exec('SAVEPOINT op');
-        try {
-          const v = applyOp(ctx, op, favs);
-          db.exec('RELEASE op');
-          results.push({ ok: true, v: project(op.c, visible(op.c, v, ctx.me), favs) });
-        } catch (e) {
-          db.exec('ROLLBACK TO op');
-          db.exec('RELEASE op');
-          ctx.changes.length = mark;
-          ctx.afterPut.length = 0;
-          if (!(e instanceof Reject)) {
-            log.error?.(`[sync] op ${i} (${op?.c}/${op?.k}) failed`, e);
-            results.push({ ok: false, error: 'Something went wrong saving this change.', v: current(op, favs, ctx.me) });
-          } else results.push({ ok: false, error: e.message, status: e.status, v: current(op, favs, ctx.me) });
-        }
+    let failed = null;
+    try {
+      db.tx(() => {
+        ops.forEach((op, i) => {
+          const mark = ctx.changes.length;
+          db.exec('SAVEPOINT op');
+          try {
+            const v = applyOp(ctx, op, favs);
+            db.exec('RELEASE op');
+            results.push({ ok: true, v: project(op.c, visible(op.c, v, ctx.me), favs) });
+          } catch (e) {
+            db.exec('ROLLBACK TO op');
+            db.exec('RELEASE op');
+            ctx.changes.length = mark;
+            ctx.afterPut.length = 0;
+            if (!(e instanceof Reject)) {
+              log.error?.(`[sync] op ${i} (${op?.c}/${op?.k}) failed`, e);
+              results.push({ ok: false, error: 'Something went wrong saving this change.', status: 500, v: current(op, favs, ctx.me) });
+            } else results.push({ ok: false, error: e.message, status: e.status, v: current(op, favs, ctx.me) });
+            if (atomic) throw (failed = results.at(-1));
+          }
+        });
       });
-    });
+    } catch (e) {
+      if (!failed || e !== failed) throw e;
+      return { results, links: [], failed };
+    }
     afterCommit(ctx, clientId);
-    return { results, links: ctx.links };
+    return { results, links: ctx.links, failed };
   }
 
   function current(op, favs, me) {
@@ -205,16 +216,32 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
     afterCommit(ctx, null);
   }
 
+  /* The batch is saved: a failure fanning it out (a broken stream, mail) mustn't report it unsaved,
+     and each step runs on its own, so one failing can't stop e.g. people just removed from being
+     disconnected. */
   function afterCommit(ctx, clientId) {
-    mailer.drain();
-    publish(ctx.changes, { exceptClient: clientId });
-    for (const uid of ctx.removedUsers) for (const k of conns) if (k.uid === uid) k.close();
-    if (ctx.resync.has('*')) conns.forEach(k => k.send('resync', {}));
-    else for (const k of conns) if (ctx.resync.has(k.uid)) k.send('resync', {});
-    for (const key of ctx.blobGc) {
-      if (db.get('SELECT 1 FROM files WHERE storage_key = ?', key)) continue;
-      fs.rm(path.join(config.uploadDir, key), { force: true }, () => {});
-    }
+    const steps = [
+      () => mailer.drain(),
+      () => publish(ctx.changes, { exceptClient: clientId }),
+      () => {
+        for (const uid of ctx.removedUsers) for (const k of conns) if (k.uid === uid) k.close();
+      },
+      () => {
+        for (const k of conns) if (ctx.resync.has('*') || ctx.resync.has(k.uid)) k.send('resync', {});
+      },
+      () => {
+        for (const key of ctx.blobGc) {
+          if (db.get('SELECT 1 FROM files WHERE storage_key = ?', key)) continue;
+          fs.rm(path.join(config.uploadDir, key), { force: true }, () => {});
+        }
+      },
+    ];
+    for (const step of steps)
+      try {
+        step();
+      } catch (e) {
+        log.error?.('[sync] after-commit work failed', e);
+      }
   }
 
   /* ---------- fan-out ---------- */
@@ -256,7 +283,12 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
         }
         out.push(DOCS.has(ch.c) ? { c: ch.c, v } : { c: ch.c, id: ch.id, v });
       }
-      if (out.length) k.send('changes', out);
+      try {
+        if (out.length) k.send('changes', out);
+      } catch (e) {
+        // One broken stream mustn't keep the changes from everyone after it.
+        log.error?.('[sync] sending changes failed', e);
+      }
     }
   }
 

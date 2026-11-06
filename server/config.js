@@ -50,5 +50,7 @@ export function loadConfig(env = process.env) {
     // Encrypts TOTP secrets at rest (AES-256-GCM) when set; see lib/crypto.js.
     secretKey,
     rateLimit: env.DISABLE_RATE_LIMIT !== 'true',
+    // Requests per minute for each person's API keys together (/api/v1 and /api/mcp), counted in this process.
+    apiRateLimit: Math.max(1, Math.floor(Number(env.API_RATE_LIMIT) || 120)),
   };
 }

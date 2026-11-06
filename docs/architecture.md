@@ -42,6 +42,21 @@ proxies `/api` to the API on :8787.
   belongs to the session that made it and is deleted when that session ends (sign out, revoked,
   password change or reset, expiry, removal); the browser subscribes again after its next sign-in.
 
+## Public API, MCP and CLI
+
+- **`/api/v1`** (`server/api/`) is the public REST API for personal API keys (Settings → API).
+  Routes are declared once in `v1.js`; the same table registers them and generates the OpenAPI 3.1
+  document (`/api/v1/openapi.json`, rendered at `/api/docs`) from the zod schemas in `schemas.js`.
+- **Writes are sync operations.** Each write builds the records and activity lines the app itself
+  would send (e.g. a task `put` plus a "created" activity entry) and runs them through
+  `engine.apply` in atomic mode: one transaction, all or nothing. So validation, permissions,
+  notifications, emails and live updates to open apps are exactly the app's. The server stamps
+  activity with `via` (the client's `X-Sudo-Client` label or the key's name).
+- **MCP** (`packages/mcp`, no dependencies) is a small JSON-RPC server over stdio (`sudo-mcp`) and
+  Streamable HTTP. The app hosts it at `/api/mcp`, where each tool calls `/api/v1` in-process with the
+  caller's key. **The CLI** (`packages/cli`, `sudo-cli`) and the MCP server share
+  `packages/client`, a fetch wrapper for `/api/v1`. See [the API reference](api.md).
+
 ## Installable app (PWA)
 
 `public/manifest.webmanifest` and the service worker (`public/sw.js`) make the app installable. The

@@ -88,6 +88,8 @@ export function readSession(c, db) {
   const user = db.get('SELECT * FROM users WHERE id = ?', s.user_id);
   const mrow = user && db.get('SELECT data FROM members WHERE id = ?', user.id);
   if (!user || !mrow) return null;
+  // Bots never have sessions (nothing can create one); refuse one anyway rather than trust that.
+  if (user.kind === 'bot') return null;
   if (now - s.last_seen_at > TOUCH_MS) db.run('UPDATE sessions SET last_seen_at = ? WHERE id = ?', now, s.id);
   return { session: s, user, member: JSON.parse(mrow.data) };
 }

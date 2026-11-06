@@ -54,6 +54,7 @@ export function client(app, { ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)
     get: (u, h) => req('GET', u, null, h),
     post: (u, b = {}, h) => req('POST', u, b, h),
     put: (u, b = {}, h) => req('PUT', u, b, h),
+    patch: (u, b = {}, h) => req('PATCH', u, b, h),
     del: (u, h) => req('DELETE', u, null, h),
     sync: ops => req('POST', '/api/sync', { ops }),
     get cookie() {
@@ -89,4 +90,44 @@ export async function account(t, { name = 'Ada Owner', email = 'ada@example.com'
     if (v.status !== 200) throw new Error('verify failed');
   }
   return { c, user: r.body.user };
+}
+
+/* A personal API key for a signed-in client (Settings → API). */
+export async function apiKey(c, { name = 'Test key', scope = 'write', expiresInDays = null } = {}) {
+  const r = await c.post('/api/keys', { name, scope, expiresInDays, password: PW });
+  if (r.status !== 201) throw new Error(`key failed: ${r.status} ${JSON.stringify(r.body)}`);
+  return r.body.token;
+}
+
+/* A bot member (Settings → API → Bots) made by a signed-in Owner/Admin, and a key for it. */
+export async function bot(c, { name = 'Release Bot', role = 'Member', projects = [], key = 'GitHub Actions', scope = 'write' } = {}) {
+  const r = await c.post('/api/bots', { name, role, projects });
+  if (r.status !== 201) throw new Error(`bot failed: ${r.status} ${JSON.stringify(r.body)}`);
+  const k = await c.post(`/api/bots/${r.body.id}/keys`, { name: key, scope, expiresInDays: null, password: PW });
+  if (k.status !== 201) throw new Error(`bot key failed: ${k.status} ${JSON.stringify(k.body)}`);
+  return { id: r.body.id, token: k.body.token, keyId: k.body.key.id };
+}
+
+/* Calls /api/v1 with a bearer key, the way scripts do: no cookies, no CSRF header. */
+export function keyClient(app, token, { client } = {}) {
+  async function req(method, url, body, headers = {}) {
+    const res = await app.request('/api/v1' + url, {
+      method,
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(client ? { 'x-sudo-client': client } : {}),
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...headers,
+      },
+      body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
+    });
+    const type = res.headers.get('content-type') || '';
+    return { status: res.status, body: type.includes('json') ? await res.json() : await res.text(), headers: res.headers };
+  }
+  return {
+    get: (u, h) => req('GET', u, undefined, h),
+    post: (u, b = {}, h) => req('POST', u, b, h),
+    patch: (u, b, h) => req('PATCH', u, b, h),
+    del: (u, h) => req('DELETE', u, undefined, h),
+  };
 }

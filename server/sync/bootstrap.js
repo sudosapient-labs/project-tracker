@@ -4,6 +4,9 @@
 import { listSessions } from '../auth.js';
 import { canSee, memberFor, projectFor } from './rules.js';
 import { DEFAULT_NOTIF_PREFS } from '../notify.js';
+import { listKeys } from '../api/keys.js';
+import { listBots } from '../api/bots.js';
+import { isAdminRole } from '../../src/core/access.js';
 
 const ACTIVITY_LIMIT = 1000;
 const NOTIF_LIMIT = 500;
@@ -65,6 +68,9 @@ export function bootstrap({ db, repo }, auth) {
       savedViews: repo.all('savedViews', `WHERE ${IN} ORDER BY created_at, rowid`, vis),
       recentSearches: state.recentSearches,
       sessions: listSessions(db, uid, auth.session.id),
+      apiKeys: listKeys(db, uid),
+      // Settings → API → Bots, for the Owner and Admins who manage them.
+      bots: isAdminRole(auth.member) ? listBots(db, repo) : [],
       tfa: !!user.totp_enabled,
       notifPrefs: { ...DEFAULT_NOTIF_PREFS, ...state.notifPrefs },
     },

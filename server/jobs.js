@@ -54,7 +54,7 @@ export function runReminders({ db, repo, engine, mailer, config }, now = Date.no
 export function runDigests({ db, repo, mailer, config }, now = Date.now()) {
   let sent = 0;
   for (const m of repo.all('members')) {
-    if (m.status !== 'active' || !db.get('SELECT 1 FROM users WHERE id = ?', m.id)) continue;
+    if (m.status !== 'active' || m.kind === 'bot' || !db.get('SELECT 1 FROM users WHERE id = ?', m.id)) continue;
     if (!notifPrefs(repo, m.id).email_digest) continue;
     const l = local(tzOf(repo, m.id), now);
     if (l.weekday === 'Sat' || l.weekday === 'Sun' || l.hour < 8) continue;
@@ -97,5 +97,6 @@ export function housekeep({ db }, now = Date.now()) {
   db.run("DELETE FROM notifications WHERE created_at < ? AND json_extract(data, '$.read')", now - 180 * DAY);
   db.run('DELETE FROM auth_tokens WHERE expires_at < ?', now - 7 * DAY);
   db.run('DELETE FROM outbox WHERE COALESCE(sent_at, CASE WHEN attempts >= ? THEN created_at END) < ?', MAX_ATTEMPTS, now - 30 * DAY);
+  db.run('DELETE FROM api_idempotency WHERE created_at < ?', now - DAY);
   db.run("DELETE FROM reminders WHERE NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id = reminders.task_id AND json_extract(t.data, '$.status') != 'done')");
 }

@@ -96,6 +96,10 @@ describe('projects and tasks', () => {
     expect(r.body.results[0].error).toMatch(/status/);
     expect(r.body.results[1]).toMatchObject({ ok: true, v: { title: 'ok' } });
     expect(r.body.results[2]).toMatchObject({ ok: false, v: null });
+    // Dates must exist, or completing a repeating task through the API couldn't schedule the next one.
+    for (const due of ['2026-02-31', '2026-13-45', '2026-11-06T25:00Z'])
+      expect((await owner.sync([patch('tasks', 't1', { due })])).body.results[0], due).toMatchObject({ ok: false, v: { due: null } });
+    expect((await owner.sync([patch('tasks', 't1', { due: '2028-02-29' })])).body.results[0].ok).toBe(true);
   });
 
   it('keeps favourites per person', async () => {
