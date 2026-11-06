@@ -46,6 +46,7 @@ projects and Can view / Can comment apply to it exactly as to a person.
 | Method | Path                    | What                                                                                                      |
 | ------ | ----------------------- | --------------------------------------------------------------------------------------------------------- |
 | GET    | `/me`                   | The key's person or bot (`kind`), workspace and key scope                                                 |
+| DELETE | `/me/key`               | Revoke the key making the request (any scope; it can't name another key). `sudo-cli logout` offers it     |
 | GET    | `/tasks`                | Newest first; `project`, `status` (comma list or `open`), `assignee` (`me`/id/email), `q`, `updatedSince` |
 | POST   | `/tasks`                | Create: `project`, `title`, optional `description`, `status`, `priority`, `assignee`, `due`, `labels`, …  |
 | GET    | `/tasks/{ref}`          | A task by id or key (`WEB-12`)                                                                            |

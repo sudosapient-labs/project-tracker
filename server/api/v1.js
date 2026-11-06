@@ -268,6 +268,20 @@ export function v1Routes({ limit }) {
     },
   });
 
+  route('delete', '/me/key', {
+    id: 'revokeMyKey',
+    tag: 'Me',
+    summary: 'Revoke the key making this request (read-only keys too); it stops working at once',
+    ok: ok(S.Revoked),
+    run: x => {
+      // Only ever the key presented: there is no id to name another one.
+      const { key } = x.c.var.auth;
+      x.db.run('DELETE FROM api_keys WHERE id = ?', key.id);
+      x.c.set('committed', true);
+      return { revoked: true, id: key.id };
+    },
+  });
+
   route('get', '/tasks', {
     id: 'listTasks',
     tag: 'Tasks',

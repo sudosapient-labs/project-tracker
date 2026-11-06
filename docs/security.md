@@ -113,7 +113,8 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 
 - Created and revoked in Settings → API with a signed-in session (and its CSRF header); creating one
   also needs the current password, so a signed-in browser alone (say, a stolen session) can't mint a
-  credential that outlives it. A key can't create, list or revoke keys. A key is `ssk_` + 32 random
+  credential that outlives it. A key can't create or list keys, and the only key it can revoke is itself
+  (`DELETE /api/v1/me/key`, allowed for read-only keys too, since it only takes access away). A key is `ssk_` + 32 random
   bytes, shown once; only its SHA-256 is stored (like session tokens it's high-entropy, so a slow
   hash adds nothing), with a 12-character prefix for the list. Each has a last-used time and an
   optional expiry (30, 90 or 365 days); at most 25 per person.
