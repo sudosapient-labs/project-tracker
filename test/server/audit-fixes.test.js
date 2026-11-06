@@ -1,5 +1,5 @@
 /* Regressions for the platform audit's high and medium findings (H1–M8). */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PW, account, apiKey, keyClient, setup } from './helpers.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -141,6 +141,158 @@ describe('H1 rich text is bounded before it is sanitised', () => {
     expect(richTextProblem('<ul>' + '<li>item'.repeat(70) + '</ul>')).toBeNull();
     expect(richTextProblem('<p>x'.repeat(70))).toBeNull();
     expect(richTextProblem('<dl>' + '<dt>a<dd>b'.repeat(70) + '</dl>')).toBeNull();
+  });
+
+  it('measures nesting with the sanitiser’s own parser, and never re-parses fallback content', () => {
+    const fill = unit => unit.repeat(Math.floor(99_000 / unit.length));
+    const plain = fill('<p>hello <b>world</b></p>');
+    cleanRich(plain);
+    const t0 = performance.now();
+    cleanRich(plain);
+    const limit = 4 * (performance.now() - t0) + 40;
+    // Raw text that the sanitiser used to re-parse (iframe fallback), and SVG-adjusted names that a
+    // hand-made copy of the parser read differently.
+    for (const html of [
+      '<iframe>' + fill('<b></q>'),
+      '<foreignobject><svg></foreignobject><script>' + fill('<b></q>'),
+      '<clippath><svg></clippath><style>' + fill('<b></q>'),
+      '<noscript>' + fill('<b></q>'),
+    ]) {
+      const t1 = performance.now();
+      if (!richTextProblem(html)) cleanRich(html);
+      expect(performance.now() - t1).toBeLessThan(limit);
+    }
+    expect(cleanRich('<p>a</p><iframe><b>hidden</b></iframe><p>b</p>')).toBe('<p>a</p><p>b</p>');
+  });
+
+  it('fuzz: random tag soup either is refused or sanitises in linear time', () => {
+    const TOKENS = [
+      '<html>',
+      '<body>',
+      '<svg>',
+      '</svg>',
+      '<math>',
+      '</math>',
+      '<foreignObject>',
+      '<foreignobject>',
+      '</foreignObject>',
+      '</foreignobject>',
+      '<clippath>',
+      '<clipPath>',
+      '</clippath>',
+      '<iframe>',
+      '</iframe>',
+      '<script>',
+      '</script>',
+      '<style>',
+      '</style>',
+      '<textarea>',
+      '</textarea>',
+      '<title>',
+      '</title>',
+      '<noscript>',
+      '</noscript>',
+      '<template>',
+      '</template>',
+      '<!--',
+      '-->',
+      '<![CDATA[',
+      ']]>',
+      '<b>',
+      '</b>',
+      '</q>',
+      '<p>',
+      '</p>',
+      '<li>',
+      '<div>',
+      '</div>',
+      '<b/>',
+      '<a href="x">',
+      'text',
+      '<xmp>',
+      '<select>',
+      '<option>',
+      '<table>',
+      '<td>',
+      '<mi>',
+      '<desc>',
+      '<B>',
+      '</Q>',
+    ];
+    let seed = 20261107;
+    const rnd = n => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n;
+    const SIZE = 100_000;
+    const plain = '<p>hello <b>world</b></p>'.repeat(SIZE / 25);
+    const run = html => {
+      const t1 = performance.now();
+      if (!richTextProblem(html)) cleanRich(html);
+      return performance.now() - t1;
+    };
+    const pick = n => Array.from({ length: n }, () => TOKENS[rnd(TOKENS.length)]).join('');
+    const timed = [];
+    for (let i = 0; i < 300; i++) {
+      // A short prefix (a context like <svg> or <iframe>) and a unit repeated to 100 KB.
+      const unit = pick(1 + rnd(4));
+      const html = (pick(rnd(5)) + unit.repeat(Math.ceil(SIZE / unit.length))).slice(0, SIZE);
+      timed.push({ html, ms: run(html) });
+    }
+    // The slowest few, timed again against plain text (best of 3, interleaved, so other tests
+    // running alongside don't decide the outcome). Linear work stays within a small multiple of
+    // plain text; the superlinear cases this guards against took 5–40 times as long.
+    for (const { html } of timed.sort((x, y) => y.ms - x.ms).slice(0, 5)) {
+      let best = Infinity;
+      let base = Infinity;
+      for (let i = 0; i < 3; i++) {
+        base = Math.min(base, run(plain));
+        best = Math.min(best, run(html));
+      }
+      expect(best, html.slice(0, 80)).toBeLessThan(3.5 * base + 25);
+    }
+  });
+
+  it('stops sanitising for a request once it has taken too long, whatever the checks say', async () => {
+    const { t, ada } = await workspace();
+    await ada.sync([put('projects', project('p1'))]);
+    // Every sanitising pass now "takes" 300 ms (the budget is 500 ms a request).
+    let clock = 0;
+    const spy = vi.spyOn(performance, 'now').mockImplementation(() => (clock += 300));
+    try {
+      const r = await ada.sync([1, 2, 3].map(i => put('tasks', task(`t${i}`, 'p1', { key: undefined, desc: '<p>x</p>' }))));
+      expect(r.body.results.map(x => [x.ok, x.status ?? 200, !!x.retry])).toEqual([
+        [true, 200, false],
+        [false, 413, true],
+        [false, 413, true],
+      ]);
+      // Alone in its request, a description that slow is refused for good.
+      clock = 0;
+      spy.mockImplementation(() => (clock += 600));
+      const one = await ada.sync([put('tasks', task('t9', 'p1', { key: undefined, desc: '<p>y</p>' }))]);
+      expect(one.body.results[0]).toMatchObject({
+        ok: false,
+        status: 413,
+        error: 'desc: This description takes too long to process. Simplify its formatting.',
+      });
+      expect(one.body.results[0].retry).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(t.db.get('SELECT COUNT(*) n FROM tasks').n).toBe(1);
+  });
+
+  it('copies an older, deeply nested description into the next repeat instead of refusing', async () => {
+    const { t, ada } = await workspace();
+    await ada.sync([put('projects', project('p1'))]);
+    const deep = '<div>'.repeat(80) + 'old' + '</div>'.repeat(80);
+    await ada.sync([put('tasks', task('t1', 'p1', { recur: 'Weekly', due: '2026-11-10' }))]);
+    // Stored before nesting was limited.
+    t.repo.put('tasks', { ...t.repo.get('tasks', 't1'), desc: deep }, 'p1');
+    const api = keyClient(t.app, await apiKey(ada));
+    const r = await api.post('/tasks/t1/complete');
+    expect(r.status).toBe(200);
+    const next = t.repo.all('tasks').find(x => x.id !== 't1');
+    expect(next).toMatchObject({ desc: deep, status: 'todo' });
+    // A new deep description is still refused.
+    expect((await api.patch('/tasks/t1', { descriptionHtml: '<div>'.repeat(80) + 'new' })).status).toBe(400);
   });
 
   it('caps the rich text one request can have sanitised', async () => {

@@ -7,6 +7,7 @@ import { COMMENT, EDIT, PERMS, VIEW, canManageProject, canSeeProject, isAdminRol
 import { fileType, fsize } from '../../src/core/file-types.js';
 import { Reject } from '../lib/http.js';
 import { cleanRich, richTextProblem } from '../lib/rich-text.js';
+import { RICH_MS_PER_REQUEST } from './budget.js';
 import { mentioned, notify } from '../notify.js';
 import { issueToken } from '../routes/auth.js';
 
@@ -97,19 +98,42 @@ function needFileTask(ctx, f) {
 }
 
 /* A description is checked before it's sanitised: sanitising very long or deeply nested markup is
-   slow enough to stall the server. Each request has a budget of rich text (ctx.richLeft) too. */
-function richDesc(ctx, desc) {
-  // One request may only make the server read so much rich text, however many ops carry it.
+   slow enough to stall the server. Each request also has a budget of rich text, in characters
+   (ctx.richLeft) and in time spent checking and sanitising it (ctx.richMsLeft), so a batch can't
+   multiply the cost and a description the checks misjudge can't stall the server for long. Ops past
+   the budget are refused with `retry` (the app sends them again in a later request); one that is
+   too slow on its own is refused for good. */
+const busy = () => Object.assign(new Reject('desc: This batch has too much formatted text. Send it in smaller batches.', 413), { retry: true });
+function richDesc(ctx, desc, pid) {
   if (typeof desc === 'string') {
-    if (desc.length > ctx.richLeft) {
+    if (desc.length > ctx.richLeft || ctx.richMsLeft <= 0) {
       ctx.richLeft = 0;
-      throw new Reject('desc: This batch has too much formatted text. Send it in smaller batches.', 413);
+      throw busy();
     }
     ctx.richLeft -= desc.length;
   }
+  const fresh = ctx.richMsLeft === RICH_MS_PER_REQUEST;
+  const t0 = performance.now();
+  let out, err;
+  try {
+    out = settleDesc(ctx, desc, pid);
+  } catch (e) {
+    err = e;
+  }
+  ctx.richMsLeft -= performance.now() - t0;
+  // Over the time budget: refused even if it was sanitised (alone in its request: for good).
+  if (ctx.richMsLeft < 0 && typeof desc === 'string')
+    throw fresh ? new Reject('desc: This description takes too long to process. Simplify its formatting.', 413) : busy();
+  if (err) throw err;
+  return out;
+}
+function settleDesc(ctx, desc, pid) {
   const problem = richTextProblem(desc);
-  if (problem) throw new Reject(`desc: ${problem}`, 400);
-  return cleanRich(desc);
+  if (!problem) return cleanRich(desc);
+  // A description already stored (it was sanitised then, before nesting was limited) may be copied
+  // as it is, e.g. into the next repeat of a task: an old record must not block that.
+  if (problem.includes('nested') && ctx.db.get("SELECT 1 FROM tasks WHERE project_id = ? AND json_extract(data, '$.desc') = ? LIMIT 1", pid, desc)) return desc;
+  throw new Reject(`desc: ${problem}`, 400);
 }
 
 function needEventScope(ctx, pid) {
@@ -247,7 +271,7 @@ export const RULES = {
       const p = needProject(ctx, t.project);
       needAssignee(ctx, p, t.assignee);
       needSubAssignees(ctx, p, t);
-      t.desc = richDesc(ctx, t.desc);
+      t.desc = richDesc(ctx, t.desc, t.project);
       settleAttachments(ctx, t);
       settleKey(ctx, t, p);
       if (t.assignee) notify(ctx, t.assignee, 'assign', { type: 'assign', task: t.id, text: 'assigned you', snippet: dueSnippet(t) }, t);
@@ -263,7 +287,7 @@ export const RULES = {
       else if (keys.includes('key')) t.key = before.key;
       if (moved || keys.includes('assignee')) needAssignee(ctx, p, t.assignee);
       if (moved || keys.includes('subtasks')) needSubAssignees(ctx, p, t, moved ? null : before);
-      if (keys.includes('desc')) t.desc = richDesc(ctx, t.desc);
+      if (keys.includes('desc')) t.desc = richDesc(ctx, t.desc, t.project);
       if (moved) moveTaskRecords(ctx, t, before.project);
       // Every save re-checks attachments, so older records with foreign links heal too.
       settleAttachments(ctx, t);

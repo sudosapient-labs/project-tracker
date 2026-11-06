@@ -14,13 +14,13 @@ import { Reject } from '../lib/http.js';
 import { currentAuth } from '../auth.js';
 import { DOC_SCHEMAS, MAX_RECORD_BYTES, SCHEMAS } from './schemas.js';
 import { MERGED, mergeField } from './merge.js';
+import { RICH_MS_PER_REQUEST, RICH_PER_REQUEST } from './budget.js';
 import { RULES, canSee, isAdmin, memberFor, projectFor, removeMemberCascade } from './rules.js';
 
 const PROJECT_SCOPED = new Set(['tasks', 'comments', 'activity', 'files', 'events', 'savedViews']);
 /* How long a deleted record can be restored by Undo (see `restore` in rules.js). */
 export const RESTORE_MS = 10 * 60_000;
-/* Rich text one request may have sanitised in all (10 full descriptions); see richDesc in rules.js. */
-export const RICH_PER_REQUEST = 1_000_000;
+
 const PERSONAL_DOCS = new Set(['projOrder', 'recentSearches', 'notifPrefs']);
 const DOCS = new Set(['ws', ...PERSONAL_DOCS]);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -46,8 +46,9 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
       // What made the change when it wasn't the app (an API key, the CLI, an MCP client), for activity.
       via,
       now: Date.now(),
-      // Characters of rich text this request may still have checked and sanitised (rules.js).
+      // Rich text this request may still have checked and sanitised (rules.js richDesc).
       richLeft: RICH_PER_REQUEST,
+      richMsLeft: RICH_MS_PER_REQUEST,
       changes: [],
       resync: new Set(),
       removedUsers: [],
@@ -233,7 +234,7 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
             if (!(e instanceof Reject)) {
               log.error?.(`[sync] op ${i} (${op?.c}/${op?.k}) failed`, e);
               results.push({ ok: false, error: 'Something went wrong saving this change.', status: 500, v: current(op, favs, ctx.me) });
-            } else results.push({ ok: false, error: e.message, status: e.status, v: current(op, favs, ctx.me) });
+            } else results.push({ ok: false, error: e.message, status: e.status, ...(e.retry ? { retry: true } : {}), v: current(op, favs, ctx.me) });
             if (atomic) throw (failed = results.at(-1));
           }
         });

@@ -13,6 +13,11 @@ import { RICH_ATTRS, RICH_SCHEMES, RICH_TAGS } from '../../src/core/rich-text.js
 export const RICH_MAX = 100_000;
 export const RICH_MAX_DEPTH = 64;
 
+/* sanitize-html's default nonTextTags, plus the tags whose content it would otherwise keep: when an
+   <iframe> is discarded its content is re-parsed as HTML (a second parser per level), and noscript,
+   noembed and noframes hold fallback markup too. Their content is dropped instead, so the one parse
+   depth() measures is the only one. */
+const NON_TEXT = ['script', 'style', 'textarea', 'option', 'xmp', 'iframe', 'noscript', 'noembed', 'noframes'];
 const OPTS = {
   allowedTags: RICH_TAGS,
   allowedAttributes: RICH_ATTRS,
@@ -20,148 +25,37 @@ const OPTS = {
   allowedSchemesAppliedToAttributes: ['href'],
   allowProtocolRelative: false,
   disallowedTagsMode: 'discard',
+  nonTextTags: NON_TEXT,
   nestingLimit: RICH_MAX_DEPTH,
 };
+/* The options sanitize-html gives its parser (its htmlParserDefaults merged with ours). */
+const PARSER_OPTS = { decodeEntities: true };
 
-/* How deeply the parser sanitize-html uses (htmlparser2) will nest `html`'s elements. Its own stack
-   costs time proportional to the depth on every tag (and on every end tag that matches nothing), so
-   nesting is what makes sanitising superlinear. This runs htmlparser2's own tokenizer (the instance
-   sanitize-html uses, so comments, CDATA, raw text and attribute quoting are read exactly as it
-   reads them) and replays the parser's stack rules from Parser.js: end tags that match nothing are
-   ignored, optional end tags (p, li, dd, td, …) close implicitly, void elements never open. Linear:
-   each element is pushed and popped once, and membership is a counter. */
+/* How deeply `html`'s elements nest, measured by running the very parser sanitize-html uses
+   (htmlparser2, the copy sanitize-html depends on, with the options it passes), so there is nothing
+   to keep in step with it. That parser's stack costs time proportional to its depth on every tag,
+   which is what makes sanitising deep markup superlinear; it stops as soon as the depth passes the
+   limit, so this pass stays linear. */
 const htmlparser = createRequire(createRequire(import.meta.url).resolve('sanitize-html'))('htmlparser2');
-const VOID = new Set([
-  'area',
-  'base',
-  'basefont',
-  'br',
-  'col',
-  'command',
-  'embed',
-  'frame',
-  'hr',
-  'img',
-  'input',
-  'isindex',
-  'keygen',
-  'link',
-  'meta',
-  'param',
-  'source',
-  'track',
-  'wbr',
-]);
-const FORM = ['input', 'option', 'optgroup', 'select', 'button', 'datalist', 'textarea'];
-const HEADING = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p'];
-const CLOSES_P = [
-  'address',
-  'article',
-  'aside',
-  'blockquote',
-  'details',
-  'div',
-  'dl',
-  'fieldset',
-  'figcaption',
-  'figure',
-  'footer',
-  'form',
-  'header',
-  'hr',
-  'main',
-  'nav',
-  'ol',
-  'pre',
-  'section',
-  'table',
-  'ul',
-];
-const IMPLIES_CLOSE = new Map(
-  [
-    ['tr', ['tr', 'th', 'td']],
-    ['th', ['th']],
-    ['td', ['thead', 'th', 'td']],
-    ['body', ['head', 'link', 'script']],
-    ['a', ['a']],
-    ['li', ['li']],
-    ['p', ['p']],
-    ...HEADING.slice(0, 6).map(h => [h, HEADING]),
-    ...['select', 'input', 'output', 'button', 'datalist', 'textarea'].map(t => [t, FORM]),
-    ['option', ['option']],
-    ['optgroup', ['optgroup', 'option']],
-    ['dd', ['dd', 'dt']],
-    ['dt', ['dd', 'dt']],
-    ...CLOSES_P.map(t => [t, ['p']]),
-    ['rt', ['rt', 'rp']],
-    ['rp', ['rt', 'rp']],
-    ['tbody', ['thead', 'tbody']],
-    ['tfoot', ['thead', 'tbody']],
-  ].map(([k, v]) => [k, new Set(v)]),
-);
-const INTEGRATION = new Set(['mi', 'mo', 'mn', 'ms', 'mtext', 'annotation-xml', 'desc', 'title']);
 const TOO_DEEP = Symbol('too deep');
-
 function depth(html) {
-  const stack = []; // { name, ctx } with the innermost last; ctx: it pushed a foreign context
-  const open = new Map(); // name → how many are on the stack
-  const foreign = ['none']; // innermost first, as in Parser.js
+  let open = 0;
   let max = 0;
-  let tag = '';
-  const push = name => {
-    const ctx = name === 'svg' ? 'svg' : name === 'math' ? 'math' : INTEGRATION.has(name) || (name === 'foreignobject' && foreign[0] === 'svg') ? 'none' : null;
-    if (ctx) foreign.unshift(ctx);
-    stack.push({ name, ctx });
-    open.set(name, (open.get(name) || 0) + 1);
-    if (stack.length > max && (max = stack.length) > RICH_MAX_DEPTH) throw TOO_DEEP;
-  };
-  const pop = () => {
-    const e = stack.pop();
-    open.set(e.name, open.get(e.name) - 1);
-    if (e.ctx) foreign.shift();
-  };
-  const top = () => stack.at(-1)?.name;
-  const noop = () => {};
-  const tokenizer = new htmlparser.Tokenizer(
-    { decodeEntities: true },
+  const parser = new htmlparser.Parser(
     {
-      onopentagname(start, end) {
-        tag = html.slice(start, end).toLowerCase();
-        if (tag === 'image' && foreign[0] === 'none') tag = 'img';
-        // A second <form> is ignored while one is open.
-        if (tag === 'form' && open.get('form')) return void (tag = '');
-        const implied = IMPLIES_CLOSE.get(tag);
-        if (implied) while (stack.length && implied.has(top())) pop();
-        if (!VOID.has(tag)) push(tag);
+      // Every element the parser opens, explicit or implied, is closed with one onclosetag.
+      onopentagname() {
+        if (++open > max && (max = open) > RICH_MAX_DEPTH) throw TOO_DEEP;
       },
-      onclosetag(start, end) {
-        const name = html.slice(start, end).toLowerCase();
-        if (VOID.has(name) || !open.get(name)) return;
-        while (top() !== name) pop();
-        pop();
+      onclosetag() {
+        open--;
       },
-      // Self-closing only counts inside SVG and MathML; elsewhere `<b/>` opens a <b>.
-      onselfclosingtag() {
-        if (foreign[0] !== 'none' && tag && top() === tag) pop();
-      },
-      isInForeignContext: () => foreign[0] !== 'none',
-      onopentagend: noop,
-      onattribdata: noop,
-      onattribentity: noop,
-      onattribend: noop,
-      onattribname: noop,
-      oncdata: noop,
-      oncomment: noop,
-      ondeclaration: noop,
-      onend: noop,
-      onprocessinginstruction: noop,
-      ontext: noop,
-      ontextentity: noop,
     },
+    { ...PARSER_OPTS },
   );
   try {
-    tokenizer.write(html);
-    tokenizer.end();
+    parser.write(html);
+    parser.end();
   } catch (e) {
     if (e !== TOO_DEEP) throw e;
   }
