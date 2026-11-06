@@ -12,8 +12,10 @@ const encode = label => `${Buffer.from(label).toString('base64url')}.${crypto.ra
 const decode = id => (id ? Buffer.from(String(id).split('.')[0], 'base64url').toString().slice(0, 40) || null : null);
 
 /* `connect({ authorization, label })` → { api, scope }. `origins`: allowed Origin values; requests
-   from any other browser origin are refused (DNS-rebinding protection). */
-export function createHttpHandler({ connect, readOnly = false, origins = [] }) {
+   from any other browser origin are refused (DNS-rebinding protection). `admit(count)`: called with
+   the number of messages in the request before any is handled; a Response it returns (e.g. a 429)
+   is sent instead, so a batch can't do more than its messages' worth of a rate limit. */
+export function createHttpHandler({ connect, readOnly = false, origins = [], admit = null }) {
   return async function handle(req) {
     const origin = req.headers.get('origin');
     if (origin && !origins.includes(origin)) return json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Origin not allowed' } }, 403);
@@ -31,6 +33,8 @@ export function createHttpHandler({ connect, readOnly = false, origins = [] }) {
     const s = { label: decode(req.headers.get('mcp-session-id')) };
     const mcp = createMcp({ connect: label => connect({ authorization, label }), readOnly });
     const msgs = Array.isArray(msg) ? msg : [msg];
+    const refused = admit && (await admit(msgs.length));
+    if (refused) return refused;
     const out = (await Promise.all(msgs.map(m => mcp.handle(m, s)))).filter(Boolean);
     const init = msgs.find(m => m?.method === 'initialize');
     const headers = init ? { 'mcp-session-id': encode(s.label || 'MCP') } : {};

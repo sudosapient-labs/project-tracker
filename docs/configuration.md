@@ -69,9 +69,9 @@ without it all fail closed. `pnpm start` and the Docker image set `production`.
 
 ## Public API
 
-| Variable         | Default | Meaning                                                                                                                                                                           |
-| ---------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `API_RATE_LIMIT` | `120`   | Requests a minute each personal API key may make to `/api/v1`, and separately to `/api/mcp` (MCP tool calls count as the API requests they make). Counted in memory, per process. |
+| Variable         | Default | Meaning                                                                                                                                                                                     |
+| ---------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `API_RATE_LIMIT` | `120`   | Requests a minute each person's API keys may make together to `/api/v1`, and separately to `/api/mcp` (MCP tool calls count as the API requests they make). Counted in memory, per process. |
 
 ## Development and test only
 

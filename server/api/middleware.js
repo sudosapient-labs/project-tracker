@@ -1,4 +1,4 @@
-/* Middleware for token-authenticated endpoints (/api/v1, /api/mcp): bearer keys, scopes, per-key
+/* Middleware for token-authenticated endpoints (/api/v1, /api/mcp): bearer keys, scopes, per-person
    rate limits and idempotent retries. These endpoints never read the session cookie, which is why
    they don't need the CSRF header: a cross-site page can't make a browser attach a bearer key. */
 import { sha256 } from '../lib/crypto.js';
@@ -41,7 +41,8 @@ export function viaLabel(c, key) {
 }
 
 /* Authorization: Bearer <key>. Sets c.var.auth ({ key, user, member }, the shape the sync engine
-   takes) and c.var.via. Requests are limited per key (RateLimit-* headers; 429 with Retry-After). */
+   takes) and c.var.via. Requests are limited per person, across all their keys, so making more
+   keys doesn't raise the limit (RateLimit-* headers; 429 with Retry-After). */
 export const bearer =
   ({ limit }) =>
   async (c, next) => {
@@ -51,13 +52,13 @@ export const bearer =
     const a = readKey(db, m[1]);
     if (a.error) return fail(c, 401, KEY_ERRORS[a.error], a.error);
     if (config.requireVerification && !a.user.email_verified_at) return fail(c, 403, 'Verify your email to use the API.', 'unverified');
-    const r = limit.take(`api:${a.key.id}`, config.apiRateLimit, MIN);
+    const r = limit.take(`api:${a.user.id}`, config.apiRateLimit, MIN);
     c.header('RateLimit-Limit', String(r.limit));
     c.header('RateLimit-Remaining', String(Math.max(0, r.remaining)));
     c.header('RateLimit-Reset', String(r.reset));
     if (!r.ok) {
       c.header('Retry-After', String(r.reset));
-      return fail(c, 429, `This key is limited to ${r.limit} requests a minute. Try again in ${r.reset} s.`);
+      return fail(c, 429, `Your API keys are limited to ${r.limit} requests a minute together. Try again in ${r.reset} s.`);
     }
     c.set('auth', a);
     c.set('via', viaLabel(c, a.key));

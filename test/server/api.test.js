@@ -475,8 +475,8 @@ describe('API conventions', () => {
     expect(got[0]).toBe('changes');
   });
 
-  it('limits each key with RateLimit headers and 429 + Retry-After', async () => {
-    const { t, ada } = await workspace({ DISABLE_RATE_LIMIT: 'false', API_RATE_LIMIT: '2' });
+  it('limits each person’s keys together, with RateLimit headers and 429 + Retry-After', async () => {
+    const { t, ada, bob } = await workspace({ DISABLE_RATE_LIMIT: 'false', API_RATE_LIMIT: '2' });
     const api = await as(t, ada);
     const r1 = await api.get('/me');
     expect(r1.headers.get('ratelimit-limit')).toBe('2');
@@ -486,8 +486,9 @@ describe('API conventions', () => {
     expect(r3.status).toBe(429);
     expect(r3.body.code).toBe('rate_limited');
     expect(Number(r3.headers.get('retry-after'))).toBeGreaterThan(0);
-    // A different key has its own budget.
-    expect((await (await as(t, ada)).get('/me')).status).toBe(200);
+    // Another key of the same person shares the budget; someone else has their own.
+    expect((await (await as(t, ada)).get('/me')).status).toBe(429);
+    expect((await (await as(t, bob)).get('/me')).status).toBe(200);
   });
 });
 

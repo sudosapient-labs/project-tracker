@@ -200,15 +200,26 @@ describe('MCP over HTTP without the SDK', () => {
     expect(via).toEqual(['MCP', 'Клод']);
   });
 
-  it('limits protocol requests per key too', async () => {
-    const { t, ada } = await workspace({ DISABLE_RATE_LIMIT: 'false', API_RATE_LIMIT: '2' });
+  it('limits protocol messages per person too, counting each message in a batch', async () => {
+    const { t, ada } = await workspace({ DISABLE_RATE_LIMIT: 'false', API_RATE_LIMIT: '4' });
     const token = await apiKey(ada);
-    const list = () => rpc(t, token, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
-    expect((await list()).status).toBe(200);
-    expect((await list()).status).toBe(200);
-    const third = await list();
-    expect(third.status).toBe(429);
-    expect(Number(third.headers.get('retry-after'))).toBeGreaterThan(0);
+    const list = (id = 1) => ({ jsonrpc: '2.0', id, method: 'tools/list' });
+    // A batch bigger than the whole budget is refused before any of it runs (the request counts once).
+    expect(
+      (
+        await rpc(
+          t,
+          token,
+          Array.from({ length: 50 }, (_, i) => list(i + 1)),
+        )
+      ).status,
+    ).toBe(429);
+    expect((await rpc(t, token, [list(1), list(2)])).status).toBe(200);
+    // 3 of 4 used, and another key of the same person shares what's left.
+    expect((await rpc(t, await apiKey(ada), list())).status).toBe(200);
+    const next = await rpc(t, token, list());
+    expect(next.status).toBe(429);
+    expect(Number(next.headers.get('retry-after'))).toBeGreaterThan(0);
   });
 });
 

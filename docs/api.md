@@ -54,7 +54,8 @@ People can be given as an id, an email, a full name, a unique first name, or `me
   and body gets the first response back (header `Idempotent-Replayed: true`) for 24 hours. The same
   key with a different body is refused (`422`).
 - **Atomic:** a request either applies whole or not at all.
-- **Rate limits:** `API_RATE_LIMIT` requests a minute per key (default 120), with `RateLimit-Limit`,
+- **Rate limits:** `API_RATE_LIMIT` requests a minute per person, shared by all their keys (default
+  120), with `RateLimit-Limit`,
   `RateLimit-Remaining` and `RateLimit-Reset` headers, and `429` with `Retry-After` when spent.
   Counted in memory: they reset on restart and assume one instance (see
   [operations](operations.md#known-limits)).

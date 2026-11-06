@@ -96,8 +96,9 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 - `/api/v1` and `/api/mcp` accept only `Authorization: Bearer`, never the session cookie, so they
   need no CSRF header: a cross-site page can't make a browser attach a bearer key, and no CORS is
   offered. `/api/mcp` also refuses browser `Origin`s other than the app's.
-- Each key may make `API_RATE_LIMIT` requests a minute to `/api/v1`, and as many MCP protocol
-  requests to `/api/mcp` (`RateLimit-*` headers, `429` with `Retry-After`). Changes show in Activity
+- Each person's keys together may make `API_RATE_LIMIT` requests a minute to `/api/v1`, and as
+  many MCP protocol messages to `/api/mcp`, each message in a batch counting once (`RateLimit-*`
+  headers, `429` with `Retry-After`). Making more keys doesn't raise the limit. Changes show in Activity
   as "Ada via CLI" (the client's label or the key's name), set by the server; the app can't forge one.
 - `sudo-cli` strips control characters from workspace text before printing it, so a task title
   can't send escape sequences to someone's terminal.

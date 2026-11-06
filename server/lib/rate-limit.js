@@ -24,13 +24,14 @@ export function rateLimiter({ enabled = true } = {}) {
     return true;
   };
   /* Like `hit`, but also says how many uses are left and when the window resets (for RateLimit-*
-     headers): { ok, limit, remaining, reset } with `reset` in seconds. */
-  const take = (key, limit, windowMs) => {
+     headers): { ok, limit, remaining, reset } with `reset` in seconds. `cost` uses at once (all or
+     none), e.g. one per message in a batch. */
+  const take = (key, limit, windowMs, cost = 1) => {
     const now = Date.now();
     if (!enabled) return { ok: true, limit, remaining: limit, reset: Math.ceil(windowMs / 1000) };
     const h = entry(key, windowMs, now);
-    const ok = h.n < limit;
-    if (ok) h.n++;
+    const ok = h.n + cost <= limit;
+    if (ok) h.n += cost;
     return { ok, limit, remaining: limit - h.n, reset: Math.max(1, Math.ceil((h.reset - now) / 1000)) };
   };
   /* Seconds until `key` may be used again, or 0 when it has uses left. Counts nothing. */
