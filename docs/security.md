@@ -103,6 +103,26 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 - `sudo-cli` strips control characters from workspace text before printing it, so a task title
   can't send escape sequences to someone's terminal.
 
+## Bot members
+
+- A bot is a `users` row with `kind = 'bot'`, no password and an address on the reserved `.invalid`
+  TLD (RFC 2606), plus a member record with `kind: 'bot'`. Every sign-in path refuses it by that
+  column, not by accident: sign-in and password reset look up people only, verify links never mark
+  one, no sign-in, reset, verify, invite or email-change link can be issued for one, a session row
+  for one is ignored, and the mailer drops any `.invalid` address. Notifications (and so email and
+  push) skip bots, and @mentions can't reach them.
+- Only Owners and Admins, with a signed-in session and its CSRF header, create, rename, re-scope and
+  remove bots and their keys (`/api/bots`); creating a key also needs the admin's current password.
+  Requests carrying a bearer key are refused (`403`), even alongside a session. Bots can only be
+  Members or Guests, and `kind` is server-owned: sync can't rename or promote a bot, or turn a
+  person into one.
+- A bot key acts as the bot (`by` is the bot, never the admin), with the bot's role and projects
+  read fresh on each request, and its own `api:<bot id>` rate-limit budget.
+- `api_keys.created_by` records the admin who made a bot's key, as an audit trail only:
+  `ON DELETE SET NULL`, so removing that admin keeps the key. Removing the bot deletes its keys
+  (cascade from its `users` row). A password reset of an admin's account revokes the bot keys they
+  made as well as their own, since whoever had control may have made one.
+
 ## Content security
 
 - Every response carries a strict CSP: scripts only from the app, `base-uri 'none'`,
