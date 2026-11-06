@@ -11,8 +11,9 @@ updates:
       minor-and-patch:
         update-types: [minor, patch]
 
+  # The workflows, plus the composite actions under .github/actions (which "/" alone doesn't cover).
   - package-ecosystem: github-actions
-    directory: /
+    directories: ['/', '/.github/actions/*']
     schedule:
       interval: weekly
     commit-message:
