@@ -109,4 +109,43 @@ describe('scheduled jobs', () => {
     expect(digests()[0].body_text).toContain('Ada Owner assigned you WEB-201 Task t1');
     expect(runDigests(t, Date.parse('2026-11-07T03:30:00Z'))).toBe(0); // Saturday
   });
+
+  it('reminds whoever an overdue task is reassigned to', async () => {
+    const { t, ada, adaId, bob, notifs } = await pair();
+    const now = Date.parse('2026-11-04T12:00:00Z');
+    await ada.sync([{ c: 'tasks', id: 't1', k: 'put', v: T('t1', { assignee: 'mbob', due: '2026-11-01' }) }]);
+    expect(runReminders(t, now)).toBe(1);
+    await ada.sync([{ c: 'tasks', id: 't1', k: 'patch', v: { assignee: adaId } }]);
+    const before = (await notifs(ada)).length;
+    expect(runReminders(t, now + 60_000)).toBe(1);
+    expect((await notifs(ada)).length - before).toBe(1);
+    expect((await notifs(ada))[0]).toMatchObject({ task: 't1', text: 'is overdue' });
+    expect(runReminders(t, now + 120_000)).toBe(0);
+    // Back to the first assignee: already reminded about this due date.
+    await ada.sync([{ c: 'tasks', id: 't1', k: 'patch', v: { assignee: 'mbob' } }]);
+    const bobs = (await notifs(bob)).length;
+    expect(runReminders(t, now + 180_000)).toBe(0);
+    expect((await notifs(bob)).length).toBe(bobs);
+  });
+
+  it('covers everything since the last digest, so Monday’s includes the weekend', async () => {
+    const { t, ada, bob, mails } = await pair();
+    const H = 3_600_000;
+    await bob.put('/api/me/state', { prefs: { tz: 'UTC' } });
+    await bob.sync([{ c: 'notifPrefs', k: 'patch', v: { email_digest: true } }]);
+    const fri9 = Date.parse('2026-11-06T09:00:00Z');
+    const mon9 = Date.parse('2026-11-09T09:00:00Z');
+    expect(runDigests(t, fri9)).toBe(0); // nothing yet, but Friday's digest is done
+    await ada.sync([{ c: 'tasks', id: 't1', k: 'put', v: T('t1', { assignee: 'mbob' }) }]);
+    await ada.sync([{ c: 'tasks', id: 't2', k: 'put', v: T('t2', { assignee: 'mbob' }) }]);
+    const at = (task, ms) => t.db.run("UPDATE notifications SET created_at = ? WHERE user_id = 'mbob' AND json_extract(data, '$.task') = ?", ms, task);
+    at('t1', fri9 + 6 * H); // Friday afternoon
+    at('t2', mon9 - 30 * H); // Sunday
+    expect(runDigests(t, mon9)).toBe(1);
+    const digest = mails('bob@example.com').find(m => m.subject.startsWith('Your Sudo Sapient digest'));
+    expect(digest.subject).toBe('Your Sudo Sapient digest: 2 updates');
+    expect(digest.body_text).toContain('since your last digest');
+    // Tuesday's starts where Monday's ended.
+    expect(runDigests(t, mon9 + 24 * H)).toBe(0);
+  });
 });
