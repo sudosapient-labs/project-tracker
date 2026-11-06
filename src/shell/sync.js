@@ -20,6 +20,8 @@ const BATCH = 200;
 
 let shadow = null;
 let queue = [];
+/* Queued ops pagehide has sent with keepalive: they stay queued until answered, but are sealed. */
+const keptAlive = new WeakSet();
 let inflight = [];
 let flushing = false;
 let retryT = null;
@@ -30,8 +32,8 @@ let errSink = null;
 let resyncWhenSaved = false;
 /* Ask for a resync (a fresh bootstrap) once every queued change is saved. */
 export const reloadWhenSaved = () => (resyncWhenSaved = true);
-/* `collection:id` of records restoreSnapshot put back after they were deleted. */
-const restoring = new Set();
+/* Records restoreSnapshot put back after they were deleted: `collection:id` → the record as it was. */
+const restoring = new Map();
 const hooks = { signedOut: () => {}, resync: () => {} };
 export const onSync = h => Object.assign(hooks, h);
 
@@ -108,13 +110,22 @@ export function collect(send = true) {
     for (const e of d[c] || []) {
       if (!e?.id) continue;
       seen.add(e.id);
-      const prev = sh.get(e.id);
+      let prev = sh.get(e.id);
       if (!prev) {
-        // A record Undo put back is restored by the server as it was (rules.js `restore`).
-        const restore = restoring.delete(`${c}:${e.id}`);
-        enqueue({ c, id: e.id, k: 'put', v: clone(e), ...(restore ? { restore } : {}) });
-        sh.set(e.id, fields(e));
-        continue;
+        const key = `${c}:${e.id}`;
+        const was = restoring.get(key);
+        restoring.delete(key);
+        if (!was) {
+          enqueue({ c, id: e.id, k: 'put', v: clone(e) });
+          sh.set(e.id, fields(e));
+          continue;
+        }
+        // A record Undo put back is restored by the server from its own copy (rules.js `restore`),
+        // which ignores the value sent. So the restore carries the record as it was, and anything
+        // changed since the undo (in the same save window) follows below as a patch on top.
+        enqueue({ c, id: e.id, k: 'put', v: clone(was), restore: true });
+        prev = fields(was);
+        sh.set(e.id, prev);
       }
       const set = {};
       const base = {};
@@ -157,10 +168,14 @@ export function collect(send = true) {
    (typing saves on every keystroke; offline, that would otherwise queue one full copy of the
    description per key): the later value of each field wins, and for merged fields the base stays
    the value before the first unsent edit. Only the tail is folded, so the order of changes to
-   different records never changes. */
+   different records never changes. Two kinds of tail are never folded into: an Undo restore (the
+   server rebuilds it from its own copy and ignores its value, so a later edit must travel as its
+   own patch), and an op pagehide already handed to a keepalive request (it is dropped when that
+   request is answered, which would take the later edit with it). */
 function enqueue(op) {
   const tail = queue.at(-1);
-  if (!tail || op.k !== 'patch' || tail.c !== op.c || tail.id !== op.id || (tail.k !== 'patch' && tail.k !== 'put')) return void queue.push(op);
+  const foldable = tail && !tail.restore && !keptAlive.has(tail) && (tail.k === 'patch' || tail.k === 'put');
+  if (!foldable || op.k !== 'patch' || tail.c !== op.c || tail.id !== op.id) return void queue.push(op);
   if (tail.k === 'patch' && op.base) for (const [f, b] of Object.entries(op.base)) if (!(f in tail.v)) (tail.base ||= {})[f] = b;
   Object.assign(tail.v, op.v);
 }
@@ -409,6 +424,7 @@ addEventListener('pagehide', () => {
   collect(false);
   const batches = keepaliveBatches(queue, KEEPALIVE_BYTES - inflightBytes);
   if (!batches.length) return;
+  for (const op of batches.flat()) keptAlive.add(op);
   exitSends = Promise.allSettled(
     batches.map(async ops => {
       const res = await fetch('/api/sync', {
@@ -565,7 +581,7 @@ export function restoreSnapshot(snap) {
         // Put it back where it was relative to its old neighbours.
         const pos = (before[c] || []).findIndex(e => e.id === id);
         d[c].splice(Math.min(pos, d[c].length), 0, b.get(id));
-        if (shadow && !shadow[c].has(id)) restoring.add(`${c}:${id}`);
+        if (shadow && !shadow[c].has(id)) restoring.set(`${c}:${id}`, clone(b.get(id)));
       }
     }
   }

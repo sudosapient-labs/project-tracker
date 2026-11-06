@@ -149,6 +149,77 @@ test('changes queued offline survive the page going into the back/forward cache'
   await expect(page.locator('#d-title')).toHaveValue('Made offline, kept through Back');
 });
 
+test('an edit made after undoing a delete is saved, not swallowed by the restore', async ({ page }) => {
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  const r = await page.request.post('/api/sync', { headers, data: { ops: [project('pund', 'UND'), task('tund1', 'pund', 'UND-201', 'Deleted then back')] } });
+  expect(r.ok()).toBe(true);
+  await page.goto('/#project/und/list');
+  const rowOf = () => page.locator('[data-task-row]', { hasText: 'Deleted then back' }).first();
+  await expect(rowOf()).toBeVisible();
+
+  // A slow network: the delete's save is held on its way, so Undo and the rename that follows
+  // queue up behind it (the restore, then the rename).
+  const held = [];
+  await page.route('**/api/sync', route => void held.push(route));
+  await rowOf().click({ button: 'right' });
+  await page.locator('.pop [data-a="delTask"]').click();
+  await page.locator('[data-a="confirmOk"]').click();
+  await expect.poll(() => held.length).toBe(1);
+  await page.locator('#toasts .toast', { hasText: 'Deleted' }).getByRole('button', { name: 'Undo' }).click();
+  await rowOf().locator('[data-a="openTask"]').first().click();
+  await page.fill('#d-title', 'Renamed after the undo');
+  await page.locator('#d-title').blur();
+  await expect(page.locator('#d-title')).toHaveValue('Renamed after the undo');
+
+  // The network recovers: the server restores its own copy, then applies the rename on top.
+  await page.unroute('**/api/sync');
+  for (const route of held) await route.continue().catch(() => {});
+  await expect(page.locator('html')).toHaveAttribute('data-sync', 'saved', { timeout: 20_000 });
+  await expect.poll(async () => (await serverTask(page, 'tund1'))?.title, { timeout: 20_000 }).toBe('Renamed after the undo');
+  await expect(page.locator('#d-title')).toHaveValue('Renamed after the undo');
+});
+
+test('an edit made while the back/forward-cache send is unanswered is not dropped with it', async ({ page }) => {
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  const r = await page.request.post('/api/sync', { headers, data: { ops: [project('pbf', 'BF'), task('tbf2', 'pbf', 'BF-202', 'Sealed send')] } });
+  expect(r.ok()).toBe(true);
+  await page.goto('/#project/bf/list');
+  await page.locator('[data-a="openTask"]', { hasText: 'Sealed send' }).first().click();
+
+  // Offline: the first words typed in the description wait in the queue, as one op.
+  await page.route('**/api/sync', route => route.abort('internetdisconnected'));
+  await page.locator('#d-desc').click();
+  await page.keyboard.type('Sent on pagehide.', { delay: 20 });
+  await expect(page.locator('html')).toHaveAttribute('data-sync', 'offline');
+  await page.waitForTimeout(400);
+
+  // The page is frozen into the cache: pagehide's keepalive send is held unanswered (any other
+  // save meanwhile still fails, offline)...
+  let keepalive = null;
+  await page.unroute('**/api/sync');
+  await page.route('**/api/sync', route => (keepalive ? route.abort('internetdisconnected') : void (keepalive = route)));
+  await page.evaluate(() => dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  await expect.poll(() => !!keepalive).toBe(true);
+  // ...while the person, back in the tab, keeps typing: that edit must not be folded into the op
+  // already sent (which leaves the queue once the keepalive send is answered).
+  await page.keyboard.type(' Typed while it was unanswered.', { delay: 20 });
+  await page.waitForTimeout(400);
+
+  // The keepalive send is answered (the first words are saved), then the network is back.
+  await keepalive.continue();
+  await expect.poll(async () => (await serverTask(page, 'tbf2'))?.desc ?? '').toContain('Sent on pagehide.');
+  await page.waitForTimeout(300);
+  await page.unroute('**/api/sync');
+  await page.evaluate(() => dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await expect.poll(async () => (await serverTask(page, 'tbf2'))?.desc ?? '', { timeout: 40_000 }).toContain('Typed while it was unanswered.');
+  // Both parts are kept (where the caret was is the offline re-render's business, not this test's).
+  await expect(page.locator('#d-desc')).toContainText('Sent on pagehide.');
+  await expect(page.locator('#d-desc')).toContainText('Typed while it was unanswered.');
+  expect((await serverTask(page, 'tbf2')).desc).toContain('Sent on pagehide.');
+});
+
 test('typing offline in a long description is saved once back, not cut off by the server’s limits', async ({ page }) => {
   const errors = watchErrors(page);
   await signIn(page, OWNER);
