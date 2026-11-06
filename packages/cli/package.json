@@ -26,6 +26,6 @@
   },
   "license": "UNLICENSED",
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   }
 }

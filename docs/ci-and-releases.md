@@ -76,11 +76,11 @@ deploys it like any other change.
 ## npm packages
 
 `packages/client`, `packages/cli` and `packages/mcp` are released on their own and published to npm as
-`@sudosapient/client`, `@sudosapient/cli` and `@sudosapient/mcp`: **private** packages in the `sudosapient`
-npm org. They are closed source (`UNLICENSED`, no license file), so they're published with
-`access: restricted` and only members of the org can install them. npm's free org plan only allows
-public packages, so publishing needs a paid org plan; on the free plan `npm publish` fails rather than
-make the code public. Never publish them with `--access public`: npm packages ship their source.
+`@sudosapient/client`, `@sudosapient/cli` and `@sudosapient/mcp`: **public** packages in the `sudosapient`
+npm org (free plan), so anyone can install them. The CLI and MCP server also run with
+`npx @sudosapient/cli` and `npx @sudosapient/mcp`; `client` is the library they share, not a command.
+npm packages ship their source, so their code is readable. They hold only API client code (calls to the documented `/api/v1`), none of the server.
+They stay `UNLICENSED` with no license file: visible, but all rights reserved.
 
 - release-please treats each one as a component with its own version, `CHANGELOG.md` and tag
   (`client-vX.Y.Z`, `cli-vX.Y.Z`, `mcp-vX.Y.Z`). A commit counts for a package when it touches files in
@@ -109,7 +109,7 @@ is published by hand, once:
 
    ```bash
    pnpm install --frozen-lockfile
-   for p in client cli mcp; do (cd packages/$p && pnpm publish --access restricted --no-git-checks); done
+   for p in client cli mcp; do (cd packages/$p && pnpm publish --access public --no-git-checks); done
    ```
 
 3. On npmjs.com, for each of the three packages: **Settings → Trusted publishing → GitHub Actions**, with

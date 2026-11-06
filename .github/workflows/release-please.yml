@@ -86,13 +86,12 @@ jobs:
             name=$(jq -r .name "$dir/package.json")
             version=$(jq -r .version "$dir/package.json")
             # pnpm pack turns workspace:* into the real version; npm publish then signs in with OIDC.
-            # The packages are closed source (UNLICENSED): restricted, so only org members can install them.
+            # Public on npm, so anyone can install them, but UNLICENSED: the source is visible, all rights reserved.
             rm -f "$out"/*.tgz
             (cd "$dir" && pnpm pack --pack-destination "$out")
             # A re-run, or the one-time manual first publish, may have published this version already.
-            # `npm view` can't see a private package without a token, so the signed-in publish decides:
-            # npm refuses a version that exists, and that counts as done.
-            if log=$(npm publish "$out"/*.tgz --access restricted 2>&1); then
+            # The signed-in publish decides: npm refuses a version that exists, and that counts as done.
+            if log=$(npm publish "$out"/*.tgz --access public 2>&1); then
               echo "$log"
               echo "::notice::published $name@$version"
             elif grep -qE 'EPUBLISHCONFLICT|cannot publish over (the )?previously published version' <<<"$log"; then
