@@ -173,6 +173,9 @@ endpoints, `sync/` the bootstrap and sync engine, and `lib/` the pieces with no 
   route handlers validate bodies with zod through `parseBody`.
 - **Migrations:** files in `server/migrations/` run once each, in name order, inside a transaction,
   on start. Use `.sql`, or `.js` exporting `default (db)` for data changes SQL can't express.
+  Foreign keys are off while a migration runs, so a table can be rebuilt (create, copy, drop,
+  rename) without cascading deletes; a migration that leaves a broken reference
+  (`PRAGMA foreign_key_check`) is rolled back and stops the start.
 - **Formatting:** Prettier (`.prettierrc.json`, 160 columns, single quotes) and ESLint flat config;
   comments are short and explain why.
 

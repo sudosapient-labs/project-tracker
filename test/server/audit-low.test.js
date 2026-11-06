@@ -1,8 +1,11 @@
 /* Regression tests for the low-severity audit findings (server side). */
+import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { PW, account, setup } from './helpers.js';
 import { loadConfig } from '../../server/config.js';
-import { openDb } from '../../server/db.js';
+import { migrate, openDb } from '../../server/db.js';
 import { createApp } from '../../server/app.js';
 import { ipKey } from '../../server/lib/rate-limit.js';
 
@@ -154,7 +157,9 @@ describe('rate-limit keys and the proxy setting', () => {
     const t = setup({ TRUST_PROXY: 'true', DISABLE_RATE_LIMIT: 'false' });
     const statuses = [];
     for (let i = 0; i < 12; i++) {
-      const r = await t.client().post('/api/auth/login', { email: `x${i}@example.com`, password: 'wrong-password-1' }, { 'x-forwarded-for': `2001:db8:1:2::${i.toString(16)}` });
+      const r = await t
+        .client()
+        .post('/api/auth/login', { email: `x${i}@example.com`, password: 'wrong-password-1' }, { 'x-forwarded-for': `2001:db8:1:2::${i.toString(16)}` });
       statuses.push(r.status);
     }
     expect(statuses.slice(0, 10).every(s => s === 401)).toBe(true);
@@ -182,7 +187,11 @@ describe('rate-limit keys and the proxy setting', () => {
 describe('editing a comment', () => {
   it('lets its author change the text and their own reactions only', async () => {
     const { t, ada, adaId, bob } = await team();
-    await ada.sync([put('projects', project('p1')), put('tasks', task('t1', 'p1')), put('comments', { id: 'c1', task: 't1', by: adaId, at: 1, text: 'hi', re: {} })]);
+    await ada.sync([
+      put('projects', project('p1')),
+      put('tasks', task('t1', 'p1')),
+      put('comments', { id: 'c1', task: 't1', by: adaId, at: 1, text: 'hi', re: {} }),
+    ]);
     await bob.sync([patch('comments', 'c1', { re: { '👍': ['mbob'] } })]);
     const stored = t.repo.get('comments', 'c1');
     const tries = [
@@ -231,8 +240,7 @@ describe('task keys', () => {
     const keyOf = r => r.body.results[0].v?.key;
 
     // Editing a key in place keeps it, whatever it's changed to.
-    for (const key of ['SEC-201', 'SEC-999', 'WEB-500', 'WEB-202'])
-      expect(keyOf(await bob.sync([patch('tasks', 't1', { key })]))).toBe('WEB-201');
+    for (const key of ['SEC-201', 'SEC-999', 'WEB-500', 'WEB-202']) expect(keyOf(await bob.sync([patch('tasks', 't1', { key })]))).toBe('WEB-201');
     // A new task always gets its own project's prefix, and taken or free keys elsewhere make no difference.
     const a = keyOf(await bob.sync([put('tasks', task('t2', 'p1', { key: 'SEC-201' }))]));
     const b = keyOf(await bob.sync([put('tasks', task('t3', 'p1', { key: 'SEC-202' }))]));
@@ -241,5 +249,42 @@ describe('task keys', () => {
     expect(oks(await bob.sync([patch('tasks', 't1', { project: 'p2', key: 'SEC-201' })]))).toEqual([false]);
     expect(t.repo.get('tasks', 's1').key).toBe('SEC-201');
     expect(t.repo.get('projects', 'p2').seq || 0).toBeLessThanOrEqual(201);
+  });
+});
+
+describe('migrations', () => {
+  const dirWith = files => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-mig-'));
+    for (const [name, sql] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), sql);
+    return dir;
+  };
+  function dbWithSession() {
+    const db = openDb(':memory:');
+    db.run("INSERT INTO users (id, email, password_hash, created_at) VALUES ('u1', 'a@example.com', 'x', 1)");
+    db.run("INSERT INTO sessions (id, token_hash, user_id, created_at, last_seen_at, expires_at) VALUES ('s1', 'h', 'u1', 1, 1, 9e15)");
+    return db;
+  }
+
+  it('rebuilds a table without cascading deletes to the rows that point at it', () => {
+    const db = dbWithSession();
+    const create = db.get("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").sql.replace(/^CREATE TABLE users/, 'CREATE TABLE users_new');
+    const dir = dirWith({
+      '900_rebuild_users.sql': `${create};\nINSERT INTO users_new SELECT * FROM users;\nDROP TABLE users;\nALTER TABLE users_new RENAME TO users;`,
+    });
+    migrate(db.raw, dir);
+    expect(db.get('SELECT user_id FROM sessions')).toEqual({ user_id: 'u1' });
+    expect(db.get('PRAGMA foreign_keys').foreign_keys).toBe(1);
+    // Foreign keys are back on afterwards.
+    db.run("DELETE FROM users WHERE id = 'u1'");
+    expect(db.get('SELECT COUNT(*) n FROM sessions').n).toBe(0);
+  });
+
+  it('rolls back a migration that leaves a broken reference', () => {
+    const db = dbWithSession();
+    const dir = dirWith({ '900_orphan.sql': "DELETE FROM users WHERE id = 'u1';" });
+    expect(() => migrate(db.raw, dir)).toThrow(/900_orphan\.sql failed: .*broken reference/);
+    expect(db.get('SELECT COUNT(*) n FROM users').n).toBe(1);
+    expect(db.get("SELECT 1 FROM schema_migrations WHERE name = '900_orphan.sql'")).toBeUndefined();
+    expect(db.get('PRAGMA foreign_keys').foreign_keys).toBe(1);
   });
 });
