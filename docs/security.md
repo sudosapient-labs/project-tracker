@@ -10,7 +10,8 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   first can't claim it.
 - After that the workspace is invite-only unless `ALLOW_OPEN_SIGNUP=true`. An invited address (and the
   role it was invited with) can only be claimed through its own invite link; the reusable join link
-  makes Members. Making a new join link retires the previous one, and only Owners and Admins can.
+  makes Members. Making a new join link retires the previous one, and only Owners and Admins can. A
+  join link stops working once whoever made it is no longer an Owner or Admin (or leaves).
 - Sign-up without a valid invite for that address or a join link gets one answer in an invite-only
   workspace (`403 invite_only`), whether the address already has an account, has a pending invite
   or neither, so it can't be used to find out who is in the workspace.

@@ -51,3 +51,34 @@ describe('sign-up in an invite-only workspace', () => {
     expect((await withJoin('carol@example.com')).status).toBe(201);
   });
 });
+
+describe('join links and their creator’s role', () => {
+  async function adminWithJoinLink() {
+    const t = setup();
+    const { c: ada } = await account(t);
+    await ada.sync([invite('mbob', 'bob@example.com', 'Admin')]);
+    const { c: bob } = await account(t, { name: 'Bob', email: 'bob@example.com', invite: tokenOf(t.lastLink('bob@example.com'), 'invite') });
+    const join = tokenOf((await bob.post('/api/workspace/invite-link')).body.link, 'join');
+    expect((await t.client().get(`/api/auth/join/${join}`)).status).toBe(200);
+    return { t, ada, join };
+  }
+  const joinWith = (t, join, email) => t.client().post('/api/auth/signup', { name: 'New', email, password: PW, join });
+
+  it('retires the links someone made when they stop being an Admin', async () => {
+    const { t, ada, join } = await adminWithJoinLink();
+    const r = await ada.sync([{ c: 'members', id: 'mbob', k: 'patch', v: { role: 'Member' } }]);
+    expect(r.body.results[0].ok).toBe(true);
+    expect(t.db.get("SELECT used_at FROM auth_tokens WHERE kind = 'join'").used_at).toBeGreaterThan(0);
+    expect((await t.client().get(`/api/auth/join/${join}`)).status).toBe(404);
+    expect((await joinWith(t, join, 'carol@example.com')).body.code).toBe('invite_only');
+  });
+
+  it('refuses a link whose creator is no longer an Admin, however the role changed', async () => {
+    const { t, join } = await adminWithJoinLink();
+    t.repo.put('members', { ...t.repo.get('members', 'mbob'), role: 'Guest' });
+    expect((await t.client().get(`/api/auth/join/${join}`)).status).toBe(404);
+    expect((await joinWith(t, join, 'carol@example.com')).status).toBe(403);
+    t.repo.put('members', { ...t.repo.get('members', 'mbob'), role: 'Admin' });
+    expect((await joinWith(t, join, 'carol@example.com')).status).toBe(201);
+  });
+});

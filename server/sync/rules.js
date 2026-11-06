@@ -493,6 +493,9 @@ export const RULES = {
         // Against the members as they are in this transaction, so concurrent changes can't leave none.
         if (before.role === 'Owner' && m.role !== 'Owner' && !ctx.repo.all('members').some(x => x.id !== m.id && x.role === 'Owner'))
           throw new Reject('The workspace needs at least one owner.');
+        // Only Owners and Admins may make the join link, so one made by someone who no longer is stops working.
+        if (isAdminRole(before) && !isAdminRole(m))
+          ctx.db.run("UPDATE auth_tokens SET used_at = ? WHERE kind = 'join' AND user_id = ? AND used_at IS NULL", ctx.now, before.id);
       }
       return m;
     },
