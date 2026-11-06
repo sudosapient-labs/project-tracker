@@ -122,7 +122,9 @@ export const TOOLS = {
     description: 'People in the workspace.',
     inputSchema: obj({}),
     async run(api) {
-      return (await api.all('/members')).map(m => compact({ name: m.name, email: m.email, role: m.role, invited: m.status === 'invited' }));
+      return (await api.all('/members')).map(m =>
+        compact({ name: m.name, email: m.email, role: m.role, invited: m.status === 'invited', bot: m.kind === 'bot' }),
+      );
     },
   },
   summarise_project: {

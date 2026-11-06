@@ -9,7 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { afterEach, describe, expect, it } from 'vitest';
-import { account, apiKey, keyClient, setup } from '../../../test/server/helpers.js';
+import { account, apiKey, bot, keyClient, setup } from '../../../test/server/helpers.js';
 import { TOOLS, toolsFor } from '../src/tools.js';
 import { clientLabel } from '../src/protocol.js';
 
@@ -139,6 +139,21 @@ describe('MCP over Streamable HTTP (/api/mcp)', () => {
     // Commenting is what a "Can comment" Guest may do, labelled with their client.
     expect((await call(mcp, 'comment', { key: ops.key, text: 'Ack' })).isError).toBeFalsy();
     expect(t.db.get("SELECT json_extract(data, '$.via') v FROM activity WHERE json_extract(data, '$.verb') = 'commented on'").v).toBe('Cursor');
+  });
+
+  it('works unchanged with a bot’s key, acting as the bot with its role and projects', async () => {
+    const { t, ada } = await workspace();
+    const b = await bot(ada, { role: 'Guest', projects: ['pops'] });
+    const mcp = await hosted(t, b.token);
+    expect((await call(mcp, 'list_projects')).data.map(p => p.key)).toEqual(['OPS']);
+    const made = await call(mcp, 'create_task', { project: 'OPS', title: 'Nightly build failed' });
+    expect(made).toMatchObject({ isError: true, text: 'forbidden: You can only comment in this project.' });
+    const ops = (await keyClient(t.app, await apiKey(ada)).post('/tasks', { project: 'OPS', title: 'Nightly build' })).body;
+    expect((await call(mcp, 'comment', { key: ops.key, text: 'Build 812 passed' })).isError).toBeFalsy();
+    const detail = (await call(mcp, 'get_task', { key: ops.key })).data;
+    expect(detail.comments).toEqual([expect.stringMatching(/Release Bot: Build 812 passed$/)]);
+    expect(detail.activity[0]).toMatch(/Release Bot via Claude commented on$/);
+    expect((await call(mcp, 'list_members')).data.find(m => m.name === 'Release Bot')).toEqual({ name: 'Release Bot', role: 'Guest', bot: true });
   });
 
   it('offers only read tools to a read-only key, and refuses writes anyway', async () => {
