@@ -8,7 +8,7 @@
 import { Hono } from 'hono';
 import { PR, RECUR_DAYS, ST } from '../../src/core/constants.js';
 import { newId } from '../lib/crypto.js';
-import { cleanRich } from '../lib/rich-text.js';
+import { cleanRich, richTextProblem } from '../lib/rich-text.js';
 import { canSee, memberFor } from '../sync/rules.js';
 import { bearer, fail, idempotent, scoped } from './middleware.js';
 import { openapi } from './openapi.js';
@@ -179,7 +179,12 @@ export function v1Routes({ limit }) {
     return { c: 'activity', id, k: 'put', v: { id, by: x.me.id, verb, task: t.id, project: t.project, at: Date.now(), extra } };
   };
   const nextOrder = x => (x.db.get("SELECT MAX(json_extract(data, '$.order')) n FROM tasks")?.n || 0) + 1;
-  const descOf = b => (b.descriptionHtml != null ? cleanRich(b.descriptionHtml) : b.description != null ? textToHtml(b.description) : undefined);
+  const descOf = b => {
+    if (b.descriptionHtml == null) return b.description != null ? textToHtml(b.description) : undefined;
+    const problem = richTextProblem(b.descriptionHtml);
+    if (problem) throw new ApiFail(400, `descriptionHtml: ${problem}`, 'invalid_request', 'descriptionHtml');
+    return cleanRich(b.descriptionHtml);
+  };
 
   function newTask(x, f) {
     const now = Date.now();

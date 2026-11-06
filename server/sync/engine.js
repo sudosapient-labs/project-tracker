@@ -113,6 +113,8 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
     }
     if (k !== 'put' && k !== 'patch') throw new Reject('Unknown operation.', 400);
     if (!isObj(op.v)) throw new Reject('Invalid value.', 400);
+    // No record may be larger than this once saved, so refuse a bigger value before any rule works on it.
+    if (JSON.stringify(op.v).length > MAX_RECORD_BYTES) throw new Reject('This item is too large to save.', 413);
 
     const v = { ...op.v };
     const personal = {};

@@ -136,6 +136,9 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   server sanitises them on write (sanitize-html) and the client again when rendering or pasting
   (DOMPurify), both against the editor's own allowlist (`src/core/rich-text.js`: paragraphs, bold,
   italic, lists, a heading and http(s)/mailto links).
+  Before sanitising, a description must be text of at most 100,000 characters with tags nested at
+  most 64 deep (sanitising gets superlinear with depth, so huge or deeply nested markup could stall
+  the server), and any synced value over 256 KB is refused before rules look at it.
 - Fields the UI only offers choices for are checked on write too: repeat settings, event times,
   reaction emoji, saved-view filters. File type and size come from the stored file, and attachments
   and file links only ever point at `/api/files/`.

@@ -6,7 +6,7 @@ import { PR, ST } from '../../src/core/constants.js';
 import { COMMENT, EDIT, PERMS, VIEW, canManageProject, canSeeProject, isAdminRole, projectLevel } from '../../src/core/access.js';
 import { fileType, fsize } from '../../src/core/file-types.js';
 import { Reject } from '../lib/http.js';
-import { cleanRich } from '../lib/rich-text.js';
+import { cleanRich, richTextProblem } from '../lib/rich-text.js';
 import { mentioned, notify } from '../notify.js';
 import { issueToken } from '../routes/auth.js';
 
@@ -94,6 +94,14 @@ function settleAttachments(ctx, t) {
 /* A file can only point at a task in its own project. */
 function needFileTask(ctx, f) {
   if (f.task != null && ctx.repo.get('tasks', f.task)?.project !== f.project) throw new Reject('That task no longer exists.', 400);
+}
+
+/* A description is checked before it's sanitised: sanitising very long or deeply nested markup is
+   slow enough to stall the server. */
+function richDesc(desc) {
+  const problem = richTextProblem(desc);
+  if (problem) throw new Reject(`desc: ${problem}`, 400);
+  return cleanRich(desc);
 }
 
 function needEventScope(ctx, pid) {
@@ -215,7 +223,7 @@ export const RULES = {
       const p = needProject(ctx, t.project);
       needAssignee(ctx, p, t.assignee);
       needSubAssignees(ctx, p, t);
-      t.desc = cleanRich(t.desc);
+      t.desc = richDesc(t.desc);
       settleAttachments(ctx, t);
       settleKey(ctx, t, p);
       if (t.assignee) notify(ctx, t.assignee, 'assign', { type: 'assign', task: t.id, text: 'assigned you', snippet: dueSnippet(t) }, t);
@@ -230,7 +238,7 @@ export const RULES = {
       else if (keys.includes('key') && keyTaken(ctx, t.key, t.id)) t.key = before.key;
       if (moved || keys.includes('assignee')) needAssignee(ctx, p, t.assignee);
       if (moved || keys.includes('subtasks')) needSubAssignees(ctx, p, t, moved ? null : before);
-      if (keys.includes('desc')) t.desc = cleanRich(t.desc);
+      if (keys.includes('desc')) t.desc = richDesc(t.desc);
       if (moved) moveTaskRecords(ctx, t, before.project);
       // Every save re-checks attachments, so older records with foreign links heal too.
       settleAttachments(ctx, t);

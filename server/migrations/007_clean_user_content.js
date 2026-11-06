@@ -3,7 +3,13 @@
    (lib/rich-text.js), repeat settings and event times outside the UI's choices cleared, and comment
    reactions limited to the picker's emoji. */
 import { REACTIONS, RECUR } from '../../src/core/constants.js';
-import { cleanRich } from '../lib/rich-text.js';
+import { cleanRich, richTextProblem } from '../lib/rich-text.js';
+
+// Too long or too deeply nested to sanitise safely: keep the words, as escaped text.
+const asText = html =>
+  `<p>${String(html)
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[ch])}</p>`;
 
 export default function migrate(db) {
   const each = (table, fix) => {
@@ -15,9 +21,12 @@ export default function migrate(db) {
   };
   each('tasks', t => {
     let changed = false;
-    if (typeof t.desc === 'string' && t.desc && cleanRich(t.desc) !== t.desc) {
-      t.desc = cleanRich(t.desc);
-      changed = true;
+    if (typeof t.desc === 'string' && t.desc) {
+      const clean = richTextProblem(t.desc) ? asText(t.desc) : cleanRich(t.desc);
+      if (clean !== t.desc) {
+        t.desc = clean;
+        changed = true;
+      }
     }
     if (t.recur != null && !RECUR.includes(t.recur)) {
       t.recur = null;
