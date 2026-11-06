@@ -37,7 +37,7 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 
 ## Sign-in throttling and device cookies
 
-- Auth endpoints are rate-limited per client IP (see `TRUST_PROXY`), e.g. 10 sign-ins a minute, 10
+- Auth endpoints are rate-limited per client IP (an IPv6 client per /64; see `TRUST_PROXY`), e.g. 10 sign-ins a minute, 10
   sign-ups and 5 password-reset requests per 10 minutes.
 - Each email is locked for 15 minutes after 10 failed sign-ins from anywhere. Each attempt is counted
   before the password is checked (and given back when it was right), so parallel guesses can't all

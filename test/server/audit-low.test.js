@@ -1,6 +1,10 @@
 /* Regression tests for the low-severity audit findings (server side). */
 import { describe, expect, it } from 'vitest';
 import { PW, account, setup } from './helpers.js';
+import { loadConfig } from '../../server/config.js';
+import { openDb } from '../../server/db.js';
+import { createApp } from '../../server/app.js';
+import { ipKey } from '../../server/lib/rate-limit.js';
 
 const invite = (id, email, role = 'Member') => ({
   c: 'members',
@@ -80,5 +84,46 @@ describe('join links and their creator’s role', () => {
     expect((await joinWith(t, join, 'carol@example.com')).status).toBe(403);
     t.repo.put('members', { ...t.repo.get('members', 'mbob'), role: 'Admin' });
     expect((await joinWith(t, join, 'carol@example.com')).status).toBe(201);
+  });
+});
+
+describe('rate-limit keys and the proxy setting', () => {
+  it('keys IPv6 clients on their /64 and IPv4 clients on their address', () => {
+    expect(ipKey('203.0.113.7')).toBe('203.0.113.7');
+    expect(ipKey('2001:db8:1:2:aaaa:bbbb:cccc:dddd')).toBe('2001:db8:1:2::/64');
+    expect(ipKey('2001:DB8:1:2::1')).toBe(ipKey('2001:db8:1:2:ffff::9'));
+    expect(ipKey('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(ipKey('2001:db8:1:3::1')).not.toBe(ipKey('2001:db8:1:2::1'));
+    expect(ipKey('::1')).toBe('0:0:0:0::/64');
+    expect(ipKey('fe80::1%eth0')).toBe('fe80:0:0:0::/64');
+    expect(ipKey('64:ff9b::192.0.2.1')).toBe('64:ff9b:0:0::/64');
+  });
+
+  it('shares one sign-in budget across a /64', async () => {
+    const t = setup({ TRUST_PROXY: 'true', DISABLE_RATE_LIMIT: 'false' });
+    const statuses = [];
+    for (let i = 0; i < 12; i++) {
+      const r = await t.client().post('/api/auth/login', { email: `x${i}@example.com`, password: 'wrong-password-1' }, { 'x-forwarded-for': `2001:db8:1:2::${i.toString(16)}` });
+      statuses.push(r.status);
+    }
+    expect(statuses.slice(0, 10).every(s => s === 401)).toBe(true);
+    expect(statuses.slice(10)).toEqual([429, 429]);
+  });
+
+  it('warns once in production when requests come through a proxy TRUST_PROXY doesn’t know about', async () => {
+    const lines = [];
+    const log = { info() {}, error: l => lines.push(l) };
+    const config = loadConfig({ NODE_ENV: 'production', SERVE_STATIC: 'false', APP_URL: 'https://pm.example.com', DISABLE_RATE_LIMIT: 'true' });
+    const { app } = createApp({ db: openDb(':memory:'), config, log, pushSend: async () => {} });
+    await app.request('/api/health');
+    expect(lines).toEqual([]);
+    for (let i = 0; i < 3; i++) await app.request('/api/health', { headers: { 'x-forwarded-for': '198.51.100.1' } });
+    expect(lines.filter(l => /TRUST_PROXY/.test(l))).toHaveLength(1);
+
+    const quiet = [];
+    const behind = loadConfig({ NODE_ENV: 'production', SERVE_STATIC: 'false', TRUST_PROXY: '1', DISABLE_RATE_LIMIT: 'true' });
+    const other = createApp({ db: openDb(':memory:'), config: behind, log: { info() {}, error: l => quiet.push(l) }, pushSend: async () => {} });
+    await other.app.request('/api/health', { headers: { 'x-forwarded-for': '198.51.100.1' } });
+    expect(quiet).toEqual([]);
   });
 });

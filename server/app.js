@@ -63,7 +63,16 @@ export function createApp({ db, config, log = console, pushSend }) {
   else if (db.all('SELECT totp_secret FROM users WHERE totp_secret IS NOT NULL').some(u => isSealed(u.totp_secret)))
     log.error?.('[security] Two-factor secrets are encrypted but SECRET_KEY is not set: authenticator codes will fail until it is restored.');
 
+  // Behind a proxy without TRUST_PROXY every request seems to come from the proxy, so all clients
+  // share one rate-limit budget. Say so once.
+  let proxyWarned = false;
   app.use('*', async (c, next) => {
+    if (config.prod && !config.trustProxy && !proxyWarned && c.req.header('x-forwarded-for')) {
+      proxyWarned = true;
+      log.error?.(
+        '[security] WARNING: requests carry X-Forwarded-For but TRUST_PROXY is not set, so rate limits count every client as the proxy. Set TRUST_PROXY to the number of proxies in front of the app (see docs/configuration.md).',
+      );
+    }
     c.set('ip', clientIp(c, config.trustProxy));
     Object.entries({ db, repo, config, mailer, engine, pusher, setup, log }).forEach(([k, v]) => c.set(k, v));
     return next();
