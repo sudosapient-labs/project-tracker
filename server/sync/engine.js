@@ -156,16 +156,18 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
     if (!before) {
       if (k === 'patch') throw new Reject('This item was deleted.', 404);
       // Undo of a delete: the server's own copy comes back as it was (author, time, reactions; no
-      // notifications), only for the person who deleted it and only shortly after. Otherwise (or
-      // when it's no longer kept) it's created like anything new.
+      // notifications), only for the person who deleted it and only shortly after. Once it's no
+      // longer kept the Undo is refused: creating it anew would re-author a comment and notify
+      // people again. (Collections without a `restore` rule are created like anything new.)
+      const restoring = op.restore === true && rule.restore;
       const kept =
-        op.restore === true &&
-        rule.restore &&
+        restoring &&
         db.get('SELECT data FROM recent_deletes WHERE coll = ? AND id = ? AND user_id = ? AND deleted_at >= ?', c, id, ctx.uid, ctx.now - RESTORE_MS);
       if (kept) {
         db.run('DELETE FROM recent_deletes WHERE coll = ? AND id = ?', c, id);
         after = rule.restore(ctx, { ...JSON.parse(kept.data), id });
-      } else after = rule.create(ctx, { ...v, id });
+      } else if (restoring) throw new Reject('This can no longer be undone.', 410);
+      else after = rule.create(ctx, { ...v, id });
     } else {
       after = k === 'put' ? { ...v, id } : { ...before, ...v, id };
       for (const f of rule.serverOwned || []) {

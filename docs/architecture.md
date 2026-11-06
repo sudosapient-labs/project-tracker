@@ -28,7 +28,9 @@ proxies `/api` to the API on :8787.
 - **Undo.** Undo puts back only the records the action changed. A record it deleted is re-sent
   with `restore: true`; the server then restores its own copy, kept in `recent_deletes` for 10
   minutes and only for the person who deleted it, so a comment keeps its author, time and
-  reactions, a task its key, and nobody is notified again. Otherwise it's created like anything new.
+  reactions, a task its key, and nobody is notified again. When there is no such copy (too late,
+  or someone else deleted it) the Undo is refused (`410`); records of other kinds (projects,
+  files, events, …) are created like anything new.
 - **Live updates.** Other people's changes arrive over Server-Sent Events (`GET /api/events`) and are
   merged in, filtered to what each person can see. A tab's own changes aren't echoed back to it
   (`x-client-id`). When the stream drops, the client reconnects and bootstraps again.
