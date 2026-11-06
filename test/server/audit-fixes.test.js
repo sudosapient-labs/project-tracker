@@ -279,6 +279,33 @@ describe('H1 rich text is bounded before it is sanitised', () => {
     expect(t.db.get('SELECT COUNT(*) n FROM tasks').n).toBe(1);
   });
 
+  it('defers everything after a deferred op, so the batch is never applied out of order', async () => {
+    const { t, ada } = await workspace();
+    await ada.sync([put('projects', project('p1')), put('tasks', task('t0', 'p1', { key: undefined }))]);
+    let clock = 0;
+    const spy = vi.spyOn(performance, 'now').mockImplementation(() => (clock += 300));
+    try {
+      // t2 is deferred (over the time budget); the rename of t2 and the delete of t0 after it, which
+      // carry no description, must wait for it rather than run now (the rename would fail for good,
+      // the task not existing yet).
+      const r = await ada.sync([
+        put('tasks', task('t1', 'p1', { key: undefined, desc: '<p>x</p>' })),
+        put('tasks', task('t2', 'p1', { key: undefined, desc: '<p>y</p>' })),
+        patch('tasks', 't2', { title: 'Renamed' }),
+        { c: 'tasks', id: 't0', k: 'del' },
+      ]);
+      expect(r.body.results.map(x => [x.ok, !!x.retry])).toEqual([
+        [true, false],
+        [false, true],
+        [false, true],
+        [false, true],
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(t.db.all('SELECT id FROM tasks ORDER BY id').map(x => x.id)).toEqual(['t0', 't1']);
+  });
+
   it('copies an older, deeply nested description into the next repeat instead of refusing', async () => {
     const { t, ada } = await workspace();
     await ada.sync([put('projects', project('p1'))]);

@@ -55,10 +55,21 @@ export function prime(data) {
   for (const d of DOCS) shadow.docs[d] = JSON.stringify(data[d] ?? null);
   // Changes the server hasn't confirmed yet stay queued and visible: lay them over the fresh data
   // (and its shadow, as already sent), so reloading while some are still on their way loses none.
-  for (const op of [...inflight, ...queue]) replay(data, op);
+  // Before them, what the server confirmed while this data was loading (it may predate those).
+  for (const op of [...(confirmed || []).filter(Boolean), ...inflight, ...queue]) replay(data, op);
+  confirmed = null;
   stateSent = JSON.stringify(stateBody());
   syncState();
 }
+/* While a reload's bootstrap is loading, the changes the server confirms meanwhile, as it saved
+   them: the bootstrap may have been read before they were, so prime lays them over it. */
+let confirmed = null;
+/* Call before fetching the bootstrap a reload will prime with; `false` stops (the reload failed). */
+export function loadingFresh(on = true) {
+  confirmed = on && shadow ? [] : null;
+}
+const asSaved = ({ c, id }, v) =>
+  DOCS.includes(c) ? (v == null ? null : { c, k: 'put', v }) : v == null ? { c, id, k: 'del' } : { c, id, k: 'put', v: fill(c, clone(v)) };
 /* Apply a queued operation to freshly loaded `data` and the shadow. */
 function replay(data, op) {
   if (DOCS.includes(op.c)) {
@@ -88,6 +99,7 @@ export function stopSync() {
   shadow = null;
   queue = [];
   inflight = [];
+  confirmed = null;
   resyncWhenSaved = false;
   restoring.clear();
   clearTimeout(retryT);
@@ -294,15 +306,16 @@ export async function flush() {
     online();
     const errs = [];
     let changed = false;
-    const again = [];
+    // Refused only because the request had done enough (the server's per-request budget, after
+    // which it defers the rest of the batch): sent again next, ahead of anything queued since,
+    // rather than undone. Queued back before adopting the rest, so their fields count as pending.
+    queue.unshift(...ops.filter((op, i) => !res.results[i].ok && res.results[i].retry));
     res.results.forEach((r, i) => {
-      // Refused only because the request had done enough (the server's per-request budget): sent
-      // again next, ahead of anything queued since, rather than undone.
-      if (!r.ok && r.retry) return void again.push(ops[i]);
+      if (!r.ok && r.retry) return;
       if (!r.ok) errs.push(r.error);
+      else if (confirmed) confirmed.push(asSaved(ops[i], r.v));
       changed = adopt(ops[i].c, ops[i].id, r.v) || changed;
     });
-    queue.unshift(...again);
     flushBytes = FLUSH_BYTES;
     if (res.links?.length) S.ui.devLinks = res.links;
     errSink?.push(...errs);

@@ -220,6 +220,47 @@ test('an edit made while the back/forward-cache send is unanswered is not droppe
   expect((await serverTask(page, 'tbf2')).desc).toContain('Sent on pagehide.');
 });
 
+test('an edit made while a reload’s data is loading is kept, not replaced by it', async ({ page }) => {
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  const r = await page.request.post('/api/sync', { headers, data: { ops: [project('prl', 'RL'), task('trl1', 'prl', 'RL-201', 'Before the reload')] } });
+  expect(r.ok()).toBe(true);
+  await page.goto('/#project/rl/list');
+  await page.locator('[data-a="openTask"]', { hasText: 'Before the reload' }).first().click();
+  await expect(page.locator('#d-title')).toHaveValue('Before the reload');
+
+  // A reload starts (back from the back/forward cache); its data is held while the person edits,
+  // and arrives inside the 150 ms save delay, before the edit was even queued.
+  let held = null;
+  await page.route('**/api/bootstrap', route => void (held = route));
+  await page.evaluate(() => dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await expect.poll(() => !!held).toBe(true);
+  await page.fill('#d-title', 'Edited while it loaded');
+  await page.locator('#d-title').blur();
+  await held.continue();
+  await page.unroute('**/api/bootstrap');
+  await expect.poll(async () => (await serverTask(page, 'trl1'))?.title).toBe('Edited while it loaded');
+  await expect(page.locator('#d-title')).toHaveValue('Edited while it loaded');
+
+  // Again, but the edit is saved and confirmed while the older data is still on its way.
+  let snap = null;
+  held = null;
+  await page.route('**/api/bootstrap', async route => {
+    snap = await route.fetch(); // read by the server now, before the edit below
+    held = route;
+  });
+  await page.evaluate(() => dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await expect.poll(() => !!held).toBe(true);
+  await page.fill('#d-title', 'Saved while older data loaded');
+  await page.locator('#d-title').blur();
+  await expect.poll(async () => (await serverTask(page, 'trl1'))?.title).toBe('Saved while older data loaded');
+  await page.waitForTimeout(300);
+  await held.fulfill({ response: snap });
+  await page.unroute('**/api/bootstrap');
+  await page.waitForTimeout(500);
+  await expect(page.locator('#d-title')).toHaveValue('Saved while older data loaded');
+});
+
 test('typing offline in a long description is saved once back, not cut off by the server’s limits', async ({ page }) => {
   const errors = watchErrors(page);
   await signIn(page, OWNER);

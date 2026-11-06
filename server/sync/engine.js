@@ -219,7 +219,11 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
         }
         ctx = makeCtx(fresh, via);
         favs = repo.favorites(ctx.uid);
+        // Once an op is deferred (`retry`: over the request's budget), every later op waits for it
+        // too, so the batch is never applied out of order (a delete or comment before its record).
+        let deferred = null;
         ops.forEach((op, i) => {
+          if (deferred) return void results.push({ ok: false, error: deferred.message, status: deferred.status, retry: true, v: current(op, favs, ctx.me) });
           const mark = ctx.changes.length;
           db.exec('SAVEPOINT op');
           try {
@@ -235,6 +239,7 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
               log.error?.(`[sync] op ${i} (${op?.c}/${op?.k}) failed`, e);
               results.push({ ok: false, error: 'Something went wrong saving this change.', status: 500, v: current(op, favs, ctx.me) });
             } else results.push({ ok: false, error: e.message, status: e.status, ...(e.retry ? { retry: true } : {}), v: current(op, favs, ctx.me) });
+            if (e instanceof Reject && e.retry) deferred = e;
             if (atomic) throw (failed = results.at(-1));
           }
         });
