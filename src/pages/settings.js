@@ -335,7 +335,11 @@ export function settingsBody(sec, title) {
         ).join('')
       );
     case 'api':
-      return H('Personal API keys let scripts, the CLI and AI assistants (MCP) act as you, with your projects and permissions.') + apiSection();
+      return (
+        H('Personal API keys let scripts, the CLI and AI assistants (MCP) act as you, with your projects and permissions.') +
+        apiSection() +
+        (['Owner', 'Admin'].includes(me().role) ? botsSection() : '')
+      );
     case 'password': {
       const e = S.ui.errors;
       const pw = S.ui.pwNew || '';
@@ -453,6 +457,74 @@ function apiSection() {
       : `<p class="faint" style="padding:12px 0">No keys yet.</p>`
   }</div>
   <div class="sblock"><h2>Docs</h2><p class="muted" style="font-size:13px">REST reference and a console to try requests: <a class="link" href="/api/docs" target="_blank" rel="noopener">API docs</a> (<a class="link" href="/api/v1/openapi.json" target="_blank" rel="noopener">OpenAPI</a>). MCP endpoint: <span class="mono" style="user-select:all">${esc(origin)}/api/mcp</span>. Changes made with a key show in Activity as “via” the app that made them.</p></div>`;
+}
+/* Settings → API → Bots (Owners and Admins): members for automation, with their own role, projects
+   and keys, so a release script doesn't borrow a person's key. A new key is shown once. */
+const keyOpts = `<select class="select" id="bot-key-scope" style="width:auto;min-width:150px" aria-label="Access"><option value="write">Read and write</option><option value="read">Read only</option></select>
+  <select class="select" id="bot-key-exp" style="width:auto;min-width:120px" aria-label="Expires"><option value="90">In 90 days</option><option value="30">In 30 days</option><option value="365">In a year</option><option value="">Never</option></select>`;
+function botsSection() {
+  const bots = D().bots || [];
+  const e = S.ui.errors;
+  const fresh = S.ui.newBotKey;
+  const open = S.ui.botOpen;
+  const projects = D().projects.filter(p => !p.archived);
+  const projPick = (name, on = []) =>
+    projects.length
+      ? `<div class="row" style="gap:6px 14px;flex-wrap:wrap">${projects.map(p => `<label class="row" style="gap:6px;font-size:13px"><input type="checkbox" class="check" name="${name}" value="${esc(p.id)}" ${on.includes(p.id) ? 'checked' : ''}>${esc(p.name)}</label>`).join('')}</div>`
+      : '<span class="faint" style="font-size:13px">No projects yet.</span>';
+  const roleSel = (id, v = 'Member') =>
+    `<select class="select" id="${id}" style="width:auto;min-width:120px" aria-label="Role">${['Member', 'Guest'].map(r => `<option ${r === v ? 'selected' : ''}>${r}</option>`).join('')}</select>`;
+  const who = id => (id ? esc(D().members.find(m => m.id === id)?.name || 'Former member') : 'Former member');
+  const when = ms => (ms ? fmtDate(new Date(ms).toISOString().slice(0, 10)) : '');
+  const err = k => (e[k] ? `<span class="err">${ic('circle-alert', 12)}${esc(e[k])}</span>` : '');
+  const row = b => {
+    const m = b.id === open;
+    const head = srow(
+      `<span class="row" style="gap:8px">${av(b.id, 'sm', false)}${esc(b.name)}<span class="badge accent bot-badge">Bot</span><span class="badge">${esc(b.role)}</span></span>`,
+      `${b.projects.length} project${b.projects.length === 1 ? '' : 's'} · ${b.keys.length} key${b.keys.length === 1 ? '' : 's'} · Created ${when(b.createdAt)}`,
+      `<button class="btn btn-secondary btn-sm" data-a="openBot" data-id="${esc(b.id)}" aria-expanded="${m}">${m ? 'Close' : 'Manage'}</button>`,
+    );
+    if (!m) return head;
+    const keys = b.keys.length
+      ? b.keys
+          .map(k =>
+            srow(
+              `<span class="row" style="gap:8px">${ic('key-round', 14)}${esc(k.name)}<span class="badge">${k.scope === 'write' ? 'Read and write' : 'Read only'}</span></span>`,
+              `<span class="mono">${esc(k.prefix)}…</span> · Created by ${who(k.createdBy)} ${when(k.createdAt)} · ${k.lastUsedAt ? `Last used ${ago(k.lastUsedAt)}` : 'Never used'}${k.expiresAt ? ` · Expires ${when(k.expiresAt)}` : ''}`,
+              `<button class="btn btn-danger-ghost btn-sm" data-a="revokeBotKey" data-id="${esc(b.id)}" data-key="${esc(k.id)}">Revoke</button>`,
+            ),
+          )
+          .join('')
+      : '<p class="faint" style="padding:8px 0;font-size:13px">No keys yet.</p>';
+    return `${head}<div class="panel" style="padding:14px;margin:4px 0 12px" id="bot-panel">
+      <form data-submit="saveBot" data-id="${esc(b.id)}" class="col" style="gap:12px">
+        <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-start"><div class="field" style="flex:1;min-width:200px"><label class="label" for="bot-edit-name">Name</label><input class="input ${e.botEdit ? 'is-error' : ''}" id="bot-edit-name" maxlength="80" value="${esc(b.name)}">${err('botEdit')}</div>
+        <div class="field"><label class="label" for="bot-edit-role">Role</label>${roleSel('bot-edit-role', b.role)}</div></div>
+        <div class="field"><span class="label">Projects</span>${projPick('bot-edit-proj', b.projects)}<span class="hint">Set Can view or Can comment for it in each project’s share dialog, as for a person.</span></div>
+        <div class="row"><button class="btn btn-primary btn-sm" data-a="saveBot" data-id="${esc(b.id)}" id="bot-save">Save</button><span class="sp"></span><button type="button" class="btn btn-danger-ghost btn-sm" data-a="removeBot" data-id="${esc(b.id)}">Remove bot</button></div>
+      </form>
+      <h3 style="font-size:13px;margin:16px 0 4px">Keys</h3>${keys}
+      <form data-submit="createBotKey" data-id="${esc(b.id)}" class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-start;margin-top:10px">
+        <div class="field" style="flex:1;min-width:180px"><label class="label" for="bot-key-name">Key name</label><input class="input ${e.botKey ? 'is-error' : ''}" id="bot-key-name" placeholder="e.g. GitHub Actions" maxlength="60" value="${esc(S.ui.botKeyName || '')}">${err('botKey')}</div>
+        <div class="field"><span class="label">Access</span><span class="row" style="gap:8px">${keyOpts}</span></div>
+        <div class="field" style="min-width:170px"><label class="label" for="bot-key-pw">Your password</label><input type="password" class="input ${e.botKeyPw ? 'is-error' : ''}" id="bot-key-pw" autocomplete="current-password">${err('botKeyPw')}</div>
+        <div class="field"><span class="label" aria-hidden="true">&nbsp;</span><button class="btn btn-primary" data-a="createBotKey" data-id="${esc(b.id)}" id="bot-key-create">${ic('plus', 14)}Create key</button></div>
+      </form></div>`;
+  };
+  return `<div class="sblock" id="bots"><h2>Bots</h2><p class="muted" style="font-size:13px;margin:4px 0 12px">For release scripts, CI and internal tools. A bot is a member with its own role and projects that acts only through its keys: it can’t sign in, gets no notifications, and its changes show as the bot in Activity. Removing the admin who made a key doesn’t revoke it.</p>
+  ${
+    fresh
+      ? `<div class="alert ok" style="margin-bottom:14px;display:block" id="bot-new-key"><div class="row" style="gap:8px;margin-bottom:6px">${ic('circle-check', 15)}<b>Copy “${esc(fresh.key.name)}” for ${esc(fresh.bot)} now. You won’t see it again.</b></div>
+      <div class="row" style="gap:8px"><input class="input mono" id="bot-token" readonly value="${esc(fresh.token)}" style="flex:1" aria-label="New bot key"><button class="btn btn-primary btn-sm" data-a="copyText" data-text="${esc(fresh.token)}">${ic('copy', 13)}Copy</button><button class="btn btn-ghost btn-sm" data-a="dismissBotKey">Done</button></div></div>`
+      : ''
+  }
+  ${bots.map(row).join('') || '<p class="faint" style="padding:8px 0">No bots yet.</p>'}
+  <form data-submit="createBot" class="col" style="gap:12px;margin-top:14px"><h3 style="font-size:13px;margin:0">New bot</h3>
+    <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-start"><div class="field" style="flex:1;min-width:200px"><label class="label" for="bot-name">Name</label><input class="input ${e.botName ? 'is-error' : ''}" id="bot-name" placeholder="e.g. Release Bot" maxlength="80" value="${esc(S.ui.botName || '')}">${err('botName')}</div>
+    <div class="field"><label class="label" for="bot-role">Role</label>${roleSel('bot-role')}</div></div>
+    <div class="field"><span class="label">Projects</span>${projPick('bot-proj')}<span class="hint">As a Member it also sees every project open to the workspace; as a Guest only these.</span></div>
+    <div><button class="btn btn-primary" data-a="createBot" id="bot-create">${ic('bot', 14)}Create bot</button></div>
+  </form></div>`;
 }
 export function strengthMeter(pw) {
   let s = 0;
