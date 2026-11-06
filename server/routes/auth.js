@@ -341,9 +341,17 @@ export function authRoutes({ limit }) {
     }
     const ok = user ? await verifyPassword(b.data.password, user.password_hash) : await burnPasswordCheck(b.data.password);
     if (!ok) return c.json({ error: 'Incorrect email or password.' }, 401);
+    // The password may have been changed or reset while it was being checked: the old one must not
+    // get a session (or device trust) after the change signed everyone out. Such an attempt still
+    // counts as a failure.
+    const signedIn = db.tx(() => {
+      if (db.get("SELECT password_hash FROM users WHERE id = ? AND kind = 'person'", user.id)?.password_hash !== user.password_hash) return false;
+      createSession(c, db, user.id, { remember: b.data.remember !== false, pending2fa: !!user.totp_enabled });
+      if (!user.totp_enabled) rememberDevice(c, db, user.id);
+      return true;
+    });
+    if (!signedIn) return c.json({ error: 'Incorrect email or password.' }, 401);
     limit.refund(failKey);
-    createSession(c, db, user.id, { remember: b.data.remember !== false, pending2fa: !!user.totp_enabled });
-    if (!user.totp_enabled) rememberDevice(c, db, user.id);
     return c.json({ ...sessionState(c), twoFactor: !!user.totp_enabled });
   });
 
@@ -380,9 +388,15 @@ export function authRoutes({ limit }) {
       }
       return c.json({ error: "That code didn't work. Check your authenticator app and try again.", field: 'code' }, 401);
     }
-    db.run('UPDATE sessions SET pending_2fa = 0 WHERE id = ?', session.id);
-    db.run('UPDATE users SET tfa_failed = 0, tfa_failed_since = NULL, tfa_locked_until = NULL WHERE id = ?', user.id);
-    rememberDevice(c, db, user.id);
+    // Only a session that still exists, for the password it was opened with, completes sign-in.
+    const done = db.tx(() => {
+      const same = db.get('SELECT password_hash FROM users WHERE id = ?', user.id)?.password_hash === user.password_hash;
+      if (!same || !db.run('UPDATE sessions SET pending_2fa = 0 WHERE id = ? AND pending_2fa = 1', session.id).changes) return false;
+      db.run('UPDATE users SET tfa_failed = 0, tfa_failed_since = NULL, tfa_locked_until = NULL WHERE id = ?', user.id);
+      rememberDevice(c, db, user.id);
+      return true;
+    });
+    if (!done) return c.json(GONE, 401);
     return c.json(sessionState(c));
   });
 
@@ -431,9 +445,14 @@ export function authRoutes({ limit }) {
     const hash = await hashPassword(b.data.password);
     const user = personByEmail(db, t.email);
     if (!user) return c.json({ error: 'This reset link has expired or was already used. Request a new one.' }, 400);
-    const ids = db.all('SELECT id FROM sessions WHERE user_id = ?', user.id).map(s => s.id);
-    db.tx(() => {
-      useToken(db, t);
+    // The link is used up in the same transaction that sets the password, so two requests racing with
+    // one link can't both reset it; sessions are listed there too, including any opened meanwhile.
+    const ids = db.tx(() => {
+      if (
+        !db.run('UPDATE auth_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at >= ?', Date.now(), t.token_hash, Date.now()).changes
+      )
+        return null;
+      const sessions = db.all('SELECT id FROM sessions WHERE user_id = ?', user.id).map(s => s.id);
       // Following an emailed link also proves the address.
       db.run('UPDATE users SET password_hash = ?, email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', hash, Date.now(), user.id);
       db.run('DELETE FROM sessions WHERE user_id = ?', user.id);
@@ -442,7 +461,9 @@ export function authRoutes({ limit }) {
       // Recovering the account revokes its API keys: whoever had control may have made one, for
       // themselves or (as an admin) for a bot.
       db.run('DELETE FROM api_keys WHERE user_id = ? OR created_by = ?', user.id, user.id);
+      return sessions;
     });
+    if (!ids) return c.json({ error: 'This reset link has expired or was already used. Request a new one.' }, 400);
     ids.forEach(id => engine.disconnectSession(id));
     clearSessionCookie(c);
     return c.json({ ok: true });

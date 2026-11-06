@@ -92,7 +92,9 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   person and their current role again inside its transaction, after any password check. A request
   held open while the person was removed, demoted, signed out or had their password changed is
   refused (`401`) or judged by the role they have now. Actions that need the current password also
-  fail if it changed meanwhile, and the workspace always keeps at least one Owner.
+  fail if it changed meanwhile, and the workspace always keeps at least one Owner. Sign-in (and
+  its two-factor step) only creates a session or trusts a device if the password is still the one
+  just checked, and a reset link is used up in the same transaction that sets the new password.
 - **Logging:** production logs one line per request (method, path, status, time), never bodies,
   cookies, query strings or tokens; tokens in auth link paths are replaced by `…`.
 

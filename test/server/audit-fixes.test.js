@@ -237,6 +237,35 @@ describe('H2 access is checked again when the write happens', () => {
     expect((await t.client().post('/api/auth/login', { email: 'ada@example.com', password: 'brand-new-pass-7' })).status).toBe(200);
   });
 
+  it('a sign-in whose password check was running when the password changed gets no session', async () => {
+    const { t } = await workspace();
+    const uid = t.db.get("SELECT id FROM users WHERE email = 'ada@example.com'").id;
+    const before = t.db.get('SELECT COUNT(*) n FROM sessions WHERE user_id = ?', uid).n;
+    const devices = t.db.get('SELECT COUNT(*) n FROM devices WHERE user_id = ?', uid).n;
+    const evil = t.client();
+    const pending = evil.post('/api/auth/login', { email: 'ada@example.com', password: PW });
+    await tick(5);
+    // What a password change does, landing while scrypt checks the old password.
+    t.db.run("UPDATE users SET password_hash = 'scrypt$changed' WHERE id = ?", uid);
+    expect((await pending).status).toBe(401);
+    expect(evil.session).toBe('');
+    expect(t.db.get('SELECT COUNT(*) n FROM sessions WHERE user_id = ?', uid).n).toBe(before);
+    expect(t.db.get('SELECT COUNT(*) n FROM devices WHERE user_id = ?', uid).n).toBe(devices);
+  });
+
+  it('one reset link can’t be used by two requests racing each other', async () => {
+    const { t, ada } = await workspace();
+    await ada.post('/api/auth/forgot', { email: 'ada@example.com' });
+    const token = t.lastLink('ada@example.com').split('#reset/')[1];
+    const [a, b] = await Promise.all([
+      t.client().post('/api/auth/reset', { token, password: 'first-new-pass-1' }),
+      t.client().post('/api/auth/reset', { token, password: 'second-new-pass-2' }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 400]);
+    const winner = a.status === 200 ? 'first-new-pass-1' : 'second-new-pass-2';
+    expect((await t.client().post('/api/auth/login', { email: 'ada@example.com', password: winner })).status).toBe(200);
+  });
+
   it('a bot key requested before a password reset is refused afterwards', async () => {
     const { t, ada } = await workspace();
     const b = await ada.post('/api/bots', { name: 'Release Bot', role: 'Member', projects: [] });
