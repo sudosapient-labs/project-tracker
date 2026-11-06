@@ -33,11 +33,14 @@ const FULL = 'There’s no room for more files in this workspace. Delete some fi
 
 export function fileRoutes({ limit }) {
   const r = new Hono();
+  // Bytes reserved by uploads still streaming in (this process serves one workspace, so this is
+  // both the workspace's and the disk's).
+  let reserved = 0;
 
   /* POST /api/files?project=&task=&name=  with the raw file as the body (streamed to disk). */
   // The body streams to disk, so it's checked again in the transaction that records the file.
   r.post('/', requireAuth('member', { stream: true }), async c => {
-    const { db, repo, config, engine } = c.var;
+    const { db, repo, config } = c.var;
     const { member } = c.var.auth;
     const q = c.req.query();
     const sent = Number(c.req.header('content-length') || 0);
@@ -52,11 +55,25 @@ export function fileRoutes({ limit }) {
       return c.json({ error: 'You’ve uploaded a lot of files. Try again in an hour.' }, 429);
     }
     // Whatever is smallest bounds this upload: the per-file limit, what's left of the workspace's
-    // quota, and the disk space above the reserve kept free for the database.
+    // quota, and the disk space above the reserve kept free for the database, both less what
+    // uploads still streaming in have reserved (so parallel uploads can't each count the same room).
+    // An upload reserves its Content-Length (or, without one, as much as it may take) until it's done.
     await fs.promises.mkdir(config.uploadDir, { recursive: true });
-    const room = Math.min(config.uploadQuotaBytes - storedBytes(db), (await freeBytes(config.uploadDir)) - config.minFreeDiskBytes);
+    const room = Math.min(config.uploadQuotaBytes - storedBytes(db), (await freeBytes(config.uploadDir)) - config.minFreeDiskBytes) - reserved;
     if (room <= 0 || sent > room) return c.json({ error: FULL }, 507);
-    const max = Math.min(config.maxUploadBytes, room);
+    const max = sent || Math.min(config.maxUploadBytes, room);
+    reserved += max;
+    try {
+      return await receive(c, { p, q, max, sent });
+    } finally {
+      reserved -= max;
+    }
+  });
+
+  /* Stream the body to disk (at most `max` bytes, the reservation) and record the file. */
+  async function receive(c, { p, q, max, sent }) {
+    const { db, repo, config, engine } = c.var;
+    const { member } = c.var.auth;
 
     const key = newId('b');
     const rel = path.join(key.slice(1, 3), key);
@@ -74,6 +91,7 @@ export function fileRoutes({ limit }) {
       await fs.promises.rename(full + '.part', full);
     } catch (e) {
       await fs.promises.rm(full + '.part', { force: true });
+      if (e.tooLarge && sent) return c.json({ error: 'The upload was larger than its Content-Length.' }, 400);
       if (e.tooLarge) return max < config.maxUploadBytes ? c.json({ error: FULL }, 507) : c.json({ error: `Files can be up to ${fsize(max)}.` }, 413);
       return c.json({ error: 'The upload was interrupted. Try again.' }, 400);
     }
@@ -129,7 +147,7 @@ export function fileRoutes({ limit }) {
       },
       201,
     );
-  });
+  }
 
   r.get('/:id/:name?', requireAuth(), c => {
     const { db, repo, config } = c.var;

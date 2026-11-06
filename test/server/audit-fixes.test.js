@@ -695,6 +695,37 @@ describe('M6 uploads are bounded per person, per workspace and by free disk', ()
     expect(stored).toHaveLength(1);
   });
 
+  it('counts uploads still streaming in, so parallel ones can’t share the same room', async () => {
+    const { t, bob } = await files({ UPLOAD_QUOTA_MB: String(2048 / 1024 / 1024) });
+    const hdr = { cookie: bob.cookie, 'content-type': 'text/plain' };
+    // A 1,500-byte upload is under way (its body still arriving)...
+    const a = held(t, '/api/files?project=p1&name=a.txt', { headers: hdr, raw: new TextEncoder().encode('x'.repeat(1500)) });
+    await tick();
+    // ...so another 1,000 bytes don't fit next to it, though nothing is stored yet.
+    expect((await upload(bob, 'b.txt', 1000)).status).toBe(507);
+    expect((await a.send()).status).toBe(201);
+    // Done: its reservation became stored bytes; 500 more still fit.
+    expect((await upload(bob, 'c.txt', 500)).status).toBe(201);
+    expect(t.db.get('SELECT COUNT(*) n FROM files').n).toBe(2);
+  });
+
+  it('stops a body that runs past its Content-Length', async () => {
+    const { t, bob } = await files();
+    const res = await t.app.request('/api/files?project=p1&name=a.txt', {
+      method: 'POST',
+      duplex: 'half',
+      body: new ReadableStream({
+        start(ctl) {
+          ctl.enqueue(new TextEncoder().encode('y'.repeat(5000)));
+          ctl.close();
+        },
+      }),
+      headers: { cookie: bob.cookie, 'x-requested-with': 'sudo-sapient', 'content-type': 'text/plain', 'content-length': '100' },
+    });
+    expect(res.status).toBe(400);
+    expect(t.db.get('SELECT COUNT(*) n FROM files').n).toBe(0);
+  });
+
   it('refuses uploads when the volume is nearly full', async () => {
     const { t, bob } = await files({ MIN_FREE_DISK_MB: String(1024 * 1024 * 1024) });
     const r = await upload(bob, 'a.txt', 10);
