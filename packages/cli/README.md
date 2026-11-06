@@ -32,9 +32,14 @@ sudo-cli login --url https://sudo.example.com   # paste the key when asked
 sudo-cli whoami
 ```
 
+Give the key at the prompt (it isn't echoed) or pipe it in (`printf '%s\n%s\n' "$URL" "$KEY" | sudo-cli
+login`), or set `SUDO_API_KEY`. `--key` works too, but the key then lands in your shell history and
+in the process list where other users of the machine can see it, so `sudo-cli` warns when it's used.
+
 The URL and key are saved to `$XDG_CONFIG_HOME/sudo-sapient/config.json` (default `~/.config`), readable
-only by you. `SUDO_URL` and `SUDO_API_KEY` override it (handy in CI), and `sudo-cli logout` deletes
-it. Revoke the key itself in Settings → API.
+only by you (the directory is kept owner-only too). `SUDO_URL` and `SUDO_API_KEY` override it (handy
+in CI). `sudo-cli logout` deletes it and, when you answer yes (or pass `--revoke`), also revokes the
+key on the server so it stops working everywhere; otherwise revoke it in Settings → API.
 
 The key travels with every request, so `sudo-cli` refuses a plain `http://` URL unless it's this
 machine (`localhost`, `127.0.0.1`). For a workspace you really reach over plain http, add

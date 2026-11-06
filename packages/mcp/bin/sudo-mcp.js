@@ -71,6 +71,7 @@ if (o.http) {
     .listen(port, o.host, () => console.error(`sudo-mcp: Streamable HTTP on http://${o.host}:${port}/ → ${url}`));
 } else {
   const key = o.key || cfg.key;
+  if (o.key) console.error('sudo-mcp: warning: --key leaves the key in your shell history and the process list. Prefer SUDO_API_KEY or `sudo-cli login`.');
   if (!key) {
     console.error('sudo-mcp: set an API key with --key, SUDO_API_KEY, or `sudo-cli login`.');
     process.exit(1);

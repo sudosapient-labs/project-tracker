@@ -16,8 +16,9 @@ const PRIORITIES = ['urgent', 'high', 'medium', 'low', 'none'];
 export const HELP = `sudo-cli: Sudo Sapient from the terminal
 
 Usage
-  sudo-cli login [--url <workspace url>] [--key <api key>]
-  sudo-cli logout | whoami
+  sudo-cli login [--url <workspace url>]       asks for the key (or pipe it in)
+  sudo-cli logout [--revoke]                   --revoke: also revoke the key on the server
+  sudo-cli whoami
   sudo-cli tasks [list] [--mine] [-p <project>] [-s <status>] [--all] [-n <limit>]
   sudo-cli tasks new "<title>" -p <project> [--due <date>] [-a <who>] [--priority <p>] [-d <text>]
   sudo-cli tasks done <KEY>...
@@ -28,8 +29,9 @@ Usage
   sudo-cli open <KEY>                        opens a task or project in the browser (--print: just the URL)
 
 Shortcuts: new, done, assign, show (= tasks …). Dates: today, tomorrow, friday, +3d, +2w, 2026-11-20.
-Options: --json (machine-readable output), --url, --key (else SUDO_URL / SUDO_API_KEY, else login),
---insecure (allow a plain http:// URL to another machine; login remembers it).
+Options: --json (machine-readable output), --url, --insecure (allow a plain http:// URL to another
+machine; login remembers it). The key comes from login, else SUDO_API_KEY; --key works too, but it
+lands in your shell history and the process list, so prefer the prompt or the variable.
 Create a key in Settings → API. Config: ${'$'}XDG_CONFIG_HOME/sudo-sapient/config.json.`;
 
 const OPTIONS = {
@@ -37,6 +39,7 @@ const OPTIONS = {
   url: { type: 'string' },
   key: { type: 'string' },
   insecure: { type: 'boolean' },
+  revoke: { type: 'boolean' },
   project: { type: 'string', short: 'p' },
   status: { type: 'string', short: 's' },
   assignee: { type: 'string', short: 'a' },
@@ -127,6 +130,8 @@ export async function run(argv, io = {}) {
   const cfg = loadConfig(env);
   const url = (o.url || cfg.url || '').replace(/\/+$/, '');
   const key = o.key || cfg.key;
+  if (o.key)
+    err.write('sudo-cli: warning: --key leaves the key in your shell history and the process list. Prefer the prompt (sudo-cli login) or SUDO_API_KEY.\n');
   // The key goes in a header on every request: never in the clear to another machine unless asked.
   const insecureOk = o.insecure || (!o.url && cfg.insecure);
   const needSecure = (u, ok = insecureOk) => {
@@ -170,11 +175,31 @@ export async function run(argv, io = {}) {
         else print(`Logged in to ${me.workspace || u} as ${me.name} (${me.key.scope} key “${me.key.name}”). Saved to ${file}`);
         return 0;
       }
-      case 'logout':
+      case 'logout': {
+        // Revoke the key on the server too: when asked (--revoke), or after a yes at the terminal.
+        const tty = (io.stdin || process.stdin).isTTY;
+        const revoke =
+          !!(url && key) &&
+          (o.revoke ||
+            (tty && !o.json && /^y(es)?$/i.test((await ask(io, 'Also revoke this key on the server, so it stops working everywhere? [y/N] ')).trim())));
+        let revoked = false;
+        if (revoke)
+          try {
+            await api().request('DELETE', '/me/key');
+            revoked = true;
+          } catch (e) {
+            // Already revoked or expired: nothing left to do on the server.
+            if (!(e instanceof ApiError && e.status === 401)) throw e;
+            revoked = true;
+          }
         clearConfig(env);
-        if (!o.json) print(`Removed ${configPath(env)}. Revoke the key itself in Settings → API.`);
-        else json({ ok: true });
+        if (o.json) json({ ok: true, revoked });
+        else
+          print(
+            `Removed ${configPath(env)}.${revoked ? ' The key is revoked.' : ' The key still works until you revoke it in Settings → API (logout --revoke does both).'}`,
+          );
         return 0;
+      }
       case 'whoami': {
         const me = await api().get('/me');
         if (o.json) json(me);

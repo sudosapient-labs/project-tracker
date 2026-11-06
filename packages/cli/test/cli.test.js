@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { account, apiKey, bot, setup } from '../../../test/server/helpers.js';
 import { parseDue, run, sameOrigin } from '../src/cli.js';
 import { plainHttpRemote } from '@sudosapient/client';
+import { saveConfig } from '@sudosapient/client/config';
 
 /* Runs the CLI with captured output and its own config directory. */
 function cli(t, env = {}) {
@@ -238,5 +239,46 @@ describe('output the server controls', () => {
     const json = await against(evil, 403, 'whoami', '--json');
     for (const bad of ['\x1b', '\\u001b', '\\u0007']) expect(json.err).not.toContain(bad);
     expect(JSON.parse(json.err)).toMatchObject({ error: 'Nope]52;c;cm0gLXJmIH4=[2J', code: 'forbidden[31m' });
+  });
+});
+
+describe('credentials', () => {
+  it('writes the config owner-only, through a fresh file, and tightens an existing directory', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sudo-cli-'));
+    const dir = path.join(home, 'sudo-sapient');
+    fs.mkdirSync(dir, { mode: 0o755 });
+    fs.chmodSync(dir, 0o755);
+    // A config left world-readable by something else is replaced, not rewritten in place.
+    fs.writeFileSync(path.join(dir, 'config.json'), '{}', { mode: 0o644 });
+    fs.chmodSync(path.join(dir, 'config.json'), 0o644);
+    const file = saveConfig({ url: 'https://sudo.example.com', key: 'ssk_secret' }, { XDG_CONFIG_HOME: home });
+    expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).key).toBe('ssk_secret');
+    expect(fs.readdirSync(dir)).toEqual(['config.json']);
+  });
+
+  it('warns when the key is given with --key', async () => {
+    const r = await cli(null, { SUDO_URL: 'https://x.test' })('whoami', '--key', 'ssk_x', '--help');
+    expect(r.err).toBe('');
+    const used = await cli(null, { SUDO_URL: 'https://x.test' })('new', '--key', 'ssk_x', '-p', 'WEB');
+    expect(used.err).toContain('--key leaves the key in your shell history');
+  });
+
+  it('logout --revoke revokes the key on the server too', async () => {
+    const t = setup();
+    const ada = await account(t);
+    const token = await apiKey(ada.c, { name: 'Laptop' });
+    const keep = await apiKey(ada.c, { name: 'Other' });
+    const c = cli(t);
+    await c('login', '--insecure', { stdin: `http://app.test/\n${token}\n` });
+    const r = await c('logout', '--revoke');
+    expect(r).toMatchObject({ code: 0, out: expect.stringContaining('The key is revoked.') });
+    expect((await ada.c.get('/api/keys')).body.map(k => k.name)).toEqual(['Other']);
+    expect((await cli(t, { SUDO_URL: 'http://app.test', SUDO_API_KEY: token })('whoami', '--insecure')).code).toBe(1);
+    // Without --revoke (and with no terminal to ask at), the key is kept.
+    await c('login', '--insecure', { stdin: `http://app.test/\n${keep}\n` });
+    expect((await c('logout')).out).toContain('The key still works');
+    expect((await ada.c.get('/api/keys')).body.map(k => k.name)).toEqual(['Other']);
   });
 });

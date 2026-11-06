@@ -47,7 +47,9 @@ claude mcp add --transport http sudo-sapient https://sudo.example.com/api/mcp --
 }
 ```
 
-`sudo-mcp` also reads the URL and key saved by `sudo-cli login`. Options: `--url`, `--key`,
+`sudo-mcp` also reads the URL and key saved by `sudo-cli login`. Prefer that, or `SUDO_API_KEY`, to
+`--key`: a key on the command line lands in shell history and the process list, so `sudo-mcp`
+warns about it. Options: `--url`, `--key`,
 `--read-only` (or `SUDO_MCP_READ_ONLY=1`) to register only the read tools even with a write key
 (write tools aren't listed, and calling one is an "Unknown tool" error; off by default),
 `--http [--port 3333]` to serve Streamable HTTP on 127.0.0.1 (each request brings its own key), and
