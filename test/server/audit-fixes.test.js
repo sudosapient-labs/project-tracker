@@ -1,6 +1,8 @@
 /* Regressions for the platform audit's high and medium findings (H1–M8). */
 import { describe, expect, it } from 'vitest';
 import { PW, account, apiKey, keyClient, setup } from './helpers.js';
+import fs from 'node:fs';
+import path from 'node:path';
 import { cleanRich } from '../../server/lib/rich-text.js';
 
 const project = (id, key = 'WEB', extra = {}) => ({
@@ -371,5 +373,58 @@ describe('M4 password guesses are counted before they are checked', () => {
     // Locked now, even with the right password and from a fresh address; sign-in from a new browser too.
     expect((await ada.post('/api/auth/2fa/setup', { password: PW }, from(200))).status).toBe(429);
     expect((await t.client().post('/api/auth/login', { email: 'ada@example.com', password: PW }, from(201))).status).toBe(429);
+  });
+});
+
+describe('M6 uploads are bounded per person, per workspace and by free disk', () => {
+  const upload = (c, name, bytes) => c.post(`/api/files?project=p1&name=${name}`, 'x'.repeat(bytes), { 'content-type': 'text/plain' });
+  async function files(env) {
+    const w = await workspace([['mbob', 'Bob', 'Member']], env);
+    await w.ada.sync([put('projects', project('p1'))]);
+    return w;
+  }
+
+  it('limits how many uploads one person can start an hour', async () => {
+    const { ada, bob } = await files({ DISABLE_RATE_LIMIT: 'false', UPLOADS_PER_HOUR: '3' });
+    for (let i = 0; i < 3; i++) expect((await upload(bob, `f${i}.txt`, 10)).status).toBe(201);
+    const r = await upload(bob, 'f4.txt', 10);
+    expect(r.status).toBe(429);
+    expect(r.headers.get('retry-after')).toBeTruthy();
+    // Someone else's allowance is their own.
+    expect((await upload(ada, 'a.txt', 10)).status).toBe(201);
+  });
+
+  it('refuses uploads past the workspace quota, before and while they stream', async () => {
+    // 2 KB for the whole workspace.
+    const { t, bob } = await files({ UPLOAD_QUOTA_MB: String(2048 / 1024 / 1024) });
+    expect((await upload(bob, 'a.txt', 1500)).status).toBe(201);
+    const over = await upload(bob, 'b.txt', 1000);
+    expect(over.status).toBe(507);
+    expect(over.body.error).toMatch(/no room/);
+    expect(t.db.get('SELECT COUNT(*) n FROM files').n).toBe(1);
+    // Without a Content-Length the stream itself is cut off at the quota.
+    const res = await t.app.request('/api/files?project=p1&name=c.txt', {
+      method: 'POST',
+      duplex: 'half',
+      body: new ReadableStream({
+        start(ctl) {
+          ctl.enqueue(new TextEncoder().encode('y'.repeat(1000)));
+          ctl.close();
+        },
+      }),
+      headers: { cookie: bob.cookie, 'x-requested-with': 'sudo-sapient', 'content-type': 'text/plain' },
+    });
+    expect(res.status).toBe(507);
+    expect(t.db.get('SELECT COUNT(*) n FROM files').n).toBe(1);
+    // Only the first file's bytes are on disk.
+    const stored = fs.readdirSync(t.config.uploadDir, { recursive: true }).filter(f => fs.statSync(path.join(t.config.uploadDir, String(f))).isFile());
+    expect(stored).toHaveLength(1);
+  });
+
+  it('refuses uploads when the volume is nearly full', async () => {
+    const { t, bob } = await files({ MIN_FREE_DISK_MB: String(1024 * 1024 * 1024) });
+    const r = await upload(bob, 'a.txt', 10);
+    expect(r.status).toBe(507);
+    expect(t.db.get('SELECT COUNT(*) n FROM files').n).toBe(0);
   });
 });

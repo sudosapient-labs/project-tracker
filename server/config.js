@@ -5,6 +5,9 @@
    responses), so a mistyped or unusual NODE_ENV fails closed. */
 import fs from 'node:fs';
 
+/* A size setting in MB: a non-negative number (fractions allowed), else `fallback`. */
+const megabytes = (v, fallback) => (v != null && v !== '' && Number(v) >= 0 ? Number(v) : fallback);
+
 export function loadConfig(env = process.env) {
   const nodeEnv = env.NODE_ENV || 'production';
   const dev = nodeEnv === 'development' || nodeEnv === 'test';
@@ -42,6 +45,12 @@ export function loadConfig(env = process.env) {
     vapidSubject: env.VAPID_SUBJECT || `mailto:${(env.MAIL_FROM || '').match(/<([^>]+)>/)?.[1] || 'admin@localhost'}`,
     secureCookies: env.SECURE_COOKIES ? env.SECURE_COOKIES === 'true' : prod,
     maxUploadBytes: (Number(env.MAX_UPLOAD_MB) || 250) * 1024 * 1024,
+    // All stored files together (copies share their bytes), so uploads can't fill the volume that
+    // also holds the database; uploads also stop while the volume has less than minFreeDiskBytes free.
+    uploadQuotaBytes: Math.round(megabytes(env.UPLOAD_QUOTA_MB, 5 * 1024) * 1024 * 1024),
+    minFreeDiskBytes: Math.round(megabytes(env.MIN_FREE_DISK_MB, 1024) * 1024 * 1024),
+    // Uploads each person may start an hour.
+    uploadsPerHour: Math.max(1, Math.floor(Number(env.UPLOADS_PER_HOUR) || 60)),
     // Without a mail transport, development and test API responses include the emailed link so
     // the verify / reset screens can offer it directly. Never otherwise.
     exposeEmailLinks: dev && !resendApiKey,

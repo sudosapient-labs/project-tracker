@@ -77,7 +77,9 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   header cross-site without a CORS preflight, which this API never approves, so together with
   `SameSite` cookies this blocks cross-site requests.
 - **Body limits:** 64 KB for `/api/auth`, 10 MB for `/api/sync` (and at most 500 operations), 1 MB
-  elsewhere. Uploads stream to disk under their own `MAX_UPLOAD_MB`.
+  elsewhere. Uploads stream to disk under their own `MAX_UPLOAD_MB`, and are also bounded by a
+  workspace quota (`UPLOAD_QUOTA_MB`), a reserve of free disk space (`MIN_FREE_DISK_MB`, since the
+  volume also holds the database) and `UPLOADS_PER_HOUR` per person.
 - **Other rate limits:** invites (50 an hour per person, emailed or resent), invite links (10 an hour
   per person), access requests (3 an hour per person and project) and the Owner's two-factor resets.
   Asking for access answers the same whether or not the project exists.

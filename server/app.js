@@ -121,7 +121,7 @@ export function createApp({ db, config, log = console, pushSend }) {
   api.route('/keys', keyRoutes({ limit }));
   api.route('/bots', botRoutes({ limit }));
   api.route('/auth', authRoutes({ limit }));
-  api.route('/files', fileRoutes());
+  api.route('/files', fileRoutes({ limit }));
   api.route('/', dataRoutes());
   api.route('/', workspaceRoutes({ limit }));
   api.get('/health', c => {
