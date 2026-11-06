@@ -214,10 +214,9 @@ test('an edit made while the back/forward-cache send is unanswered is not droppe
   await page.unroute('**/api/sync');
   await page.evaluate(() => dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
   await expect.poll(async () => (await serverTask(page, 'tbf2'))?.desc ?? '', { timeout: 40_000 }).toContain('Typed while it was unanswered.');
-  // Both parts are kept (where the caret was is the offline re-render's business, not this test's).
-  await expect(page.locator('#d-desc')).toContainText('Sent on pagehide.');
-  await expect(page.locator('#d-desc')).toContainText('Typed while it was unanswered.');
-  expect((await serverTask(page, 'tbf2')).desc).toContain('Sent on pagehide.');
+  // Both parts are kept, in the order typed: going offline and retrying never re-render the editor.
+  await expect(page.locator('#d-desc')).toHaveText('Sent on pagehide. Typed while it was unanswered.');
+  expect((await serverTask(page, 'tbf2')).desc).toContain('Sent on pagehide. Typed while it was unanswered.');
 });
 
 test('an edit made while a reload’s data is loading is kept, not replaced by it', async ({ page }) => {

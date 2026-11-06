@@ -36,10 +36,11 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
   if (req.mode === 'navigate') {
     // Network first so a deploy is picked up at once; the cached shell is the offline fallback.
+    // Only the app page itself refreshes it: a tab opened on /sw.js or an icon is a navigation too.
     e.respondWith(
       fetch(req)
         .then(res => {
-          if (res.ok) {
+          if (res.ok && !res.redirected && url.pathname === '/' && /^text\/html\b/i.test(res.headers.get('content-type') || '')) {
             const copy = res.clone();
             e.waitUntil(caches.open(SHELL).then(c => c.put('/', copy)));
           }
