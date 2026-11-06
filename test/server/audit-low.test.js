@@ -10,6 +10,8 @@ import { createApp } from '../../server/app.js';
 import { ipKey } from '../../server/lib/rate-limit.js';
 import { housekeep } from '../../server/jobs.js';
 import { RESTORE_MS } from '../../server/sync/engine.js';
+import { HREF_MAX, cleanRich } from '../../server/lib/rich-text.js';
+import { SYNCS_PER_MINUTE } from '../../server/routes/data.js';
 
 const invite = (id, email, role = 'Member') => ({
   c: 'members',
@@ -357,5 +359,30 @@ describe('three-way merges of reactions and milestones', () => {
       { name: 'Launch', date: '2027-02-01' },
       { name: 'GA', date: '2027-03-01' },
     ]);
+  });
+});
+
+describe('the cost of one person’s sync requests', () => {
+  it('drops an over-long href before the slow link check, keeping ordinary links', () => {
+    const html = '<a href="https://x.test/' + '<!---->'.repeat(14_000) + '">x</a>';
+    cleanRich(html);
+    const t0 = performance.now();
+    expect(cleanRich(html)).toBe('<a>x</a>');
+    expect(performance.now() - t0).toBeLessThan(40);
+    const ok = `<a href="https://example.com/${'a'.repeat(HREF_MAX - 30)}">ok</a>`;
+    expect(cleanRich(ok)).toBe(ok);
+    expect(cleanRich('<a href="javascript:alert(1)">x</a>')).toBe('<a>x</a>');
+  });
+
+  it('limits sync requests per person, not per tab', async () => {
+    const t = setup({ DISABLE_RATE_LIMIT: 'false' });
+    const { c } = await account(t);
+    const other = t.client();
+    await other.post('/api/auth/login', { email: 'ada@example.com', password: PW });
+    for (let i = 0; i < SYNCS_PER_MINUTE; i++) expect((await (i % 2 ? c : other).sync([])).status).toBe(200);
+    const r = await c.sync([]);
+    expect(r.status).toBe(429);
+    expect(Number(r.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect((await other.sync([])).status).toBe(429);
   });
 });

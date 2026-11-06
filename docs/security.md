@@ -92,7 +92,8 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   reserve their size (their `Content-Length`, or as much as they may take) against the quota and
   the disk reserve, so parallel uploads can't each count the same room, and a body that runs past
   its `Content-Length` is cut off.
-- **Other rate limits:** invites (50 an hour per person, emailed or resent), invite links (10 an hour
+- **Other rate limits:** sync requests (600 a minute per person, all their tabs and devices
+  together; far above what the app sends), invites (50 an hour per person, emailed or resent), invite links (10 an hour
   per person), access requests (3 an hour per person and project) and the Owner's two-factor resets.
   Asking for access answers the same whether or not the project exists.
 - **Access is checked when the write happens:** a request without a valid session or key is
@@ -171,7 +172,8 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 - Everything people type is escaped when rendered. Task descriptions are the one rich-text field: the
   server sanitises them on write (sanitize-html) and the client again when rendering or pasting
   (DOMPurify), both against the editor's own allowlist (`src/core/rich-text.js`: paragraphs, bold,
-  italic, lists, a heading and http(s)/mailto links).
+  italic, lists, a heading and http(s)/mailto links). A link longer than 2,048 characters loses its
+  `href` before the link check runs (that check is quadratic in some long links).
   Before sanitising, a description must be text of at most 100,000 characters with elements nested
   at most 64 deep (sanitising gets superlinear with depth, so huge or deeply nested markup could
   stall the server). The depth is measured by running the sanitiser's own parser (the htmlparser2
