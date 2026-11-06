@@ -1,6 +1,7 @@
 /* The MCP server, driven by the official MCP SDK client: over Streamable HTTP against the app's own
    /api/mcp, and over stdio against a real HTTP server. Tools act with the key's permissions and
    label activity with the client ("via Claude"). */
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
@@ -250,6 +251,13 @@ describe('MCP over stdio (sudo-mcp)', () => {
       ['completed', 'Claude'],
       ['created', 'Claude'],
     ]);
+  });
+
+  it('won’t send the key over plain http to another machine unless told --insecure', () => {
+    const env = { PATH: process.env.PATH, SUDO_URL: 'http://tracker.example.com', SUDO_API_KEY: 'ssk_x', XDG_CONFIG_HOME: '/nonexistent' };
+    const run = spawnSync(process.execPath, [BIN], { env, input: '', encoding: 'utf8' });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('--insecure');
   });
 });
 

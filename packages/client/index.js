@@ -58,3 +58,16 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
 
 /* Path segment for a task or project reference (an id or key). */
 export const seg = ref => encodeURIComponent(String(ref).trim());
+
+/* True when `url` would send the key in the clear to another machine: plain http to anything but
+   this one (localhost, 127.x, ::1). */
+export function plainHttpRemote(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  const host = u.hostname.replace(/^\[|\]$/g, '');
+  return u.protocol === 'http:' && !(host === 'localhost' || host.endsWith('.localhost') || host === '::1' || /^127\./.test(host));
+}

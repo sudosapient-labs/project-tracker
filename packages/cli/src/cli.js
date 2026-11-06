@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import { parseArgs } from 'node:util';
-import { ApiError, createClient, seg } from '@sudosapient/client';
+import { ApiError, createClient, plainHttpRemote, seg } from '@sudosapient/client';
 import { clearConfig, configPath, loadConfig, saveConfig } from '@sudosapient/client/config';
 
 export const VERSION = '0.1.0';
@@ -27,13 +27,15 @@ Usage
   sudo-cli open <KEY>                        opens a task or project in the browser (--print: just the URL)
 
 Shortcuts: new, done, assign, show (= tasks …). Dates: today, tomorrow, friday, +3d, +2w, 2026-11-20.
-Options: --json (machine-readable output), --url, --key (else SUDO_URL / SUDO_API_KEY, else login).
+Options: --json (machine-readable output), --url, --key (else SUDO_URL / SUDO_API_KEY, else login),
+--insecure (allow a plain http:// URL to another machine; login remembers it).
 Create a key in Settings → API. Config: ${'$'}XDG_CONFIG_HOME/sudo-sapient/config.json.`;
 
 const OPTIONS = {
   json: { type: 'boolean' },
   url: { type: 'string' },
   key: { type: 'string' },
+  insecure: { type: 'boolean' },
   project: { type: 'string', short: 'p' },
   status: { type: 'string', short: 's' },
   assignee: { type: 'string', short: 'a' },
@@ -114,8 +116,15 @@ export async function run(argv, io = {}) {
   const cfg = loadConfig(env);
   const url = (o.url || cfg.url || '').replace(/\/+$/, '');
   const key = o.key || cfg.key;
+  // The key goes in a header on every request: never in the clear to another machine unless asked.
+  const insecureOk = o.insecure || (!o.url && cfg.insecure);
+  const needSecure = (u, ok = insecureOk) => {
+    if (plainHttpRemote(u) && !ok)
+      throw new UsageError(`${u} is plain http, so your API key would cross the network unencrypted. Use https, or add --insecure if you mean it.`);
+  };
   const api = () => {
     if (!url || !key) throw new UsageError('Not logged in. Run: sudo-cli login --url https://your-workspace');
+    needSecure(url);
     const a = createClient({ url, key, client: 'CLI', fetch: io.fetch });
     // JSON output escapes control characters itself; human output gets them stripped.
     if (o.json) return a;
@@ -140,10 +149,12 @@ export async function run(argv, io = {}) {
       case 'login': {
         const u = (o.url || (await ask(io, `Workspace URL${cfg.url ? ` (${cfg.url})` : ''}: `)) || cfg.url || '').trim().replace(/\/+$/, '');
         need(/^https?:\/\//.test(u), 'Give the workspace URL, e.g. https://sudo.example.com');
+        // Logging in again asks again: the saved consent was for the saved URL.
+        needSecure(u, o.insecure);
         const k = (o.key || (await ask(io, 'API key (Settings → API): ', { hidden: true }))).trim();
         need(k, 'Paste an API key from Settings → API.');
         const me = clean(await createClient({ url: u, key: k, client: 'CLI', fetch: io.fetch }).get('/me'));
-        const file = saveConfig({ url: u, key: k }, env);
+        const file = saveConfig({ url: u, key: k, ...(o.insecure && plainHttpRemote(u) ? { insecure: true } : {}) }, env);
         if (o.json) json({ ok: true, user: me, config: file });
         else print(`Logged in to ${me.workspace || u} as ${me.name} (${me.key.scope} key “${me.key.name}”). Saved to ${file}`);
         return 0;
