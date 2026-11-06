@@ -39,9 +39,11 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   before the password is checked (and given back when it was right), so parallel guesses can't all
   be checked before the first failures count.
 - Signed-in actions that ask for the password (changing it or the email, API and bot keys, setting
-  up or turning off two-factor, deleting the account, the Owner's two-factor reset) share that
-  per-account budget, so a stolen session can't guess the password faster through them. Once it's
-  used up they answer `429` until the lock ends.
+  up or turning off two-factor, deleting the account, the Owner's two-factor reset) have their own
+  budget per person: 10 wrong passwords in 15 minutes, counted the same way, then `429` until it
+  resets. Strangers failing to sign in don't touch it, so they can't lock someone out of changing
+  their password; but each wrong password there also counts towards the email's sign-in lock, so a
+  stolen session can't guess faster than sign-in allows.
 - So that strangers can't use that lock to keep the owner out, a browser that has signed in to the
   account before carries a **device cookie** (`ss_dev`: random, `HttpOnly`, one year, path
   `/api/auth`, stored hashed; the OWASP device-cookie pattern). Its sign-ins skip the per-email lock and

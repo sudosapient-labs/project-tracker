@@ -435,7 +435,15 @@ describe('M4 password guesses are counted before they are checked', () => {
     for (let i = 0; i < 3; i++) expect((await t.client().post('/api/auth/login', { email: 'ada@example.com', password: PW }, from(100 + i))).status).toBe(200);
   });
 
-  it('a signed-in session guessing through password-confirmed endpoints shares the account’s budget', async () => {
+  it('strangers failing to sign in can’t lock the person out of password-confirmed actions', async () => {
+    const { t, ada } = await workspace([], env);
+    for (let i = 0; i < 12; i++) await t.client().post('/api/auth/login', { email: 'ada@example.com', password: `wrong-${i}` }, from(i));
+    expect((await t.client().post('/api/auth/login', { email: 'ada@example.com', password: PW }, from(300))).status).toBe(429);
+    expect((await ada.post('/api/keys', { name: 'k', scope: 'read', expiresInDays: null, password: PW }, from(301))).status).toBe(201);
+    expect((await ada.post('/api/auth/password', { current: PW, password: 'brand-new-pass-7' }, from(302))).status).toBe(200);
+  });
+
+  it('a signed-in session guessing through password-confirmed endpoints is limited, and feeds the sign-in lock', async () => {
     const { t, ada } = await workspace([], env);
     const guesses = [
       ...Array.from({ length: 6 }, (_, i) => ada.post('/api/auth/password', { current: `wrong-${i}`, password: 'brand-new-pass-7' }, from(i))),

@@ -144,17 +144,22 @@ const emailTaken = ({ db }, em, exceptId) =>
   !!db.get('SELECT 1 FROM users WHERE email = ? AND id != ?', em, exceptId) ||
   !!db.get("SELECT 1 FROM members WHERE lower(json_extract(data, '$.email')) = ? AND id != ?", em, exceptId);
 
-/* Failed password checks per account, shared by sign-in and every signed-in action that asks for the
-   password. Each attempt is reserved before the (slow) check and given back if it was right, so
-   parallel guesses can't all slip past the limit while the first ones are still being checked. */
+/* Failed password checks per account. Sign-in counts them per email (`login-fail:`); signed-in
+   actions that ask for the password count them per person (`pw-confirm:`), so strangers failing to
+   sign in can't lock someone out of changing their own password. Those failures are added to the
+   email's count too, so a stolen session can't guess faster than sign-in allows. Each attempt is
+   reserved before the (slow) check and given back if it was right, so parallel guesses can't all
+   slip past the limit while the first ones are still being checked. */
 const passwordFailKey = em => `login-fail:${em}`;
+const confirmKey = user => `pw-confirm:${user.id}`;
 const PASSWORD_LOCKED = 'Too many incorrect passwords for this account. Try again in 15 minutes.';
-/* true, false, or 'locked' when the account's failure budget is used up (nothing was checked). */
+/* true, false, or 'locked' when the person's budget is used up (nothing was checked). */
 export async function checkPassword(limit, user, pw) {
-  const key = passwordFailKey(user.email);
+  const key = confirmKey(user);
   if (!limit.hit(key, LOGIN_FAILS, LOGIN_FAIL_MS)) return 'locked';
   const ok = await verifyPassword(pw, user.password_hash);
   if (ok) limit.refund(key);
+  else limit.hit(passwordFailKey(user.email), LOGIN_FAILS, LOGIN_FAIL_MS);
   return ok;
 }
 /* checkPassword as a route answers it: null when the password is right, else the error response. */
@@ -162,7 +167,7 @@ export async function passwordError(c, limit, pw, { field = 'password', error = 
   const ok = await checkPassword(limit, c.var.auth.user, pw);
   if (ok === true) return null;
   if (ok === 'locked') {
-    c.header('Retry-After', String(limit.blocked(passwordFailKey(c.var.auth.user.email), LOGIN_FAILS)));
+    c.header('Retry-After', String(limit.blocked(confirmKey(c.var.auth.user), LOGIN_FAILS)));
     return c.json({ error: PASSWORD_LOCKED, code: 'locked' }, 429);
   }
   return c.json({ error, field }, 400);
