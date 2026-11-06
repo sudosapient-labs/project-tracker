@@ -28,6 +28,10 @@ export function dataRoutes({ limit }) {
     requireAuth(),
     limit('sync', SYNCS_PER_MINUTE, 60_000, { keyOf: c => c.var.auth.member.id, message: 'You’re saving changes very fast. Wait a moment.' }),
     async c => {
+      // The app says whose changes these are: a tab still showing someone who has since been
+      // replaced by another sign-in in this browser mustn't save its queue as the new person.
+      const expected = c.req.header('x-sudo-user');
+      if (expected && expected !== c.var.auth.user?.id) return c.json({ error: 'Someone else is signed in now.', code: 'other_user' }, 409);
       const b = await parseBody(c, z.object({ ops: z.array(z.looseObject({ c: z.string(), k: z.string() })).max(MAX_OPS) }));
       if (b.error) return b.error;
       const { results, links, gone } = c.var.engine.apply(c.var.auth, b.data.ops, c.req.header('x-client-id'));

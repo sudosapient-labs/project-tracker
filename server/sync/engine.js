@@ -191,6 +191,9 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
       if (c === 'notifs') ctx.changes.push({ c, id, v: after, uid: ctx.uid });
       else ctx.emit(c, after, before && scopeOf(c, before) !== scopeOf(c, after) ? scopeOf(c, before) : null);
     }
+    // A patch that changes nothing (the app re-reads a record this way) answers like a missing record
+    // for one this person can't see, so it can't be used to learn that a hidden record exists.
+    if (!changed && before && !visible(c, before, ctx.me)) throw new Reject('This item was deleted.', 404);
     // A favourite needs a record this person can open: for one they can't, a change of only the
     // favourite answers like a missing record, and none is stored.
     const favOk = 'fav' in personal && canSee(c === 'projects' ? after : repo.get('projects', after.project), ctx.me);

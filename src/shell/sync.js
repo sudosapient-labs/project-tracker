@@ -47,13 +47,16 @@ export const onSync = h => Object.assign(hooks, h);
 const fields = o => new Map(Object.keys(o).map(k => [k, JSON.stringify(o[k])]));
 /* List and map fields sent with the value they were edited from, so the server applies only this
    tab's changes to them (server/sync/merge.js): a stale edit can't undo someone else's. */
-const MERGED = { projects: ['members', 'perms'], tasks: ['subtasks', 'labels', 'deps'] };
+const MERGED = { projects: ['members', 'perms', 'milestones'], tasks: ['subtasks', 'labels', 'deps'], comments: ['re'] }; // as server/sync/merge.js
 /* Projects I can't open come as stubs; give them the empty fields pages read, in the record and its
    shadow alike, so nothing is sent back for them. */
 const fill = (c, v) =>
   c === 'projects' && v && !('desc' in v) ? Object.assign(v, { members: [], desc: '', milestones: [], team: '', due: null, start: null, ...v }) : v;
 const clone = v => (v === undefined ? null : JSON.parse(JSON.stringify(v)));
 const keyOf = (c, id) => `${c}:${id}`;
+/* Whose changes these are: the server refuses them if the session now belongs to someone else (a
+   sign-in in another tab), so a stale tab can't save its queue as the new person. */
+const who = () => (S.ui.me?.id ? { 'x-sudo-user': S.ui.me.id } : {});
 
 /* ---------- lifecycle ---------- */
 export function prime(data) {
@@ -396,7 +399,7 @@ export async function flush() {
   inflightBytes = bytes(body) <= KEEPALIVE_BYTES / 2 ? bytes(body) : 0;
   const ctl = (flushCtl = inflightBytes ? null : new AbortController());
   try {
-    const res = await api('POST', '/api/sync', { ops }, { keepalive: inflightBytes > 0, signal: ctl?.signal });
+    const res = await api('POST', '/api/sync', { ops }, { keepalive: inflightBytes > 0, signal: ctl?.signal, headers: who() });
     collect(); // move any edits made meanwhile into the queue before adopting server values
     inflight = [];
     inflightBytes = 0;
@@ -415,7 +418,10 @@ export async function flush() {
       inflight = [];
       inflightBytes = 0;
       if (e.status === 401) hooks.signedOut(e);
-      else if (e.status === 413 && ops.length > 1) {
+      else if (e.status === 409 && e.code === 'other_user') {
+        queue.unshift(...ops);
+        hooks.otherUser();
+      } else if (e.status === 413 && ops.length > 1) {
         // The batch as a whole was too large: send it again in smaller ones.
         queue.unshift(...ops);
         flushBytes = Math.max(64_000, Math.floor(flushBytes / 4));
@@ -583,7 +589,7 @@ addEventListener('pagehide', () => {
         keepalive: true,
         credentials: 'same-origin',
         signal: ctl.signal,
-        headers: { 'content-type': 'application/json', 'x-requested-with': 'sudo-sapient', 'x-client-id': CLIENT_ID },
+        headers: { 'content-type': 'application/json', 'x-requested-with': 'sudo-sapient', 'x-client-id': CLIENT_ID, ...who() },
         body: JSON.stringify({ ops }),
       });
       if (!res.ok) return;
