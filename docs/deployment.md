@@ -15,7 +15,10 @@ The `Dockerfile` builds the client (`pnpm build`) in a build stage, then copies 
   8787 (`PORT`);
 - sets `NODE_ENV=production`, `DATABASE_PATH=/data/sudo-sapient.db` and `UPLOAD_DIR=/data/uploads`;
 - starts through `docker-entrypoint.sh`, which gives root-owned mounts (as Railway creates them) to
-  `node` and then drops to `node`; started with `--user`, it runs as that user unchanged;
+  `node` and then drops to `node`; started with `--user`, it runs as that user unchanged. It only
+  takes ownership of directories under `/data` or `BACKUP_DIR` (after resolving symlinks, and
+  without following any), and refuses to start when `DATABASE_PATH` or `UPLOAD_DIR` points
+  elsewhere or `BACKUP_DIR` is a system directory;
 - declares no `VOLUME` (Railway's builder rejects it): mount persistent storage at `/data` yourself;
 - has a `HEALTHCHECK` on `GET /api/health`, which also runs a database query and answers 503 when the
   database isn't usable.
