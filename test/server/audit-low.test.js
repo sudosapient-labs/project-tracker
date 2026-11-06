@@ -8,6 +8,8 @@ import { loadConfig } from '../../server/config.js';
 import { migrate, openDb } from '../../server/db.js';
 import { createApp } from '../../server/app.js';
 import { ipKey } from '../../server/lib/rate-limit.js';
+import { housekeep } from '../../server/jobs.js';
+import { RESTORE_MS } from '../../server/sync/engine.js';
 
 const invite = (id, email, role = 'Member') => ({
   c: 'members',
@@ -286,5 +288,32 @@ describe('migrations', () => {
     expect(db.get('SELECT COUNT(*) n FROM users').n).toBe(1);
     expect(db.get("SELECT 1 FROM schema_migrations WHERE name = '900_orphan.sql'")).toBeUndefined();
     expect(db.get('PRAGMA foreign_keys').foreign_keys).toBe(1);
+  });
+});
+
+describe('deleted records kept for Undo', () => {
+  it('are purged once expired, without waiting for the next delete', async () => {
+    const { t, ada, adaId } = await team();
+    await ada.sync([put('projects', project('p1')), put('tasks', task('t1', 'p1'))]);
+    await ada.sync([
+      put('comments', { id: 'c1', task: 't1', by: adaId, at: 1, text: 'old', re: {} }),
+      put('comments', { id: 'c2', task: 't1', by: adaId, at: 1, text: 'new', re: {} }),
+    ]);
+    await ada.sync([del('comments', 'c1'), del('comments', 'c2')]);
+    t.db.run("UPDATE recent_deletes SET deleted_at = ? WHERE id = 'c1'", Date.now() - RESTORE_MS - 1);
+    housekeep({ db: t.db });
+    expect(t.db.all('SELECT id FROM recent_deletes').map(r => r.id)).toEqual(['c2']);
+  });
+
+  it('go with the person who wrote them when they are removed', async () => {
+    const { t, ada, adaId, bob } = await team();
+    await ada.sync([put('projects', project('p1')), put('tasks', task('t1', 'p1'))]);
+    await bob.sync([put('comments', { id: 'cb', task: 't1', by: 'mbob', at: 1, text: 'bob wrote this', re: {} })]);
+    await ada.sync([put('comments', { id: 'ca', task: 't1', by: adaId, at: 1, text: 'ada wrote this', re: {} })]);
+    // Ada (an admin) deletes both; her Undo copies are kept under her name.
+    await ada.sync([del('comments', 'cb'), del('comments', 'ca')]);
+    expect(t.db.all('SELECT id FROM recent_deletes ORDER BY id').map(r => r.id)).toEqual(['ca', 'cb']);
+    expect(oks(await ada.sync([del('members', 'mbob')]))).toEqual([true]);
+    expect(t.db.all('SELECT id FROM recent_deletes').map(r => r.id)).toEqual(['ca']);
   });
 });

@@ -5,6 +5,7 @@ import { validTz } from '../src/core/constants.js';
 import { canSeeProject } from '../src/core/access.js';
 import { notify, notifPrefs } from './notify.js';
 import { MAX_ATTEMPTS } from './lib/mailer.js';
+import { RESTORE_MS } from './sync/engine.js';
 
 const DAY = 86_400_000;
 /* The calendar date ('YYYY-MM-DD') and local wall clock of an instant in a time zone. */
@@ -95,7 +96,8 @@ export function runDigests({ db, repo, mailer, config }, now = Date.now()) {
 
 /* Every minute (server/index.js): drop expired sessions (and with them their push subscriptions)
    and devices, old tokens, mail sent (or given up on) more than 30 days ago, read notifications older
-   than 180 days, and reminder records for tasks that are gone or done. */
+   than 180 days, reminder records for tasks that are gone or done, and deleted records kept for Undo
+   once they can no longer be restored. Also run once at startup. */
 export function housekeep({ db }, now = Date.now()) {
   db.run('DELETE FROM sessions WHERE expires_at < ?', now);
   db.run('DELETE FROM devices WHERE expires_at < ?', now);
@@ -103,5 +105,6 @@ export function housekeep({ db }, now = Date.now()) {
   db.run('DELETE FROM auth_tokens WHERE expires_at < ?', now - 7 * DAY);
   db.run('DELETE FROM outbox WHERE COALESCE(sent_at, CASE WHEN attempts >= ? THEN created_at END) < ?', MAX_ATTEMPTS, now - 30 * DAY);
   db.run('DELETE FROM api_idempotency WHERE created_at < ?', now - DAY);
+  db.run('DELETE FROM recent_deletes WHERE deleted_at < ?', now - RESTORE_MS);
   db.run("DELETE FROM reminders WHERE NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id = reminders.task_id AND json_extract(t.data, '$.status') != 'done')");
 }

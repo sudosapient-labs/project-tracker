@@ -82,7 +82,8 @@ Every minute the server deletes:
 - sign-in, reset, invite and other link tokens a week after they expired;
 - mail sent, or given up on, more than 30 days ago;
 - read notifications older than 180 days;
-- reminder records for tasks that are gone or done.
+- reminder records for tasks that are gone or done;
+- deleted records kept for Undo, once their 10 minutes are up (also at startup).
 
 Push subscriptions the push service reports as gone are deleted when a send fails. A file's bytes are
 deleted with the last record that uses them.

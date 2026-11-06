@@ -259,6 +259,8 @@ export function removeMemberCascade(ctx, m) {
   // Sessions take their push subscriptions with them; devices go with the user row.
   for (const t of ['sessions', 'favorites', 'user_state', 'notifications', 'push_subscriptions', 'recent_deletes'])
     ctx.db.run(`DELETE FROM ${t} WHERE user_id = ?`, m.id);
+  // Their deleted comments kept for someone else's Undo go too, so nothing they wrote outlives them there.
+  ctx.db.run("DELETE FROM recent_deletes WHERE json_extract(data, '$.by') = ?", m.id);
   ctx.db.run('DELETE FROM users WHERE id = ?', m.id);
   ctx.db.run('UPDATE auth_tokens SET used_at = ? WHERE (email = ? OR user_id = ?) AND used_at IS NULL', ctx.now, m.email, m.id);
 }
