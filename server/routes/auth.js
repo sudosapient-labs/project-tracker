@@ -19,6 +19,9 @@ import {
   verifyPassword,
 } from '../lib/crypto.js';
 import { parseBody } from '../lib/http.js';
+import { listKeys } from '../api/keys.js';
+import { listBots } from '../api/bots.js';
+import { isAdminRole } from '../../src/core/access.js';
 
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 const email = z.string().trim().toLowerCase().max(254).regex(EMAIL_RE, 'Enter a valid email, like name@company.com');
@@ -420,14 +423,23 @@ export function authRoutes({ limit }) {
     const hash = await hashPassword(b.data.password);
     // Anyone who knew the old password is signed out everywhere else, can't finish an email change
     // and loses the device trust it earned; this browser just proved the password and keeps it.
+    // Their API keys go too, and the bot keys they made: making a key needs the password, so anyone
+    // who knew the old one could have made one that would otherwise outlive the change.
     db.tx(() => {
       db.run('UPDATE users SET password_hash = ? WHERE id = ?', hash, user.id);
       endOtherSessions(db, engine, user.id, c.var.auth.session.id);
       retireEmailChanges(db, user.id);
       forgetDevices(db, user.id);
+      db.run('DELETE FROM api_keys WHERE user_id = ? OR created_by = ?', user.id, user.id);
     });
     rememberDevice(c, db, user.id);
-    return c.json({ ok: true, sessions: listSessions(db, user.id, c.var.auth.session.id) });
+    const { member } = c.var.auth;
+    return c.json({
+      ok: true,
+      sessions: listSessions(db, user.id, c.var.auth.session.id),
+      apiKeys: listKeys(db, user.id),
+      bots: isAdminRole(member) ? listBots(db, c.var.repo) : [],
+    });
   });
 
   /* Change the sign-in email: confirmed from a link sent to the new address. */

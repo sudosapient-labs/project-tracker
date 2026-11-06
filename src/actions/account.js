@@ -3,7 +3,7 @@
    changing the sign-in email and deleting the account
    ===================================================================== */
 import { $, esc } from '../core/utils.js';
-import { D, S } from '../core/store.js';
+import { D, S, keysRevokedByPasswordChange } from '../core/store.js';
 import { del, get, post } from '../core/api.js';
 import { toast } from '../ui/toast.js';
 import { render } from '../shell/render.js';
@@ -21,9 +21,14 @@ A.savePassword = async () => {
   if (nw !== cf) e.pwConf = "Passwords don't match";
   if (Object.keys(e).length) return render();
   try {
+    const revoked = keysRevokedByPasswordChange();
     const r = await busy('pw-save', () => post('/api/auth/password', { current: cur, password: nw }));
     D().sessions = r.sessions || D().sessions;
+    // The server revoked this person's API keys and the bot keys they made.
+    D().apiKeys = r.apiKeys || [];
+    if (r.bots) D().bots = r.bots;
     S.ui.pwDone = true;
+    S.ui.pwRevoked = revoked;
     S.ui.pwNew = '';
     render();
     toast('Password updated');

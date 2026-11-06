@@ -87,9 +87,10 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   hash adds nothing), with a 12-character prefix for the list. Each has a last-used time and an
   optional expiry (30, 90 or 365 days); at most 25 per person.
 - A key acts as the person who made it, read fresh on every request: their current role, the
-  projects they can open, and Guest limits. Removing someone deletes their keys, and so does a
-  password reset (account recovery). A routine password change or "Sign out of all other sessions"
-  keeps them; revoke keys in Settings → API. Keys skip two-factor, as every bearer token does.
+  projects they can open, and Guest limits. Removing someone deletes their keys, and so does
+  changing or resetting their password: making a key needs the password, so anyone who knew the old
+  one could have made one. "Sign out of all other sessions" and an email change keep them; revoke
+  keys in Settings → API. Keys skip two-factor, as every bearer token does.
 - Scopes: `read` (GET only) or `write`. Writes go through the same sync rules as the app (see
   [architecture](architecture.md#public-api-mcp-and-cli)); work in projects a key can't open answers
   404, never 403, so it doesn't reveal what exists.
@@ -120,8 +121,8 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   read fresh on each request, and its own `api:<bot id>` rate-limit budget.
 - `api_keys.created_by` records the admin who made a bot's key, as an audit trail only:
   `ON DELETE SET NULL`, so removing that admin keeps the key. Removing the bot deletes its keys
-  (cascade from its `users` row). A password reset of an admin's account revokes the bot keys they
-  made as well as their own, since whoever had control may have made one.
+  (cascade from its `users` row). An admin changing or resetting their password revokes the bot keys
+  they made as well as their own, since whoever knew the old password may have made one.
 
 ## Content security
 

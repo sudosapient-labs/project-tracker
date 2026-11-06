@@ -125,15 +125,20 @@ describe('personal API keys', () => {
     expect(t.db.get('SELECT COUNT(*) n FROM tasks').n).toBe(0);
   });
 
-  it('are revoked when the account is recovered with a password reset, and kept on a routine password change', async () => {
+  it('are revoked when the password is changed or the account is recovered with a reset', async () => {
     const { t, ada } = await workspace();
-    const api = keyClient(t.app, await apiKey(ada));
-    expect((await ada.post('/api/auth/password', { current: PW, password: 'another-pass-2' })).status).toBe(200);
-    expect((await api.get('/me')).status).toBe(200);
+    // Making a key needs the password, so anyone who knew the old one could have made one.
+    const before = keyClient(t.app, await apiKey(ada));
+    const changed = await ada.post('/api/auth/password', { current: PW, password: 'another-pass-2' });
+    expect(changed.status).toBe(200);
+    expect(changed.body.apiKeys).toEqual([]);
+    expect((await before.get('/me')).body.code).toBe('invalid_key');
+    const after = await ada.post('/api/keys', { name: 'New laptop', scope: 'write', expiresInDays: null, password: 'another-pass-2' });
+    expect((await keyClient(t.app, after.body.token).get('/me')).status).toBe(200);
     await t.client().post('/api/auth/forgot', { email: 'ada@example.com' });
     const token = t.lastLink('ada@example.com').split('#reset/')[1];
     expect((await t.client().post('/api/auth/reset', { token, password: 'recovered-pass-3' })).status).toBe(200);
-    expect((await api.get('/me')).body.code).toBe('invalid_key');
+    expect((await keyClient(t.app, after.body.token).get('/me')).body.code).toBe('invalid_key');
   });
 
   it('go with their person: removing someone deletes their keys, and keys follow role changes', async () => {

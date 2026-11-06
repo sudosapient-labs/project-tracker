@@ -4,7 +4,7 @@
 import { ago, dOff, esc, fmtDate } from '../core/utils.js';
 import { ic, wsLogo } from '../core/icons.js';
 import { TIMEZONES } from '../core/constants.js';
-import { D, S, me } from '../core/store.js';
+import { D, S, keysRevokedByPasswordChange, me } from '../core/store.js';
 import { av, pIcon } from '../ui/helpers.js';
 import { permsTable, teamsGrid } from './members.js';
 import { page404 } from './errors.js';
@@ -343,13 +343,15 @@ export function settingsBody(sec, title) {
     case 'password': {
       const e = S.ui.errors;
       const pw = S.ui.pwNew || '';
+      const revoking = keysRevokedByPasswordChange();
+      const botKeysMine = revoking > D().apiKeys.length;
       return (
         H("Use a long password you don't use anywhere else.") +
-        `${S.ui.pwDone ? `<div class="alert ok" style="margin-bottom:14px">${ic('circle-check', 15)}<span>Password updated. Your other sessions were signed out.</span></div>` : ''}<form data-submit="savePassword" class="col" style="gap:14px;max-width:400px">
+        `${S.ui.pwDone ? `<div class="alert ok" style="margin-bottom:14px">${ic('circle-check', 15)}<span>Password updated. Your other sessions were signed out${S.ui.pwRevoked ? ` and ${S.ui.pwRevoked === 1 ? 'your API key was' : `${S.ui.pwRevoked} API keys were`} revoked` : ''}.</span></div>` : ''}<form data-submit="savePassword" class="col" style="gap:14px;max-width:400px">
       <div class="field"><label class="label" for="pw-cur">Current password</label><input type="password" class="input ${e.pwCur ? 'is-error' : ''}" id="pw-cur" autocomplete="current-password">${e.pwCur ? `<span class="err">${ic('circle-alert', 12)}${e.pwCur}</span>` : ''}</div>
       <div class="field"><label class="label" for="pw-new">New password</label><input type="password" class="input ${e.pwNew ? 'is-error' : ''}" id="pw-new" data-in="pwStrength" value="${esc(pw)}" autocomplete="new-password">${strengthMeter(pw)}${e.pwNew ? `<span class="err">${ic('circle-alert', 12)}${e.pwNew}</span>` : '<span class="hint">At least 10 characters with a number or symbol.</span>'}</div>
       <div class="field"><label class="label" for="pw-conf">Confirm new password</label><input type="password" class="input ${e.pwConf ? 'is-error' : ''}" id="pw-conf" autocomplete="new-password">${e.pwConf ? `<span class="err">${ic('circle-alert', 12)}${e.pwConf}</span>` : ''}</div>
-      <div><button class="btn btn-primary" data-a="savePassword" id="pw-save">Update password</button></div></form>`
+      <div><button class="btn btn-primary" data-a="savePassword" id="pw-save">Update password</button>${revoking ? `<span class="hint" style="display:block;margin-top:8px">This also revokes ${revoking === 1 ? 'your API key' : `your ${revoking} API keys`}${botKeysMine ? ', including bot keys you made' : ''}. Make new ones in Settings → API afterwards.</span>` : ''}</div></form>`
       );
     }
     case 'sessions':

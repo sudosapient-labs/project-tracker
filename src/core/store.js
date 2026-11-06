@@ -125,6 +125,8 @@ export const mem = id => D().members.find(m => m.id === id);
 export const isBot = m => m?.kind === 'bot';
 /* People work can be handed to, or who can be @mentioned. */
 export const people = () => D().members.filter(m => m.status !== 'deactivated' && !isBot(m));
+/* How many keys a password change revokes: your own, and the bot keys you made (server/routes/auth.js). */
+export const keysRevokedByPasswordChange = () => D().apiKeys.length + (D().bots || []).flatMap(b => b.keys).filter(k => k.createdBy === D().me).length;
 /* A person's name; references to someone who has left the workspace read "Former member". */
 export const memName = id => mem(id)?.name || (id ? 'Former member' : '');
 export const proj = id => D().projects.find(p => p.id === id);
