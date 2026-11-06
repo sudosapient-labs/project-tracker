@@ -1,6 +1,7 @@
 /* Where the CLI keeps the workspace URL and API key, shared with the MCP server:
    $XDG_CONFIG_HOME/sudo-sapient/config.json (default ~/.config), readable only by its owner.
-   SUDO_URL and SUDO_API_KEY override it. */
+   SUDO_URL and SUDO_API_KEY override it. `insecure`: the person allowed plain http to the saved URL
+   (`login --insecure`); it doesn't carry over to a SUDO_URL. */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +15,7 @@ export function loadConfig(env = process.env) {
   } catch {
     /* not logged in yet */
   }
-  return { url: env.SUDO_URL || file.url || '', key: env.SUDO_API_KEY || file.key || '' };
+  return { url: env.SUDO_URL || file.url || '', key: env.SUDO_API_KEY || file.key || '', insecure: !env.SUDO_URL && !!file.insecure };
 }
 
 export function saveConfig(cfg, env = process.env) {

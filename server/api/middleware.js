@@ -1,4 +1,4 @@
-/* Middleware for token-authenticated endpoints (/api/v1, /api/mcp): bearer keys, scopes, per-key
+/* Middleware for token-authenticated endpoints (/api/v1, /api/mcp): bearer keys, scopes, per-person
    rate limits and idempotent retries. These endpoints never read the session cookie, which is why
    they don't need the CSRF header: a cross-site page can't make a browser attach a bearer key. */
 import { sha256 } from '../lib/crypto.js';
@@ -25,6 +25,11 @@ export const fail = (c, status, error, code = CODES[status] || 'server_error', f
 
 /* What made a change, for "Ada via Claude" in activity: the client's own label (X-Sudo-Client, sent
    by the CLI and MCP server), else the key's name. Printable text only, kept short. */
+const printable = s =>
+  String(s || '')
+    .replace(/[^\p{L}\p{N} ._()-]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 export function viaLabel(c, key) {
   let raw = c.req.header('x-sudo-client') || '';
   try {
@@ -32,15 +37,12 @@ export function viaLabel(c, key) {
   } catch {
     /* not encoded: use it as sent */
   }
-  raw = raw
-    .replace(/[^\p{L}\p{N} ._()-]/gu, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return (raw || key.name || 'API').slice(0, 40);
+  return (printable(raw) || printable(key.name) || 'API').slice(0, 40);
 }
 
 /* Authorization: Bearer <key>. Sets c.var.auth ({ key, user, member }, the shape the sync engine
-   takes) and c.var.via. Requests are limited per key (RateLimit-* headers; 429 with Retry-After). */
+   takes) and c.var.via. Requests are limited per person, across all their keys, so making more
+   keys doesn't raise the limit (RateLimit-* headers; 429 with Retry-After). */
 export const bearer =
   ({ limit }) =>
   async (c, next) => {
@@ -49,14 +51,16 @@ export const bearer =
     const { db, config } = c.var;
     const a = readKey(db, m[1]);
     if (a.error) return fail(c, 401, KEY_ERRORS[a.error], a.error);
-    if (config.requireVerification && !a.user.email_verified_at) return fail(c, 403, 'Verify your email to use the API.', 'unverified');
-    const r = limit.take(`api:${a.key.id}`, config.apiRateLimit, MIN);
+    // A bot has no email to verify (see bots.js); its keys were made by a signed-in admin.
+    if (config.requireVerification && a.user.kind !== 'bot' && !a.user.email_verified_at)
+      return fail(c, 403, 'Verify your email to use the API.', 'unverified');
+    const r = limit.take(`api:${a.user.id}`, config.apiRateLimit, MIN);
     c.header('RateLimit-Limit', String(r.limit));
     c.header('RateLimit-Remaining', String(Math.max(0, r.remaining)));
     c.header('RateLimit-Reset', String(r.reset));
     if (!r.ok) {
       c.header('Retry-After', String(r.reset));
-      return fail(c, 429, `This key is limited to ${r.limit} requests a minute. Try again in ${r.reset} s.`);
+      return fail(c, 429, `Your API keys are limited to ${r.limit} requests a minute together. Try again in ${r.reset} s.`);
     }
     c.set('auth', a);
     c.set('via', viaLabel(c, a.key));

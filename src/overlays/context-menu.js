@@ -1,6 +1,7 @@
 /* ---------------- CONTEXT MENUS ---------------- */
 import { ic } from '../core/icons.js';
 import { ST } from '../core/constants.js';
+import { isAdminRole } from '../core/access.js';
 import { D, canEdit, canManage, canSee, me, mem, proj, task, visibleProjects } from '../core/store.js';
 
 export function ctxMenu(p) {
@@ -67,6 +68,12 @@ export function ctxMenu(p) {
     const m = mem(p.id);
     if (!m) return '';
     const canRm = m.role !== 'Owner' && m.id !== D().me;
+    // Bots are renamed, re-scoped and given keys in Settings → API → Bots.
+    if (m.kind === 'bot')
+      return (
+        I('viewProfile', 'user', 'View profile') +
+        (isAdminRole(me()) ? `<button class="mi" data-a="go" data-r="settings" data-sec="api">${ic('bot', 15)}Manage in Settings → API</button>` : '')
+      );
     return (
       I('viewProfile', 'user', 'View profile') +
       I('assignToMember', 'plus', 'Assign a task') +

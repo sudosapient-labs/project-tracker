@@ -287,6 +287,22 @@ describe('writes behave like the app’s', () => {
     ]);
     expect(r.body.results[0].ok).toBe(true);
     expect(r.body.results[0].v.via).toBeUndefined();
+    // A key name is cleaned like a client label: no control or bidi characters reach Activity.
+    const odd = await as(t, ada, { name: 'Laptop‮\u0007\nevil' });
+    const t2 = (await odd.post('/tasks', { project: 'WEB', title: 'Odd' })).body;
+    expect((await odd.get(`/tasks/${t2.key}/activity`)).body.data[0].via).toBe('Laptopevil');
+  });
+
+  it('refuses dates that don’t exist, which would otherwise break repeating tasks', async () => {
+    const { t, ada } = await workspace();
+    const api = await as(t, ada);
+    for (const due of ['2026-02-31', '2026-13-45', '2026-11-06T25:00Z'])
+      expect((await api.post('/tasks', { project: 'WEB', title: 'x', due })).body, due).toMatchObject({ code: 'invalid_request', field: 'due' });
+    const { key, id } = (await api.post('/tasks', { project: 'WEB', title: 'Leap', due: '2028-02-29' })).body;
+    expect((await api.patch(`/tasks/${key}`, { start: '2026-04-31' })).body.field).toBe('start');
+    t.db.run("UPDATE tasks SET data = json_set(data, '$.recur', 'Weekly') WHERE id = ?", id);
+    expect((await api.post(`/tasks/${key}/complete`)).status).toBe(200);
+    expect((await api.get('/tasks?status=open')).body.data[0].due).toBe('2028-03-07');
   });
 
   it('updates field by field with the app’s activity lines, and archive / restore', async () => {
@@ -379,7 +395,12 @@ describe('API conventions', () => {
   it('paginates with cursors and filters', async () => {
     const { t, ada } = await workspace();
     const api = await as(t, ada);
-    for (const title of ['one', 'two', 'three']) await api.post('/tasks', { project: 'WEB', title, assignee: title === 'two' ? 'me' : null });
+    // Newest first is by created_at, then id; ids are random, so give each task its own millisecond.
+    for (const title of ['one', 'two', 'three']) {
+      const at = Date.now();
+      while (Date.now() === at) await new Promise(r => setTimeout(r, 1));
+      await api.post('/tasks', { project: 'WEB', title, assignee: title === 'two' ? 'me' : null });
+    }
     const p1 = (await api.get('/tasks?limit=2')).body;
     expect(p1.data.map(x => x.title)).toEqual(['three', 'two']);
     const p2 = (await api.get(`/tasks?limit=2&cursor=${p1.nextCursor}`)).body;
@@ -432,8 +453,35 @@ describe('API conventions', () => {
     expect(t.db.get('SELECT COUNT(*) n FROM tasks').n).toBe(1);
   });
 
-  it('limits each key with RateLimit headers and 429 + Retry-After', async () => {
-    const { t, ada } = await workspace({ DISABLE_RATE_LIMIT: 'false', API_RATE_LIMIT: '2' });
+  it('a broken stream doesn’t keep changes from other apps, or keep a removed person connected', async () => {
+    const { t, ada, adaId } = await workspace();
+    t.engine.connect(
+      { uid: 'mgus', sessionId: 's1', clientId: 'broken' },
+      () => {
+        throw new Error('stream broke');
+      },
+      () => {},
+    );
+    let bobClosed = false;
+    t.engine.connect(
+      { uid: 'mbob', sessionId: 's2', clientId: 'bob' },
+      () => {},
+      () => (bobClosed = true),
+    );
+    const got = [];
+    t.engine.connect(
+      { uid: adaId, sessionId: 's3', clientId: 'other' },
+      (ev, data) => got.push(ev, data),
+      () => {},
+    );
+    const r = await ada.sync([{ c: 'members', id: 'mbob', k: 'del' }]);
+    expect(r.body.results[0].ok).toBe(true);
+    expect(bobClosed).toBe(true);
+    expect(got[0]).toBe('changes');
+  });
+
+  it('limits each person’s keys together, with RateLimit headers and 429 + Retry-After', async () => {
+    const { t, ada, bob } = await workspace({ DISABLE_RATE_LIMIT: 'false', API_RATE_LIMIT: '2' });
     const api = await as(t, ada);
     const r1 = await api.get('/me');
     expect(r1.headers.get('ratelimit-limit')).toBe('2');
@@ -443,8 +491,9 @@ describe('API conventions', () => {
     expect(r3.status).toBe(429);
     expect(r3.body.code).toBe('rate_limited');
     expect(Number(r3.headers.get('retry-after'))).toBeGreaterThan(0);
-    // A different key has its own budget.
-    expect((await (await as(t, ada)).get('/me')).status).toBe(200);
+    // Another key of the same person shares the budget; someone else has their own.
+    expect((await (await as(t, ada)).get('/me')).status).toBe(429);
+    expect((await (await as(t, bob)).get('/me')).status).toBe(200);
   });
 });
 

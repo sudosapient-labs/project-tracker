@@ -1,6 +1,7 @@
 /* The MCP server, driven by the official MCP SDK client: over Streamable HTTP against the app's own
    /api/mcp, and over stdio against a real HTTP server. Tools act with the key's permissions and
    label activity with the client ("via Claude"). */
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
@@ -8,7 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { afterEach, describe, expect, it } from 'vitest';
-import { account, apiKey, keyClient, setup } from '../../../test/server/helpers.js';
+import { account, apiKey, bot, keyClient, setup } from '../../../test/server/helpers.js';
 import { TOOLS, toolsFor } from '../src/tools.js';
 import { clientLabel } from '../src/protocol.js';
 
@@ -140,6 +141,21 @@ describe('MCP over Streamable HTTP (/api/mcp)', () => {
     expect(t.db.get("SELECT json_extract(data, '$.via') v FROM activity WHERE json_extract(data, '$.verb') = 'commented on'").v).toBe('Cursor');
   });
 
+  it('works unchanged with a bot’s key, acting as the bot with its role and projects', async () => {
+    const { t, ada } = await workspace();
+    const b = await bot(ada, { role: 'Guest', projects: ['pops'] });
+    const mcp = await hosted(t, b.token);
+    expect((await call(mcp, 'list_projects')).data.map(p => p.key)).toEqual(['OPS']);
+    const made = await call(mcp, 'create_task', { project: 'OPS', title: 'Nightly build failed' });
+    expect(made).toMatchObject({ isError: true, text: 'forbidden: You can only comment in this project.' });
+    const ops = (await keyClient(t.app, await apiKey(ada)).post('/tasks', { project: 'OPS', title: 'Nightly build' })).body;
+    expect((await call(mcp, 'comment', { key: ops.key, text: 'Build 812 passed' })).isError).toBeFalsy();
+    const detail = (await call(mcp, 'get_task', { key: ops.key })).data;
+    expect(detail.comments).toEqual([expect.stringMatching(/Release Bot: Build 812 passed$/)]);
+    expect(detail.activity[0]).toMatch(/Release Bot via Claude commented on$/);
+    expect((await call(mcp, 'list_members')).data.find(m => m.name === 'Release Bot')).toEqual({ name: 'Release Bot', role: 'Guest', bot: true });
+  });
+
   it('offers only read tools to a read-only key, and refuses writes anyway', async () => {
     const { t, ada } = await workspace();
     const mcp = await hosted(t, await apiKey(ada, { scope: 'read' }));
@@ -200,15 +216,26 @@ describe('MCP over HTTP without the SDK', () => {
     expect(via).toEqual(['MCP', 'Клод']);
   });
 
-  it('limits protocol requests per key too', async () => {
-    const { t, ada } = await workspace({ DISABLE_RATE_LIMIT: 'false', API_RATE_LIMIT: '2' });
+  it('limits protocol messages per person too, counting each message in a batch', async () => {
+    const { t, ada } = await workspace({ DISABLE_RATE_LIMIT: 'false', API_RATE_LIMIT: '4' });
     const token = await apiKey(ada);
-    const list = () => rpc(t, token, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
-    expect((await list()).status).toBe(200);
-    expect((await list()).status).toBe(200);
-    const third = await list();
-    expect(third.status).toBe(429);
-    expect(Number(third.headers.get('retry-after'))).toBeGreaterThan(0);
+    const list = (id = 1) => ({ jsonrpc: '2.0', id, method: 'tools/list' });
+    // A batch bigger than the whole budget is refused before any of it runs (the request counts once).
+    expect(
+      (
+        await rpc(
+          t,
+          token,
+          Array.from({ length: 50 }, (_, i) => list(i + 1)),
+        )
+      ).status,
+    ).toBe(429);
+    expect((await rpc(t, token, [list(1), list(2)])).status).toBe(200);
+    // 3 of 4 used, and another key of the same person shares what's left.
+    expect((await rpc(t, await apiKey(ada), list())).status).toBe(200);
+    const next = await rpc(t, token, list());
+    expect(next.status).toBe(429);
+    expect(Number(next.headers.get('retry-after'))).toBeGreaterThan(0);
   });
 });
 
@@ -239,6 +266,13 @@ describe('MCP over stdio (sudo-mcp)', () => {
       ['completed', 'Claude'],
       ['created', 'Claude'],
     ]);
+  });
+
+  it('won’t send the key over plain http to another machine unless told --insecure', () => {
+    const env = { PATH: process.env.PATH, SUDO_URL: 'http://tracker.example.com', SUDO_API_KEY: 'ssk_x', XDG_CONFIG_HOME: '/nonexistent' };
+    const run = spawnSync(process.execPath, [BIN], { env, input: '', encoding: 'utf8' });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('--insecure');
   });
 });
 

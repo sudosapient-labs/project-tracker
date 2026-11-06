@@ -41,6 +41,7 @@ export async function api(method, url, body) {
 export const get = url => api('GET', url);
 export const post = (url, body = {}) => api('POST', url, body);
 export const put = (url, body = {}) => api('PUT', url, body);
+export const patch = (url, body = {}) => api('PATCH', url, body);
 export const del = url => api('DELETE', url);
 
 /* Upload a file's raw bytes with progress (fetch can't report upload progress). Resolves with the JSON body. */

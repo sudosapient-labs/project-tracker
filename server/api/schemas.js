@@ -13,10 +13,13 @@ const named = (id, schema, description) => {
 
 const STATUS = z.enum(STATUSES.map(s => s.id));
 const PRIORITY = z.enum(PRIOS.map(p => p.id));
-// 'YYYY-MM-DD' (all day) or an ISO instant (timed), as in the app.
+// 'YYYY-MM-DD' (all day) or an ISO instant (timed), as in the app. The day must exist: 2026-02-31
+// would read as "Invalid Date" in activity and break scheduling the next repeat.
+const realDate = v => !Number.isNaN(Date.parse(v)) && new Date(v.slice(0, 10) + 'T00:00:00Z').toISOString().startsWith(v.slice(0, 10));
 const date = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/, 'Use YYYY-MM-DD or an ISO date-time')
+  .refine(realDate, 'That date doesn’t exist')
   .describe('YYYY-MM-DD, or an ISO 8601 date-time for a timed due date');
 const ms = z.number().int().describe('Unix time in milliseconds');
 const ref = z.string().min(1).max(254);
@@ -32,18 +35,23 @@ export const ErrorBody = named(
   'Every error response has this shape.',
 );
 
+const Kind = z
+  .enum(['person', 'bot'])
+  .describe('“bot”: a bot member an Owner or Admin made in Settings → API → Bots. It acts only through its keys and never signs in.');
+
 export const Member = named(
   'Member',
   z.object({
     id: z.string(),
     name: z.string(),
-    email: z.string().describe('Empty for Guests looking at people they share no project with'),
+    email: z.string().describe('Empty for bots, and for Guests looking at people they share no project with'),
     role: z.enum(ROLES),
     title: z.string(),
     team: z.string().describe('Team id, or empty'),
     status: z.enum(['active', 'invited']),
+    kind: Kind,
   }),
-  'A person in the workspace.',
+  'A person or bot in the workspace.',
 );
 
 export const Me = named(
@@ -51,15 +59,16 @@ export const Me = named(
   z.object({
     id: z.string(),
     name: z.string(),
-    email: z.string(),
+    email: z.string().describe('Empty for a bot'),
     role: z.enum(ROLES),
     title: z.string(),
     team: z.string(),
     status: z.enum(['active', 'invited']),
+    kind: Kind,
     workspace: z.string(),
     key: z.object({ id: z.string(), name: z.string(), scope: z.enum(['read', 'write']), expiresAt: ms.nullable() }),
   }),
-  'The person the API key belongs to.',
+  'The person or bot the API key belongs to.',
 );
 
 export const Subtask = z.object({ id: z.string(), title: z.string(), done: z.boolean(), assignee: z.string().nullable() });

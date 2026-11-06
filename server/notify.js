@@ -53,7 +53,8 @@ export function notify(ctx, to, reason, n, task = null) {
   if (!to || to === ctx.uid) return null;
   const { repo } = ctx;
   const m = repo.get('members', to);
-  if (!m || m.status !== 'active') return null;
+  // Bots get no notifications, emails or push: nobody reads them.
+  if (!m || m.status !== 'active' || m.kind === 'bot') return null;
   const prefs = notifPrefs(repo, to);
   if (GATE[reason] && prefs[GATE[reason]] === false) return null;
   const t = task || (n.task && repo.get('tasks', n.task));
@@ -99,10 +100,11 @@ export function notify(ctx, to, reason, n, task = null) {
   return row;
 }
 
-/* People an @mention in `text` reaches: named members, members of a named team, or everyone. */
+/* People an @mention in `text` reaches: named members, members of a named team, or everyone. Bots
+   can't be mentioned. */
 export function mentioned(repo, text) {
   const out = new Map();
-  const members = repo.all('members').filter(m => m.status === 'active');
+  const members = repo.all('members').filter(m => m.status === 'active' && m.kind !== 'bot');
   for (const m of members) if (text.includes('@' + m.name)) out.set(m.id, 'mention');
   for (const t of repo.all('teams')) if (text.includes('@' + t.name)) for (const m of members) if (m.team === t.id && !out.has(m.id)) out.set(m.id, 'team');
   if (/@(workspace|everyone)\b/i.test(text)) for (const m of members) if (!out.has(m.id)) out.set(m.id, 'everyone');

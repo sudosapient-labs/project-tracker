@@ -54,7 +54,7 @@ export function runReminders({ db, repo, engine, mailer, config }, now = Date.no
 export function runDigests({ db, repo, mailer, config }, now = Date.now()) {
   let sent = 0;
   for (const m of repo.all('members')) {
-    if (m.status !== 'active' || !db.get('SELECT 1 FROM users WHERE id = ?', m.id)) continue;
+    if (m.status !== 'active' || m.kind === 'bot' || !db.get('SELECT 1 FROM users WHERE id = ?', m.id)) continue;
     if (!notifPrefs(repo, m.id).email_digest) continue;
     const l = local(tzOf(repo, m.id), now);
     if (l.weekday === 'Sat' || l.weekday === 'Sun' || l.hour < 8) continue;

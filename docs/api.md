@@ -20,11 +20,32 @@ Revoking it stops it straight away, and a password reset revokes all of yours. S
 Optionally send `X-Sudo-Client: <name>` to label your changes in Activity ("via <name>"); otherwise
 they're labelled with the key's name.
 
+## Bots
+
+For automation (a release script, CI, an internal tool), an Owner or Admin creates a **bot** in
+**Settings → API → Bots** instead of borrowing someone's key. A bot is a member with a name, a role
+(**Member** or **Guest**, never Owner or Admin) and the projects it's on, so Guest limits, private
+projects and Can view / Can comment apply to it exactly as to a person.
+
+- Its keys are made by an Owner or Admin (same `ssk_` format, scopes and expiry, and the admin's
+  current password) and are listed under the bot, not with the admin's own keys. Each records which
+  admin made it.
+- Changes made with a bot key are by the bot: Activity shows "Release Bot via GitHub Actions" with a
+  **Bot** badge, and comments and tasks have the bot as their author.
+- A bot can't sign in, use the app or `/api/sync`, or be sent sign-in, reset, verify or invite
+  email. It gets no notifications, emails or push, and isn't offered in assignee or @mention pickers.
+- Removing a bot revokes its keys. Removing the admin who made a key doesn't; a password reset of
+  that admin's account (account recovery) does.
+- It has its own rate-limit budget, separate from any person's.
+- `GET /me` and `GET /members` report `kind: "bot"` (or `"person"`); a bot's `email` is empty.
+- Bots are managed with a signed-in session only (`/api/bots`); API keys, including a bot's own, get
+  `403`.
+
 ## Endpoints
 
 | Method | Path                    | What                                                                                                      |
 | ------ | ----------------------- | --------------------------------------------------------------------------------------------------------- |
-| GET    | `/me`                   | The key's person, workspace and key scope                                                                 |
+| GET    | `/me`                   | The key's person or bot (`kind`), workspace and key scope                                                 |
 | GET    | `/tasks`                | Newest first; `project`, `status` (comma list or `open`), `assignee` (`me`/id/email), `q`, `updatedSince` |
 | POST   | `/tasks`                | Create: `project`, `title`, optional `description`, `status`, `priority`, `assignee`, `due`, `labels`, …  |
 | GET    | `/tasks/{ref}`          | A task by id or key (`WEB-12`)                                                                            |
@@ -36,7 +57,7 @@ they're labelled with the key's name.
 | GET    | `/tasks/{ref}/activity` | Newest first, with `via`                                                                                  |
 | GET    | `/projects`             | Projects the key can open, with open / done counts                                                        |
 | GET    | `/projects/{ref}`       | By id or key (`WEB`)                                                                                      |
-| GET    | `/members`              | People (Guests see only the emails of people they share a project with)                                   |
+| GET    | `/members`              | People and bots (`kind`); Guests see only the emails of people they share a project with                  |
 | GET    | `/search?q=`            | Tasks, projects and people                                                                                |
 
 People can be given as an id, an email, a full name, a unique first name, or `me`. Dates are
@@ -54,7 +75,8 @@ People can be given as an id, an email, a full name, a unique first name, or `me
   and body gets the first response back (header `Idempotent-Replayed: true`) for 24 hours. The same
   key with a different body is refused (`422`).
 - **Atomic:** a request either applies whole or not at all.
-- **Rate limits:** `API_RATE_LIMIT` requests a minute per key (default 120), with `RateLimit-Limit`,
+- **Rate limits:** `API_RATE_LIMIT` requests a minute per person, shared by all their keys (default
+  120), with `RateLimit-Limit`,
   `RateLimit-Remaining` and `RateLimit-Reset` headers, and `429` with `Retry-After` when spent.
   Counted in memory: they reset on restart and assume one instance (see
   [operations](operations.md#known-limits)).

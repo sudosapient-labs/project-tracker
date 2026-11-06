@@ -25,15 +25,23 @@ export function mcpRoutes({ request, limit }) {
         a.error === 'missing' ? 'unauthenticated' : a.error,
       );
     }
-    // Protocol requests (initialize, tools/list, …) have their own per-key budget; the /api/v1 calls
-    // tools make count against the API's, so a tool call isn't counted twice in one bucket.
-    const r = limit.take(`mcp:${a.key.id}`, c.var.config.apiRateLimit, MIN);
-    if (!r.ok) {
+    // Protocol messages (initialize, tools/list, …) have their own per-person budget; the /api/v1
+    // calls tools make count against the API's, so a tool call isn't counted twice in one bucket.
+    // Each request costs one up front; a batch pays for the rest of its messages once parsed.
+    const bucket = `mcp:${a.user.id}`;
+    const tooMany = r => {
       c.header('Retry-After', String(r.reset));
-      return fail(c, 429, `This key is limited to ${r.limit} MCP requests a minute. Try again in ${r.reset} s.`);
-    }
+      return fail(c, 429, `Your API keys are limited to ${r.limit} MCP requests a minute together. Try again in ${r.reset} s.`);
+    };
+    const r = limit.take(bucket, c.var.config.apiRateLimit, MIN);
+    if (!r.ok) return tooMany(r);
     const handle = createHttpHandler({
       origins: [new URL(c.var.config.appUrl).origin],
+      admit: n => {
+        if (n < 2) return null;
+        const more = limit.take(bucket, c.var.config.apiRateLimit, MIN, n - 1);
+        return more.ok ? null : tooMany(more);
+      },
       connect: ({ authorization, label }) => ({
         api: createClient({ url: '', key: authorization.replace(/^Bearer\s+/i, ''), client: label, fetch: request }),
         scope: a.key.scope,

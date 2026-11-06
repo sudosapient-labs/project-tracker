@@ -28,6 +28,10 @@ The URL and key are saved to `$XDG_CONFIG_HOME/sudo-sapient/config.json` (defaul
 only by you. `SUDO_URL` and `SUDO_API_KEY` override it (handy in CI), and `sudo-cli logout` deletes
 it. Revoke the key itself in Settings → API.
 
+The key travels with every request, so `sudo-cli` refuses a plain `http://` URL unless it's this
+machine (`localhost`, `127.0.0.1`). For a workspace you really reach over plain http, add
+`--insecure`; `login --insecure` remembers that for the saved URL.
+
 ## Use
 
 ```bash

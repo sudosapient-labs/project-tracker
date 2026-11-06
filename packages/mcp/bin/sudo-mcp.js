@@ -3,10 +3,11 @@
      sudo-mcp                      stdio (Claude Desktop, Cursor, Claude Code, …)
      sudo-mcp --http [--port 3333] Streamable HTTP on 127.0.0.1; each request brings its own
                                    Authorization: Bearer <key>
-   Options: --url, --key (else SUDO_URL / SUDO_API_KEY, else `sudo-cli login`'s config), --read-only. */
+   Options: --url, --key (else SUDO_URL / SUDO_API_KEY, else `sudo-cli login`'s config), --read-only,
+   --insecure (allow a plain http:// URL to another machine). */
 import http from 'node:http';
 import { parseArgs } from 'node:util';
-import { createClient } from '@sudosapient/client';
+import { createClient, plainHttpRemote } from '@sudosapient/client';
 import { loadConfig } from '@sudosapient/client/config';
 import { createMcp, VERSION } from '../src/protocol.js';
 import { serveStdio } from '../src/stdio.js';
@@ -17,6 +18,7 @@ const { values: o } = parseArgs({
     url: { type: 'string' },
     key: { type: 'string' },
     'read-only': { type: 'boolean', default: process.env.SUDO_MCP_READ_ONLY === '1' },
+    insecure: { type: 'boolean', default: false },
     http: { type: 'boolean', default: false },
     port: { type: 'string', default: '3333' },
     host: { type: 'string', default: '127.0.0.1' },
@@ -31,6 +33,12 @@ const cfg = loadConfig();
 const url = o.url || cfg.url;
 if (!url) {
   console.error('sudo-mcp: set the workspace URL with --url, SUDO_URL, or `sudo-cli login`.');
+  process.exit(1);
+}
+// Every request carries the key: never in the clear to another machine unless asked (or allowed at
+// `sudo-cli login --insecure` for that same URL).
+if (plainHttpRemote(url) && !o.insecure && !(!o.url && cfg.insecure)) {
+  console.error(`sudo-mcp: ${url} is plain http, so your API key would cross the network unencrypted. Use https, or add --insecure.`);
   process.exit(1);
 }
 const readOnly = o['read-only'];

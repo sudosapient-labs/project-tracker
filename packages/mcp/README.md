@@ -46,8 +46,9 @@ claude mcp add --transport http sudo-sapient https://sudo.example.com/api/mcp --
 ```
 
 `sudo-mcp` also reads the URL and key saved by `sudo-cli login`. Options: `--url`, `--key`,
-`--read-only` (or `SUDO_MCP_READ_ONLY=1`) to hide write tools even with a write key, and
-`--http [--port 3333]` to serve Streamable HTTP on 127.0.0.1 (each request brings its own key).
+`--read-only` (or `SUDO_MCP_READ_ONLY=1`) to hide write tools even with a write key,
+`--http [--port 3333]` to serve Streamable HTTP on 127.0.0.1 (each request brings its own key), and
+`--insecure` to allow a plain `http://` workspace URL that isn't this machine (refused otherwise).
 
 **MCP Inspector:** `npx @modelcontextprotocol/inspector`, then connect to `https://…/api/mcp`
 (Streamable HTTP, header `Authorization: Bearer ssk_…`, through the Inspector's proxy), or choose

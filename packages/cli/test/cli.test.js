@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { account, apiKey, setup } from '../../../test/server/helpers.js';
+import { account, apiKey, bot, setup } from '../../../test/server/helpers.js';
 import { parseDue, run } from '../src/cli.js';
+import { plainHttpRemote } from '@sudosapient/client';
 
 /* Runs the CLI with captured output and its own config directory. */
 function cli(t, env = {}) {
@@ -58,6 +59,12 @@ describe('arguments', () => {
     expect(parseDue('next week', fri)).toBe('2026-11-09');
     expect(parseDue('2027-01-31', fri)).toBe('2027-01-31');
   });
+
+  it('treats only plain http to another machine as insecure', () => {
+    for (const u of ['http://app.test', 'http://10.0.0.5:8787', 'http://sudo.example.com/']) expect(plainHttpRemote(u), u).toBe(true);
+    for (const u of ['https://sudo.example.com', 'http://localhost:5173', 'http://127.0.0.1:8787', 'http://[::1]:8787', 'http://app.localhost'])
+      expect(plainHttpRemote(u), u).toBe(false);
+  });
 });
 
 describe('against a workspace', () => {
@@ -87,11 +94,18 @@ describe('against a workspace', () => {
     const token = await apiKey(ada.c, { name: 'Laptop' });
     const c = cli(t);
 
+    // Plain http to another machine would send the key in the clear: refused unless asked for.
+    const refused = await c('login', { stdin: `http://app.test/\n${token}\n` });
+    expect(refused).toMatchObject({ code: 2, err: expect.stringContaining('plain http') });
+    expect(fs.existsSync(path.join(refused.home, 'sudo-sapient', 'config.json'))).toBe(false);
+    expect((await cli(t, { SUDO_URL: 'http://app.test', SUDO_API_KEY: token })('whoami')).err).toContain('--insecure');
+
     // Both answers piped in, so the key stays out of argv and shell history.
-    const login = await c('login', { stdin: `http://app.test/\n${token}\n` });
+    const login = await c('login', '--insecure', { stdin: `http://app.test/\n${token}\n` });
     expect(login).toMatchObject({ code: 0, out: expect.stringContaining('as Ada Owner (write key “Laptop”)') });
     const file = path.join(login.home, 'sudo-sapient', 'config.json');
-    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ url: 'http://app.test', key: token });
+    // The consent is saved with the URL, so later commands don't need --insecure.
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ url: 'http://app.test', key: token, insecure: true });
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
 
     const made = await c('new', 'Fix', 'login', 'bug', '-p', 'web', '--due', '2026-11-20', '-a', 'me', '--priority', 'high');
@@ -135,5 +149,35 @@ describe('against a workspace', () => {
     expect((await c('logout')).code).toBe(0);
     expect(fs.existsSync(file)).toBe(false);
     expect((await c('whoami')).err).toContain('Not logged in');
+  });
+
+  it('works unchanged with a bot’s key, as the bot', async () => {
+    const t = setup();
+    const ada = await account(t);
+    const b = await bot(ada.c, { role: 'Member' });
+    await ada.c.sync([
+      {
+        c: 'projects',
+        id: 'pweb',
+        k: 'put',
+        v: {
+          id: 'pweb',
+          key: 'WEB',
+          name: 'Website',
+          icon: 'globe',
+          color: 'indigo',
+          status: 'active',
+          team: '',
+          lead: null,
+          members: [],
+          desc: '',
+          milestones: [],
+        },
+      },
+    ]);
+    const c = cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: b.token });
+    expect((await c('whoami')).out).toBe('Release Bot (bot) · Member in http://localhost · write key “GitHub Actions”\n');
+    expect((await c('new', 'Release', '1.4', '-p', 'WEB')).out).toMatch(/^Created WEB-201 Release 1\.4/);
+    expect(t.db.get("SELECT json_extract(data, '$.by') by, json_extract(data, '$.via') via FROM activity")).toEqual({ by: b.id, via: 'CLI' });
   });
 });
