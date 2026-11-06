@@ -26,6 +26,10 @@ let retryT = null;
 let retryMs = 1000;
 let stateSent = '';
 let errSink = null;
+/* A reload is waiting for the queue to reach the server (see reloadWhenSaved). */
+let resyncWhenSaved = false;
+/* Ask for a resync (a fresh bootstrap) once every queued change is saved. */
+export const reloadWhenSaved = () => (resyncWhenSaved = true);
 /* `collection:id` of records restoreSnapshot put back after they were deleted. */
 const restoring = new Set();
 const hooks = { signedOut: () => {}, resync: () => {} };
@@ -47,14 +51,43 @@ export function prime(data) {
   (data.projects || []).forEach(p => fill('projects', p));
   for (const c of COLLS) shadow[c] = new Map((data[c] || []).map(e => [e.id, fields(e)]));
   for (const d of DOCS) shadow.docs[d] = JSON.stringify(data[d] ?? null);
-  queue = [];
-  restoring.clear();
+  // Changes the server hasn't confirmed yet stay queued and visible: lay them over the fresh data
+  // (and its shadow, as already sent), so reloading while some are still on their way loses none.
+  for (const op of [...inflight, ...queue]) replay(data, op);
   stateSent = JSON.stringify(stateBody());
   syncState();
+}
+/* Apply a queued operation to freshly loaded `data` and the shadow. */
+function replay(data, op) {
+  if (DOCS.includes(op.c)) {
+    data[op.c] = clone(op.v);
+    shadow.docs[op.c] = JSON.stringify(data[op.c] ?? null);
+    return;
+  }
+  const arr = data[op.c];
+  if (!Array.isArray(arr) || !shadow[op.c]) return;
+  const i = arr.findIndex(e => e.id === op.id);
+  if (op.k === 'del') {
+    if (i >= 0) arr.splice(i, 1);
+    shadow[op.c].delete(op.id);
+  } else if (op.k === 'put') {
+    const v = clone(op.v);
+    if (i >= 0) arr[i] = v;
+    else if (NEWEST_FIRST.has(op.c)) arr.unshift(v);
+    else arr.push(v);
+    shadow[op.c].set(op.id, fields(v));
+  } else if (i >= 0) {
+    // (Gone from the server meanwhile: the server refuses the patch and the record stays gone.)
+    Object.assign(arr[i], clone(op.v));
+    shadow[op.c].set(op.id, fields(arr[i]));
+  }
 }
 export function stopSync() {
   shadow = null;
   queue = [];
+  inflight = [];
+  resyncWhenSaved = false;
+  restoring.clear();
   clearTimeout(retryT);
   disconnectLive();
 }
@@ -65,7 +98,8 @@ function syncState() {
 }
 
 /* ---------- local → server ---------- */
-export function collect() {
+/* Queue what changed since the shadow; `send` false only queues (the page is going away). */
+export function collect(send = true) {
   if (!shadow) return;
   const d = D();
   for (const c of COLLS) {
@@ -115,7 +149,7 @@ export function collect() {
       shadow.docs[k] = j;
     }
   }
-  if (queue.length && !S.ui.offline) flush();
+  if (queue.length && !S.ui.offline && send) flush();
   else syncState();
 }
 
@@ -228,12 +262,24 @@ export async function flush() {
     flushing = false;
   }
   if (queue.length && !S.ui.offline) flush();
-  else syncState();
+  else {
+    syncState();
+    // A reload that waited for the queue to drain (see commit) can run now.
+    if (resyncWhenSaved && !queue.length && !S.ui.offline) {
+      resyncWhenSaved = false;
+      hooks.resync();
+    }
+  }
 }
 
 /* Send everything now and wait for the server. Resolves with the errors of rejected changes, so
-   callers can report them in place of the generic toast. */
-export async function commit() {
+   callers can report them in place of the generic toast. `retry`: try even if the last attempt
+   left us offline (the live stream just reconnected, so the server may be back). */
+export async function commit({ retry = false } = {}) {
+  if (retry && shadow && S.ui.offline) {
+    S.ui.offline = false;
+    clearTimeout(retryT);
+  }
   collect();
   const errs = (errSink = []);
   try {
@@ -281,17 +327,51 @@ export async function retryNow() {
   if (!live && shadow) connectLive();
 }
 
-/* Before the tab goes away, send whatever is still queued. */
+/* Before the tab goes away, send whatever hasn't been confirmed (queued, and the batch on its way,
+   which the browser cancels on unload) with keepalive requests, which outlive the page. Browsers
+   allow about 64 KB of keepalive bodies at once, so as many ops as fit, in order; the rest stay
+   queued (the beforeunload prompt below warns about them). */
+const KEEPALIVE_BYTES = 60_000;
+export function keepaliveBatches(ops, budget = KEEPALIVE_BYTES) {
+  const enc = new TextEncoder();
+  const out = [];
+  let left = budget;
+  for (const op of ops) {
+    const fresh = !out.length || out.at(-1).length >= BATCH;
+    // The op and its comma, plus the {"ops":[]} around a new request.
+    const cost = enc.encode(JSON.stringify(op)).length + 1 + (fresh ? 12 : 0);
+    if (cost > left) break;
+    if (fresh) out.push([]);
+    out.at(-1).push(op);
+    left -= cost;
+  }
+  return out;
+}
 addEventListener('pagehide', () => {
+  if (!shadow) return;
+  collect(false);
+  const batches = keepaliveBatches([...inflight, ...queue]);
+  const sent = new Set(batches.flat());
+  for (const ops of batches)
+    fetch('/api/sync', {
+      method: 'POST',
+      keepalive: true,
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', 'x-requested-with': 'sudo-sapient', 'x-client-id': CLIENT_ID },
+      body: JSON.stringify({ ops }),
+    }).catch(() => {});
+  queue = queue.filter(op => !sent.has(op));
+});
+// Back from the back/forward cache: what was sent on the way out may or may not have arrived.
+addEventListener('pageshow', e => e.persisted && shadow && hooks.resync());
+// Leaving with changes the server hasn't confirmed: ask first (they're sent meanwhile).
+addEventListener('beforeunload', e => {
+  if (!shadow) return;
   collect();
-  if (!queue.length) return;
-  fetch('/api/sync', {
-    method: 'POST',
-    keepalive: true,
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json', 'x-requested-with': 'sudo-sapient', 'x-client-id': CLIENT_ID },
-    body: JSON.stringify({ ops: queue.splice(0, BATCH) }),
-  }).catch(() => {});
+  if (pendingCount() > 0) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
 });
 addEventListener('online', () => retryNow());
 

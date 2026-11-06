@@ -9,7 +9,7 @@ import { D, DEFAULT_PREFS, S, allTasks, canSee, emptyData, me, proj } from '../c
 import { ApiError, get, post } from '../core/api.js';
 import { toast } from '../ui/toast.js';
 import { hashFor, render, routeFromHash } from '../shell/render.js';
-import { commit, connectLive, onSync, prime, stopSync } from '../shell/sync.js';
+import { commit, connectLive, onSync, pendingCount, prime, reloadWhenSaved, stopSync } from '../shell/sync.js';
 import { A, EMAIL_RE } from './actions.js';
 import { disablePushHere, refreshPush } from './push.js';
 
@@ -30,7 +30,11 @@ let reloading = null;
 export function reload() {
   reloading ||= (async () => {
     try {
-      await commit();
+      // Send what's queued first, even if the last attempt left us offline (the live stream that
+      // asked for this reload just reconnected). If it still can't be saved, keep it and reload
+      // once it is: a bootstrap mustn't replace local changes the server hasn't seen.
+      await commit({ retry: true });
+      if (pendingCount()) return reloadWhenSaved();
       hydrate(await get('/api/bootstrap'));
       if (S.ui.drawer && !allTasks().some(t => t.id === S.ui.drawer)) S.ui.drawer = null;
       if (S.ui.route === 'project' && !proj(S.ui.params.id)) {
