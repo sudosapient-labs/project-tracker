@@ -124,6 +124,22 @@ test fails if the two differ.
 `cli` and `mcp` pin the exact `client` version they were released with. A `client`-only release
 doesn't reach them until they're released again.
 
+### Releases and Railway deploys
+
+Railway deploys each push to `prod` once its GitHub checks are done ("Wait for CI"). Those checks
+can include the **Release** workflow as well as CI: a push that merges a release PR runs both, and
+Railway may wait for every check on the commit. So when a release PR carries an npm package, a
+publish that fails, or a run left waiting (on the `npm` environment, or for a re-run), can hold the
+app's deploy back even though the app itself passed CI. That is also why the `npm` environment has
+no required reviewers.
+
+Release the app and the packages in **separate release PRs** where you can: merge the app's release
+on its own, and the packages' (only `packages/` changed) in another. release-please puts every
+component with something to release in one PR, so to split them, merge the release PR when only one
+side has unreleased commits, or land the other side's changes after it. If a publish does fail on a
+combined release, fix or re-run `publish-npm` (the tarballs are kept 7 days) rather than leaving the
+run failed, or redeploy from Railway once you've checked the app.
+
 ### One-time npm setup
 
 npm attaches a trusted publisher to a package that already exists, so the first version of each package
