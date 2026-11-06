@@ -218,3 +218,28 @@ describe('favourites', () => {
     expect(t.db.get("SELECT COUNT(*) n FROM favorites WHERE user_id = 'mbob'").n).toBe(1);
   });
 });
+
+describe('task keys', () => {
+  it('can’t be renamed in place, taken from another project, or used to find out what a private project holds', async () => {
+    const { t, ada, bob } = await team();
+    await ada.sync([
+      put('projects', project('p2', { key: 'SEC', private: true })),
+      put('tasks', task('s1', 'p2', { key: 'SEC-201' })),
+      put('projects', project('p1', { key: 'WEB' })),
+    ]);
+    await bob.sync([put('tasks', task('t1', 'p1', { key: 'WEB-201' }))]);
+    const keyOf = r => r.body.results[0].v?.key;
+
+    // Editing a key in place keeps it, whatever it's changed to.
+    for (const key of ['SEC-201', 'SEC-999', 'WEB-500', 'WEB-202'])
+      expect(keyOf(await bob.sync([patch('tasks', 't1', { key })]))).toBe('WEB-201');
+    // A new task always gets its own project's prefix, and taken or free keys elsewhere make no difference.
+    const a = keyOf(await bob.sync([put('tasks', task('t2', 'p1', { key: 'SEC-201' }))]));
+    const b = keyOf(await bob.sync([put('tasks', task('t3', 'p1', { key: 'SEC-202' }))]));
+    expect([a, b]).toEqual(['WEB-202', 'WEB-203']);
+    // Moving into the private project is refused, and the private task keeps its key.
+    expect(oks(await bob.sync([patch('tasks', 't1', { project: 'p2', key: 'SEC-201' })]))).toEqual([false]);
+    expect(t.repo.get('tasks', 's1').key).toBe('SEC-201');
+    expect(t.repo.get('projects', 'p2').seq || 0).toBeLessThanOrEqual(201);
+  });
+});
