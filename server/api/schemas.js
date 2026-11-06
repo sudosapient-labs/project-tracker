@@ -13,10 +13,13 @@ const named = (id, schema, description) => {
 
 const STATUS = z.enum(STATUSES.map(s => s.id));
 const PRIORITY = z.enum(PRIOS.map(p => p.id));
-// 'YYYY-MM-DD' (all day) or an ISO instant (timed), as in the app.
+// 'YYYY-MM-DD' (all day) or an ISO instant (timed), as in the app. The day must exist: 2026-02-31
+// would read as "Invalid Date" in activity and break scheduling the next repeat.
+const realDate = v => !Number.isNaN(Date.parse(v)) && new Date(v.slice(0, 10) + 'T00:00:00Z').toISOString().startsWith(v.slice(0, 10));
 const date = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/, 'Use YYYY-MM-DD or an ISO date-time')
+  .refine(realDate, 'That date doesn’t exist')
   .describe('YYYY-MM-DD, or an ISO 8601 date-time for a timed due date');
 const ms = z.number().int().describe('Unix time in milliseconds');
 const ref = z.string().min(1).max(254);

@@ -289,6 +289,18 @@ describe('writes behave like the app’s', () => {
     expect(r.body.results[0].v.via).toBeUndefined();
   });
 
+  it('refuses dates that don’t exist, which would otherwise break repeating tasks', async () => {
+    const { t, ada } = await workspace();
+    const api = await as(t, ada);
+    for (const due of ['2026-02-31', '2026-13-45', '2026-11-06T25:00Z'])
+      expect((await api.post('/tasks', { project: 'WEB', title: 'x', due })).body, due).toMatchObject({ code: 'invalid_request', field: 'due' });
+    const { key, id } = (await api.post('/tasks', { project: 'WEB', title: 'Leap', due: '2028-02-29' })).body;
+    expect((await api.patch(`/tasks/${key}`, { start: '2026-04-31' })).body.field).toBe('start');
+    t.db.run("UPDATE tasks SET data = json_set(data, '$.recur', 'Weekly') WHERE id = ?", id);
+    expect((await api.post(`/tasks/${key}/complete`)).status).toBe(200);
+    expect((await api.get('/tasks?status=open')).body.data[0].due).toBe('2028-03-07');
+  });
+
   it('updates field by field with the app’s activity lines, and archive / restore', async () => {
     const { t, ada } = await workspace();
     const api = await as(t, ada);
