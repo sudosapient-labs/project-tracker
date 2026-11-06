@@ -77,8 +77,9 @@ deploys it like any other change.
 
 `packages/client`, `packages/cli` and `packages/mcp` are released on their own and published to npm as
 `@sudosapient/client`, `@sudosapient/cli` and `@sudosapient/mcp`: **public** packages in the `sudosapient`
-npm org (free plan), so anyone can `npx` them. npm packages ship their source, so their code is
-readable. They hold only API client code (calls to the documented `/api/v1`), none of the server.
+npm org (free plan), so anyone can install them. The CLI and MCP server also run with
+`npx @sudosapient/cli` and `npx @sudosapient/mcp`; `client` is the library they share, not a command.
+npm packages ship their source, so their code is readable. They hold only API client code (calls to the documented `/api/v1`), none of the server.
 They stay `UNLICENSED` with no license file: visible, but all rights reserved.
 
 - release-please treats each one as a component with its own version, `CHANGELOG.md` and tag
