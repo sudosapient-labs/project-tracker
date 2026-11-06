@@ -195,6 +195,12 @@ export function authRoutes({ limit }) {
     };
   };
   const devLink = (c, link) => (c.var.config.exposeEmailLinks ? { devLink: link } : {});
+  // One answer for every sign-up an invite-only workspace refuses, naming nobody.
+  const inviteOnly = c =>
+    c.json(
+      { error: 'This workspace is invite-only. Ask an admin to invite you, or sign in if you already have an account.', field: 'email', code: 'invite_only' },
+      403,
+    );
 
   r.get('/session', c => c.json(sessionState(c)));
 
@@ -216,13 +222,17 @@ export function authRoutes({ limit }) {
     const { name, email: em, password: pw, invite, join } = b.data;
     if (!repo.workspace() && setup.token && !sameSecret(b.data.setup, setup.token))
       return c.json({ error: 'Open the setup link from the server log to create the first account.', code: 'setup_required' }, 403);
+    const inviteTok = invite && findToken(db, 'invite', invite);
+    const inviteOk = inviteTok && inviteTok.email.toLowerCase() === em;
+    const joinOk = !!(join && findToken(db, 'join', join));
+    // Without an invite for this address or a join link, an invite-only workspace answers the same
+    // whether the address has an account, a pending invite or neither, so sign-up can't be used to
+    // find out who is in the workspace.
+    if (repo.workspace() && !config.allowOpenSignup && !inviteOk && !joinOk) return inviteOnly(c);
     if (db.get('SELECT 1 FROM users WHERE email = ?', em))
       return c.json({ error: 'An account with this email already exists. Sign in instead.', field: 'email' }, 409);
 
     const hash = await hashPassword(pw);
-    const inviteTok = invite && findToken(db, 'invite', invite);
-    const inviteOk = inviteTok && inviteTok.email.toLowerCase() === em;
-    const joinOk = !!(join && findToken(db, 'join', join));
     let out;
     try {
       out = db.tx(() => {
@@ -270,7 +280,7 @@ export function authRoutes({ limit }) {
     } catch (e) {
       if (e.code === 'invite_required')
         return c.json({ error: `${em} has a pending invite. Use the invite link in that email to join.`, field: 'email', code: 'invite_required' }, 403);
-      if (e.status === 403) return c.json({ error: `This workspace is invite-only. Ask an admin to invite ${em}.`, field: 'email', code: 'invite_only' }, 403);
+      if (e.status === 403) return inviteOnly(c);
       throw e;
     }
     mailer.drain();

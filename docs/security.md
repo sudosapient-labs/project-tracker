@@ -11,6 +11,9 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 - After that the workspace is invite-only unless `ALLOW_OPEN_SIGNUP=true`. An invited address (and the
   role it was invited with) can only be claimed through its own invite link; the reusable join link
   makes Members. Making a new join link retires the previous one, and only Owners and Admins can.
+- Sign-up without a valid invite for that address or a join link gets one answer in an invite-only
+  workspace (`403 invite_only`), whether the address already has an account, has a pending invite
+  or neither, so it can't be used to find out who is in the workspace.
 - New accounts verify their email (`REQUIRE_EMAIL_VERIFICATION`), except those who signed up through
   an emailed invite, which already proves the address.
 - Passwords: at least 10 characters including a number or symbol, hashed with scrypt.
