@@ -82,10 +82,14 @@ export function richTextProblem(html) {
   return null;
 }
 
-export const cleanRich = html => {
-  const problem = richTextProblem(html);
-  if (problem) throw new RangeError(`Rich text refused: ${problem}`);
-  return sanitizeHtml(String(html ?? ''), OPTS)
+/* Sanitise a description richTextProblem has just passed, without parsing it again to check. */
+export const cleanCheckedRich = (/** @type {string | null | undefined} */ html) =>
+  sanitizeHtml(String(html ?? ''), OPTS)
     .replace(/<br \/>/g, '<br>')
     .replace(/\u00a0/g, '&nbsp;');
+
+export const cleanRich = (/** @type {string | null | undefined} */ html) => {
+  const problem = richTextProblem(html);
+  if (problem) throw new RangeError(`Rich text refused: ${problem}`);
+  return cleanCheckedRich(html);
 };

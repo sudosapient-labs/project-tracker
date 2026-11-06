@@ -6,7 +6,7 @@ import { PR, ST } from '../../src/core/constants.js';
 import { COMMENT, EDIT, PERMS, VIEW, canManageProject, canSeeProject, isAdminRole, projectLevel } from '../../src/core/access.js';
 import { fileType, fsize } from '../../src/core/file-types.js';
 import { Reject } from '../lib/http.js';
-import { cleanRich, richTextProblem } from '../lib/rich-text.js';
+import { cleanCheckedRich, richTextProblem } from '../lib/rich-text.js';
 import { RICH_MS_PER_REQUEST } from './budget.js';
 import { mentioned, notify } from '../notify.js';
 import { issueToken } from '../routes/auth.js';
@@ -129,7 +129,7 @@ function richDesc(ctx, desc, pid) {
 }
 function settleDesc(ctx, desc, pid) {
   const problem = richTextProblem(desc);
-  if (!problem) return cleanRich(desc);
+  if (!problem) return cleanCheckedRich(desc);
   // A description already stored (it was sanitised then, before nesting was limited) may be copied
   // as it is, e.g. into the next repeat of a task: an old record must not block that.
   if (problem.includes('nested') && ctx.db.get("SELECT 1 FROM tasks WHERE project_id = ? AND json_extract(data, '$.desc') = ? LIMIT 1", pid, desc)) return desc;

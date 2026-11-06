@@ -2,8 +2,9 @@
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { PW, account, setup } from './helpers.js';
+import { createRequire } from 'node:module';
+import { describe, expect, it, vi } from 'vitest';
+import { PW, account, apiKey, keyClient, setup } from './helpers.js';
 import { loadConfig } from '../../server/config.js';
 import { migrate, openDb } from '../../server/db.js';
 import { createApp } from '../../server/app.js';
@@ -384,5 +385,30 @@ describe('the cost of one person’s sync requests', () => {
     expect(r.status).toBe(429);
     expect(Number(r.headers.get('retry-after'))).toBeGreaterThan(0);
     expect((await other.sync([])).status).toBe(429);
+  });
+});
+
+describe('descriptions are parsed once', () => {
+  const parser = createRequire(createRequire(import.meta.url).resolve('sanitize-html'))('htmlparser2').Parser;
+
+  it('through sync and through the REST API: one depth check, one sanitise', async () => {
+    const { t, ada } = await team();
+    await ada.sync([put('projects', project('p1'))]);
+    const api = keyClient(t.app, await apiKey(ada));
+    const writes = vi.spyOn(parser.prototype, 'write');
+    try {
+      await ada.sync([put('tasks', task('t1', 'p1', { desc: '<p>Hi <b>there</b></p>' }))]);
+      expect(writes).toHaveBeenCalledTimes(2);
+      writes.mockClear();
+      const r = await api.post('/tasks', { project: 'WEB', title: 'From the API', descriptionHtml: '<p>Hello <script>x</script><i>world</i></p>' });
+      expect(r.status).toBe(201);
+      expect(r.body.descriptionHtml).toBe('<p>Hello <i>world</i></p>');
+      expect(writes).toHaveBeenCalledTimes(2);
+    } finally {
+      writes.mockRestore();
+    }
+    const deep = await api.post('/tasks', { project: 'WEB', title: 'Deep', descriptionHtml: '<div>'.repeat(80) + 'x' });
+    expect(deep.status).toBe(400);
+    expect(deep.body).toMatchObject({ code: 'invalid_request', field: 'descriptionHtml', error: 'descriptionHtml: Its formatting is nested too deeply.' });
   });
 });

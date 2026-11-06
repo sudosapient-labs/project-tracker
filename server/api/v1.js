@@ -9,7 +9,6 @@ import { Hono } from 'hono';
 import { PR, RECUR_DAYS, ST } from '../../src/core/constants.js';
 import { textToHtml } from '../../src/core/rich-text.js';
 import { newId } from '../lib/crypto.js';
-import { cleanRich, richTextProblem } from '../lib/rich-text.js';
 import { canSee, memberFor } from '../sync/rules.js';
 import { bearer, fail, idempotent, scoped } from './middleware.js';
 import { openapi } from './openapi.js';
@@ -155,13 +154,15 @@ export function v1Routes({ limit }) {
     );
 
   /* ---------- writes ---------- */
-  const FIELD = { desc: 'description' };
-  function write(x, ops) {
+  /* `fields`: the API's name for a record field an error names, e.g. which of description and
+     descriptionHtml the request sent. */
+  function write(x, ops, fields = { desc: 'description' }) {
     const { results, failed } = x.c.var.engine.apply(x.c.var.auth, ops, null, { via: x.c.var.via, atomic: true });
     if (!failed) x.c.set('committed', true);
     if (failed) {
       const m = /^(\w+): (.*)$/.exec(failed.error);
-      throw new ApiFail(failed.status || 400, failed.error, undefined, m ? FIELD[m[1]] || m[1] : undefined);
+      const field = m && (fields[m[1]] || m[1]);
+      throw new ApiFail(failed.status || 400, field ? `${field}: ${m[2]}` : failed.error, undefined, field || undefined);
     }
     return results.map(r => r.v);
   }
@@ -171,12 +172,10 @@ export function v1Routes({ limit }) {
     return { c: 'activity', id, k: 'put', v: { id, by: x.me.id, verb, task: t.id, project: t.project, at: Date.now(), extra } };
   };
   const nextOrder = x => (x.db.get("SELECT MAX(json_extract(data, '$.order')) n FROM tasks")?.n || 0) + 1;
-  const descOf = b => {
-    if (b.descriptionHtml == null) return b.description != null ? textToHtml(b.description) : undefined;
-    const problem = richTextProblem(b.descriptionHtml);
-    if (problem) throw new ApiFail(400, `descriptionHtml: ${problem}`, 'invalid_request', 'descriptionHtml');
-    return cleanRich(b.descriptionHtml);
-  };
+  /* The description as sent. The sync rules check and sanitise it, once (rules.js richDesc), like
+     any description from the app. */
+  const descOf = b => (b.descriptionHtml != null ? b.descriptionHtml : b.description != null ? textToHtml(b.description) : undefined);
+  const descField = b => ({ desc: b.descriptionHtml != null ? 'descriptionHtml' : 'description' });
 
   function newTask(x, f) {
     const now = Date.now();
@@ -245,7 +244,7 @@ export function v1Routes({ limit }) {
       const n = newTask(x, { ...after, due, start: due, status: 'todo', subtasks: (after.subtasks || []).map(s => ({ ...s, done: false })) });
       ops.push({ c: 'tasks', id: n.id, k: 'put', v: n }, actOp(x, n, 'created'));
     }
-    return write(x, ops)[0];
+    return write(x, ops, descField(b))[0];
   }
 
   /* ---------- routes ---------- */
@@ -324,7 +323,7 @@ export function v1Routes({ limit }) {
       const p = findProject(x, b.project);
       const assignee = b.assignee == null ? null : findMember(x, b.assignee, 'assignee').id;
       const t = newTask(x, { ...b, project: p.id, assignee, desc: descOf(b) });
-      const [saved] = write(x, [{ c: 'tasks', id: t.id, k: 'put', v: t }, actOp(x, t, 'created')]);
+      const [saved] = write(x, [{ c: 'tasks', id: t.id, k: 'put', v: t }, actOp(x, t, 'created')], descField(b));
       return x.V.task(saved);
     },
   });
