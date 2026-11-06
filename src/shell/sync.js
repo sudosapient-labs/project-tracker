@@ -41,7 +41,7 @@ const restoring = new Map();
 const gone = new Map();
 /* Records someone else changed while a change of ours to them was on its way (see settle). */
 const crossed = new Set();
-const hooks = { signedOut: () => {}, resync: () => {} };
+const hooks = { signedOut: () => {}, otherUser: () => {}, stillMe: () => true, resync: () => {} };
 export const onSync = h => Object.assign(hooks, h);
 
 const fields = o => new Map(Object.keys(o).map(k => [k, JSON.stringify(o[k])]));
@@ -383,6 +383,8 @@ let flushCtl = null;
 export async function flush() {
   // While what pagehide sent is unanswered (back from the back/forward cache), wait for it.
   if (flushing || !queue.length || !shadow || exitSends) return;
+  // Someone else signed in on this browser: their session mustn't send this person's changes.
+  if (!hooks.stillMe()) return void hooks.otherUser();
   flushing = true;
   inflight = takeBatch();
   syncState();
@@ -493,19 +495,39 @@ function online() {
     toast('Back online. All changes are synced.');
   }
 }
+/* Whether the person this tab belongs to is still the one signed in: someone else may have signed
+   in on this browser meanwhile, and their session mustn't carry this person's changes. False (and
+   handled: signed out, or offline and retrying) when not, or when the server can't be reached. */
+export async function sameUser() {
+  let s;
+  try {
+    s = await api('GET', '/api/auth/session');
+  } catch {
+    if (shadow) offline();
+    return false;
+  }
+  if (!shadow) return false;
+  if (!s.user || s.user.twoFactorPending) hooks.signedOut();
+  else if (!hooks.stillMe() || (S.ui.me?.id && s.user.id !== S.ui.me.id)) hooks.otherUser();
+  else return true;
+  return false;
+}
 /* Try the server again (the backoff timer, the browser coming online, "Try again"). The tab stays
    offline until it answers. */
 export async function retryNow() {
   if (!shadow) return;
   clearTimeout(retryT);
+  collect(false);
+  if (!(await sameUser())) return;
   if (queue.length) await flush();
-  else
-    try {
-      await api('GET', '/api/auth/session');
-      online();
-    } catch {
-      offline();
+  else {
+    online();
+    syncState();
+    if (resyncWhenSaved && !flushing) {
+      resyncWhenSaved = false;
+      hooks.resync();
     }
+  }
   if (!live && shadow) connectLive();
 }
 
@@ -538,7 +560,7 @@ export function keepaliveBatch(ops, budget = KEEPALIVE_BYTES) {
   return out;
 }
 addEventListener('pagehide', () => {
-  if (!shadow) return;
+  if (!shadow || !hooks.stillMe()) return;
   collect(false);
   const reclaim = flushCtl && inflight.length ? inflight : [];
   // From the head of the queue: what an earlier pagehide sent, if that is still unanswered (back
@@ -633,6 +655,7 @@ let missed = false;
 
 export function connectLive() {
   disconnectLive();
+  if (!hooks.stillMe()) return void hooks.otherUser();
   const es = new EventSource(`/api/events?client=${CLIENT_ID}`);
   live = es;
   es.addEventListener('hello', () => {
@@ -652,6 +675,7 @@ export function connectLive() {
     api('GET', '/api/auth/session')
       .then(s => {
         if (!s.user || s.user.twoFactorPending) return hooks.signedOut();
+        if (S.ui.me?.id && s.user.id !== S.ui.me.id) return hooks.otherUser();
         liveT = setTimeout(connectLive, liveDelay);
       })
       .catch(() => {
