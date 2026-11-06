@@ -2,7 +2,8 @@
    they render; the engine checks each against RULES, writes it, and pushes the resulting records
    to every other connected client that is allowed to see them (Server-Sent Events).
 
-   Operation:  { c: collection, id, k: 'put' | 'patch' | 'del', v: object }
+   Operation:  { c: collection, id, k: 'put' | 'patch' | 'del', v: object, base?: object }
+               `base`: for list and map fields in a patch, the values the client edited from (merge.js).
    Result:     { ok: true, v: canonical } | { ok: false, error, v: canonical-or-null }
    A rejected op is rolled back alone (savepoint) and the client resets that record to `v`. */
 import fs from 'node:fs';
@@ -11,6 +12,7 @@ import { COLLS } from '../repo.js';
 import { Reject } from '../lib/http.js';
 import { currentAuth } from '../auth.js';
 import { DOC_SCHEMAS, MAX_RECORD_BYTES, SCHEMAS } from './schemas.js';
+import { MERGED, mergeField } from './merge.js';
 import { RULES, canSee, isAdmin, memberFor, projectFor, removeMemberCascade } from './rules.js';
 
 const PROJECT_SCOPED = new Set(['tasks', 'comments', 'activity', 'files', 'events', 'savedViews']);
@@ -116,8 +118,12 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
     if (!isObj(op.v)) throw new Reject('Invalid value.', 400);
     // No record may be larger than this once saved, so refuse a bigger value before any rule works on it.
     if (JSON.stringify(op.v).length > MAX_RECORD_BYTES) throw new Reject('This item is too large to save.', 413);
+    if (op.base != null && (!isObj(op.base) || JSON.stringify(op.base).length > MAX_RECORD_BYTES)) throw new Reject('Invalid value.', 400);
 
     const v = { ...op.v };
+    // List and map fields sent with the value they were edited from (`base`) are merged onto the
+    // current value, so a stale write only applies its own changes (see merge.js).
+    if (before && k === 'patch' && op.base) for (const f of MERGED[c] || []) if (f in v && f in op.base) v[f] = mergeField(op.base[f], v[f], before[f]);
     const personal = {};
     for (const f of rule.personal || []) {
       if (f in v) personal[f] = v[f];

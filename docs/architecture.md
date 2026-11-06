@@ -16,6 +16,12 @@ proxies `/api` to the API on :8787.
   record; a rejected change is rolled back on the client with a toast. Each batch runs in one SQLite
   transaction. `<html data-sync>` shows `saving` / `saved` / `offline`; changes made while offline
   are retried.
+- **Lists and maps merge.** A project's `members` and `perms` and a task's `subtasks`, `labels` and
+  `deps` are whole values, so the client sends each one with the value it edited from (`base`) and
+  the server applies only that client's additions, removals and changes onto the current value
+  (`server/sync/merge.js`). A stale write (an offline queue, a tab behind) can't undo someone else's
+  change: a person taken off a project stays off. A patch without `base` (the REST API, which
+  reads and writes in one request) replaces the whole value.
 - **Live updates.** Other people's changes arrive over Server-Sent Events (`GET /api/events`) and are
   merged in, filtered to what each person can see. A tab's own changes aren't echoed back to it
   (`x-client-id`). When the stream drops, the client reconnects and bootstraps again.

@@ -428,3 +428,71 @@ describe('M6 uploads are bounded per person, per workspace and by free disk', ()
     expect(t.db.get('SELECT COUNT(*) n FROM files').n).toBe(0);
   });
 });
+
+describe('M2 stale list and map edits only apply their own changes', () => {
+  const merged = (c, id, v, base) => ({ c, id, k: 'patch', v, base });
+
+  it('someone removed from a private project stays removed after a stale edit adds someone else', async () => {
+    const { t, ada, bob, carol } = await workspace([
+      ['mbob', 'Bob', 'Member'],
+      ['mcarol', 'Carol', 'Member'],
+      ['mdan', 'Dan', 'Member'],
+    ]);
+    const adaId = t.repo.all('members').find(m => m.role === 'Owner').id;
+    const list = [adaId, 'mbob', 'mcarol'];
+    const perms = { [adaId]: 'Full access', mbob: 'Full access', mcarol: 'Can edit' };
+    await ada.sync([put('projects', project('p1', 'SEC', { private: true, members: list, perms }))]);
+    const seen = t.repo.get('projects', 'p1');
+
+    // The Owner takes Carol off the project.
+    const without = { ...perms };
+    delete without.mcarol;
+    await ada.sync([merged('projects', 'p1', { members: [adaId, 'mbob'], perms: without }, { members: seen.members, perms: seen.perms })]);
+    // Bob, still holding the old list, adds Dan.
+    const r = await bob.sync([merged('projects', 'p1', { members: [...list, 'mdan'], perms: { ...perms, mdan: 'Can view' } }, { members: list, perms })]);
+    expect(r.body.results[0].ok).toBe(true);
+    const p = t.repo.get('projects', 'p1');
+    expect(p.members).toEqual([adaId, 'mbob', 'mdan']);
+    expect(p.perms).toEqual({ [adaId]: 'Full access', mbob: 'Full access', mdan: 'Can view' });
+    expect((await carol.get('/api/bootstrap')).body.data.tasks).toEqual([]);
+    expect((await carol.get('/api/bootstrap')).body.data.projects.find(x => x.id === 'p1')).not.toHaveProperty('desc');
+  });
+
+  it('concurrent subtask toggles and label edits both survive', async () => {
+    const { t, ada, bob } = await workspace([['mbob', 'Bob', 'Member']]);
+    const subs = [
+      { id: 's1', title: 'One', done: false },
+      { id: 's2', title: 'Two', done: false },
+    ];
+    await ada.sync([put('projects', project('p1')), put('tasks', task('t1', 'p1', { subtasks: subs, labels: ['a', 'b'] }))]);
+    await ada.sync([
+      merged('tasks', 't1', { subtasks: [{ ...subs[0], done: true }, subs[1]], labels: ['a', 'b', 'c'] }, { subtasks: subs, labels: ['a', 'b'] }),
+    ]);
+    await bob.sync([merged('tasks', 't1', { subtasks: [subs[0], { ...subs[1], done: true }], labels: ['b'] }, { subtasks: subs, labels: ['a', 'b'] })]);
+    const x = t.repo.get('tasks', 't1');
+    expect(x.subtasks.map(s => [s.id, s.done])).toEqual([
+      ['s1', true],
+      ['s2', true],
+    ]);
+    expect(x.labels).toEqual(['b', 'c']);
+
+    // A subtask someone deleted isn't brought back by a stale toggle of it; a new one is added.
+    await ada.sync([merged('tasks', 't1', { subtasks: [x.subtasks[1]] }, { subtasks: x.subtasks })]);
+    await bob.sync([
+      merged(
+        'tasks',
+        't1',
+        { subtasks: [{ ...x.subtasks[0], done: false }, x.subtasks[1], { id: 's3', title: 'Three', done: false }] },
+        { subtasks: x.subtasks },
+      ),
+    ]);
+    expect(t.repo.get('tasks', 't1').subtasks.map(s => s.id)).toEqual(['s2', 's3']);
+  });
+
+  it('a patch without a base still replaces the whole value (the REST API and older clients)', async () => {
+    const { t, ada } = await workspace();
+    await ada.sync([put('projects', project('p1')), put('tasks', task('t1', 'p1', { labels: ['a'] }))]);
+    await ada.sync([patch('tasks', 't1', { labels: ['z'] })]);
+    expect(t.repo.get('tasks', 't1').labels).toEqual(['z']);
+  });
+});

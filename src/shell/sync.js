@@ -30,6 +30,9 @@ const hooks = { signedOut: () => {}, resync: () => {} };
 export const onSync = h => Object.assign(hooks, h);
 
 const fields = o => new Map(Object.keys(o).map(k => [k, JSON.stringify(o[k])]));
+/* List and map fields sent with the value they were edited from, so the server applies only this
+   tab's changes to them (server/sync/merge.js): a stale edit can't undo someone else's. */
+const MERGED = { projects: ['members', 'perms'], tasks: ['subtasks', 'labels', 'deps'] };
 /* Projects I can't open come as stubs; give them the empty fields pages read, in the record and its
    shadow alike, so nothing is sent back for them. */
 const fill = (c, v) =>
@@ -75,11 +78,13 @@ export function collect() {
         continue;
       }
       const set = {};
+      const base = {};
       let n = 0;
       for (const k of Object.keys(e)) {
         const j = JSON.stringify(e[k]);
         if (prev.get(k) !== j) {
           set[k] = clone(e[k]);
+          if (MERGED[c]?.includes(k) && prev.has(k)) base[k] = JSON.parse(prev.get(k));
           prev.set(k, j);
           n++;
         }
@@ -90,7 +95,7 @@ export function collect() {
           prev.delete(k);
           n++;
         }
-      if (n) queue.push({ c, id: e.id, k: 'patch', v: set });
+      if (n) queue.push({ c, id: e.id, k: 'patch', v: set, ...(Object.keys(base).length ? { base } : {}) });
     }
     for (const id of [...sh.keys()])
       if (!seen.has(id)) {

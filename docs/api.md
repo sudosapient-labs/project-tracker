@@ -63,6 +63,11 @@ projects and Can view / Can comment apply to it exactly as to a person.
 People can be given as an id, an email, a full name, a unique first name, or `me`. Dates are
 `YYYY-MM-DD` or ISO 8601 date-times.
 
+`labels` in a `PATCH` replaces the task's whole list with the one sent (read the task, change the
+list, send it back). The API reads and writes in one request, so unlike the app it never sends a
+list it fetched long ago; the app sends what it edited from, and the server merges only its changes
+(see [architecture](architecture.md#how-data-flows)).
+
 ## Conventions
 
 - **Errors** are `{ "error": "…", "code": "not_found", "field": "title" }`. Codes: `invalid_request`,
