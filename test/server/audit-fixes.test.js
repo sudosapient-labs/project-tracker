@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { PW, account, apiKey, keyClient, setup } from './helpers.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { cleanRich } from '../../server/lib/rich-text.js';
+import { cleanRich, richTextProblem } from '../../server/lib/rich-text.js';
 
 const project = (id, key = 'WEB', extra = {}) => ({
   id,
@@ -109,6 +109,52 @@ describe('H1 rich text is bounded before it is sanitised', () => {
     expect(r.status).toBe(400);
     expect(r.body).toMatchObject({ code: 'invalid_request', field: 'descriptionHtml' });
     expect(ms).toBeLessThan(1000);
+  });
+
+  it('reads markup the way the sanitiser does, so tricks to hide nesting don’t work', () => {
+    const fill = unit => unit.repeat(Math.floor(99_000 / unit.length));
+    const plain = fill('<p>hello <b>world</b></p>');
+    cleanRich(plain); // warm up
+    const t0 = performance.now();
+    cleanRich(plain);
+    const plainMs = performance.now() - t0;
+    const tricks = {
+      // End tags that match nothing are ignored by the parser, so they close nothing.
+      unmatched: fill('<b></q>'),
+      mixedCase: fill('<B></Q>'),
+      inAttribute: fill('<b title="</b>">'),
+      inComment: fill('<b><!--</b>-->'),
+      cdata: fill('<b><![CDATA[</b>]]>'),
+      selfClosing: fill('<b/>'),
+      rawText: fill('<b><textarea></b></textarea>'),
+      unclosedComment: '<b>'.repeat(10) + '<!--' + fill('</b><b>'),
+      deepThenUnmatched: '<b>'.repeat(64) + fill('</q>'),
+    };
+    for (const [name, html] of Object.entries(tricks)) {
+      const t1 = performance.now();
+      if (!richTextProblem(html)) cleanRich(html);
+      expect(performance.now() - t1, name).toBeLessThan(3 * plainMs + 50);
+    }
+    for (const name of ['unmatched', 'mixedCase', 'inAttribute', 'inComment', 'cdata', 'selfClosing', 'rawText'])
+      expect(richTextProblem(tricks[name]), name).toBe('Its formatting is nested too deeply.');
+    // Optional end tags close themselves, as in the parser: long flat lists and paragraphs are fine.
+    expect(richTextProblem('<ul>' + '<li>item'.repeat(70) + '</ul>')).toBeNull();
+    expect(richTextProblem('<p>x'.repeat(70))).toBeNull();
+    expect(richTextProblem('<dl>' + '<dt>a<dd>b'.repeat(70) + '</dl>')).toBeNull();
+  });
+
+  it('caps the rich text one request can have sanitised', async () => {
+    const { t, ada } = await workspace();
+    await ada.sync([put('projects', project('p1'))]);
+    const desc = '<p>' + 'a'.repeat(99_000) + '</p>';
+    const ops = Array.from({ length: 12 }, (_, i) => put('tasks', task(`t${i}`, 'p1', { key: undefined, desc })));
+    const r = await ada.sync(ops);
+    expect(r.body.results.slice(0, 10).every(x => x.ok)).toBe(true);
+    expect(r.body.results.slice(10)).toEqual([
+      expect.objectContaining({ ok: false, status: 413, error: 'desc: This batch has too much formatted text. Send it in smaller batches.' }),
+      expect.objectContaining({ ok: false, status: 413 }),
+    ]);
+    expect(t.db.get('SELECT COUNT(*) n FROM tasks').n).toBe(10);
   });
 
   it('cleanRich itself refuses what it cannot sanitise cheaply', () => {

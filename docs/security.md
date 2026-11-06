@@ -160,9 +160,12 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   server sanitises them on write (sanitize-html) and the client again when rendering or pasting
   (DOMPurify), both against the editor's own allowlist (`src/core/rich-text.js`: paragraphs, bold,
   italic, lists, a heading and http(s)/mailto links).
-  Before sanitising, a description must be text of at most 100,000 characters with tags nested at
-  most 64 deep (sanitising gets superlinear with depth, so huge or deeply nested markup could stall
-  the server), and any synced value over 256 KB is refused before rules look at it.
+  Before sanitising, a description must be text of at most 100,000 characters with elements nested
+  at most 64 deep (sanitising gets superlinear with depth, so huge or deeply nested markup could
+  stall the server). The depth is measured with the sanitiser's own tokenizer and stack rules, so
+  end tags that match nothing, comments, attributes or raw text can't hide nesting. One request may
+  have at most 1,000,000 characters of descriptions checked and sanitised (the rest of a batch is
+  refused, `413`), and any synced value over 256 KB is refused before rules look at it.
 - Task keys and each project's key counter are the server's: a client can't set the counter or edit
   a key, and an optimistic key is only kept if it doesn't skip ahead of the counter, so nobody can
   run a project out of task numbers.

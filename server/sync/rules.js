@@ -97,8 +97,16 @@ function needFileTask(ctx, f) {
 }
 
 /* A description is checked before it's sanitised: sanitising very long or deeply nested markup is
-   slow enough to stall the server. */
-function richDesc(desc) {
+   slow enough to stall the server. Each request has a budget of rich text (ctx.richLeft) too. */
+function richDesc(ctx, desc) {
+  // One request may only make the server read so much rich text, however many ops carry it.
+  if (typeof desc === 'string') {
+    if (desc.length > ctx.richLeft) {
+      ctx.richLeft = 0;
+      throw new Reject('desc: This batch has too much formatted text. Send it in smaller batches.', 413);
+    }
+    ctx.richLeft -= desc.length;
+  }
   const problem = richTextProblem(desc);
   if (problem) throw new Reject(`desc: ${problem}`, 400);
   return cleanRich(desc);
@@ -239,7 +247,7 @@ export const RULES = {
       const p = needProject(ctx, t.project);
       needAssignee(ctx, p, t.assignee);
       needSubAssignees(ctx, p, t);
-      t.desc = richDesc(t.desc);
+      t.desc = richDesc(ctx, t.desc);
       settleAttachments(ctx, t);
       settleKey(ctx, t, p);
       if (t.assignee) notify(ctx, t.assignee, 'assign', { type: 'assign', task: t.id, text: 'assigned you', snippet: dueSnippet(t) }, t);
@@ -255,7 +263,7 @@ export const RULES = {
       else if (keys.includes('key')) t.key = before.key;
       if (moved || keys.includes('assignee')) needAssignee(ctx, p, t.assignee);
       if (moved || keys.includes('subtasks')) needSubAssignees(ctx, p, t, moved ? null : before);
-      if (keys.includes('desc')) t.desc = richDesc(t.desc);
+      if (keys.includes('desc')) t.desc = richDesc(ctx, t.desc);
       if (moved) moveTaskRecords(ctx, t, before.project);
       // Every save re-checks attachments, so older records with foreign links heal too.
       settleAttachments(ctx, t);
