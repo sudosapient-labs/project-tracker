@@ -75,6 +75,13 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 - **Other rate limits:** invites (50 an hour per person, emailed or resent), invite links (10 an hour
   per person), access requests (3 an hour per person and project) and the Owner's two-factor resets.
   Asking for access answers the same whether or not the project exists.
+- **Access is checked when the write happens:** a signed-in request is authenticated once its
+  whole body has arrived, and every write (sync batches, API writes, uploads, making API keys,
+  password, email and two-factor changes, deleting an account) checks the session or API key, the
+  person and their current role again inside its transaction, after any password check. A request
+  held open while the person was removed, demoted, signed out or had their password changed is
+  refused (`401`) or judged by the role they have now. Actions that need the current password also
+  fail if it changed meanwhile, and the workspace always keeps at least one Owner.
 - **Logging:** production logs one line per request (method, path, status, time), never bodies,
   cookies, query strings or tokens; tokens in auth link paths are replaced by `…`.
 

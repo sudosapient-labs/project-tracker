@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
-import { requireAuth } from '../auth.js';
+import { GONE, requireAuth } from '../auth.js';
 import { parseBody } from '../lib/http.js';
 import { TIMEZONES } from '../../src/core/constants.js';
 import { bootstrap } from '../sync/bootstrap.js';
@@ -21,7 +21,8 @@ export function dataRoutes() {
   r.post('/sync', requireAuth(), async c => {
     const b = await parseBody(c, z.object({ ops: z.array(z.looseObject({ c: z.string(), k: z.string() })).max(MAX_OPS) }));
     if (b.error) return b.error;
-    const { results, links } = c.var.engine.apply(c.var.auth, b.data.ops, c.req.header('x-client-id'));
+    const { results, links, gone } = c.var.engine.apply(c.var.auth, b.data.ops, c.req.header('x-client-id'));
+    if (gone) return c.json(GONE, 401);
     return c.json({ results, ...(c.var.config.exposeEmailLinks && links.length ? { links } : {}) });
   });
 

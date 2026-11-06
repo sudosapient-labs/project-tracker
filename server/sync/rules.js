@@ -418,6 +418,9 @@ export const RULES = {
         // Becoming or leaving Admin changes which project settings they receive.
         if (before.role === 'Guest' || m.role === 'Guest' || isAdminRole(before) !== isAdminRole(m)) ctx.resync.add(m.id);
         if ((m.role === 'Owner' || before.role === 'Owner') && ctx.me.role !== 'Owner') throw new Reject('Only an owner can change who owns the workspace.');
+        // Against the members as they are in this transaction, so concurrent changes can't leave none.
+        if (before.role === 'Owner' && m.role !== 'Owner' && !ctx.repo.all('members').some(x => x.id !== m.id && x.role === 'Owner'))
+          throw new Reject('The workspace needs at least one owner.');
       }
       return m;
     },

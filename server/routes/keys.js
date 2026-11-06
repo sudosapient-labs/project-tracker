@@ -3,7 +3,7 @@
    password, so a signed-in browser alone can't mint a credential that outlives its session. */
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { requireAuth } from '../auth.js';
+import { GONE, currentAuthSamePassword, requireAuth } from '../auth.js';
 import { parseBody } from '../lib/http.js';
 import { verifyPassword } from '../lib/crypto.js';
 import { MAX_KEYS, createKey, listKeys, revokeKey } from '../api/keys.js';
@@ -33,10 +33,18 @@ export function keyRoutes({ limit }) {
       const uid = c.var.auth.member.id;
       if (!(await verifyPassword(b.data.password, c.var.auth.user.password_hash)))
         return c.json({ error: 'Your password is incorrect.', field: 'password' }, 400);
-      if (db.get('SELECT COUNT(*) n FROM api_keys WHERE user_id = ?', uid).n >= MAX_KEYS)
-        return c.json({ error: `You can have up to ${MAX_KEYS} keys. Revoke one you no longer use first.` }, 400);
       const { password, ...opts } = b.data;
-      return c.json(createKey(db, uid, opts), 201);
+      // Made in one transaction with a fresh look at the session and password: either may have
+      // changed while the request was on its way (a stolen session, then the owner changed the
+      // password), and the key must not outlive that.
+      const out = db.tx(() => {
+        if (!currentAuthSamePassword(db, c.var.auth)) return GONE;
+        if (db.get('SELECT COUNT(*) n FROM api_keys WHERE user_id = ?', uid).n >= MAX_KEYS) return 'full';
+        return createKey(db, uid, opts);
+      });
+      if (out === GONE) return c.json(GONE, 401);
+      if (out === 'full') return c.json({ error: `You can have up to ${MAX_KEYS} keys. Revoke one you no longer use first.` }, 400);
+      return c.json(out, 201);
     },
   );
 

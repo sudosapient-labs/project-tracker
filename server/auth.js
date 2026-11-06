@@ -94,11 +94,47 @@ export function readSession(c, db) {
   return { session: s, user, member: JSON.parse(mrow.data) };
 }
 
+/* The credential behind `auth` (its session or API key), its user and member record, as they are
+   now; null once any of them is gone (signed out, revoked, expired, password reset, removed).
+   Writes call this inside their transaction, after the request's body has arrived and any password
+   check has run, so a request can't finish with access that was taken away while it was on its
+   way. The member is the fresh one, so the write is checked against the person's current role.
+   Server-internal calls pass only { member }; then only the member record is re-read. */
+export function currentAuth(db, auth, now = Date.now()) {
+  let cred = {};
+  if (auth?.session) {
+    const s = db.get('SELECT * FROM sessions WHERE id = ?', auth.session.id);
+    if (!s || s.token_hash !== auth.session.token_hash || s.expires_at < now || s.pending_2fa > auth.session.pending_2fa) return null;
+    cred = { session: s };
+  } else if (auth?.key) {
+    const k = db.get('SELECT * FROM api_keys WHERE id = ?', auth.key.id);
+    if (!k || k.token_hash !== auth.key.token_hash || (k.expires_at && k.expires_at < now)) return null;
+    cred = { key: k };
+  }
+  const id = auth?.user?.id ?? auth?.member?.id;
+  if (!id) return null;
+  const user = db.get('SELECT * FROM users WHERE id = ?', id);
+  const mrow = db.get('SELECT data FROM members WHERE id = ?', id);
+  if (!mrow || (auth.user && !user) || (auth.session && user.kind === 'bot')) return null;
+  return { ...cred, ...(user ? { user } : {}), member: JSON.parse(mrow.data) };
+}
+/* currentAuth, also requiring the password to be the one checked earlier in the request (for
+   actions that need the current password, like making an API key). */
+export const currentAuthSamePassword = (db, auth) => {
+  const a = currentAuth(db, auth);
+  return a && a.user?.password_hash === auth.user?.password_hash ? a : null;
+};
+export const GONE = { error: 'Your session ended while this was being saved. Sign in again to continue.', code: 'unauthenticated' };
+
 /* Middleware: populate c.var.auth. `level` decides what a request needs:
-   'session' any signed-in session (even mid-2FA), 'account' 2FA complete, 'member' also email verified. */
+   'session' any signed-in session (even mid-2FA), 'account' 2FA complete, 'member' also email verified.
+   The body is read first, so the session is checked once the whole request has arrived, not before
+   a slow body (writes re-check it in their transaction too, see currentAuth). `stream: true` leaves
+   the body unread for routes that stream it (uploads), which re-check in their transaction. */
 export const requireAuth =
-  (level = 'member') =>
+  (level = 'member', { stream = false } = {}) =>
   async (c, next) => {
+    if (!stream && c.req.method !== 'GET' && c.req.method !== 'HEAD') await c.req.arrayBuffer();
     const a = readSession(c, c.get('db'));
     if (!a) return c.json({ error: 'Sign in to continue.', code: 'unauthenticated' }, 401);
     if (level !== 'session' && a.session.pending_2fa) return c.json({ error: 'Enter your two-factor code to continue.', code: 'two_factor' }, 401);

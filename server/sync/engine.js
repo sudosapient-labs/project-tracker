@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { COLLS } from '../repo.js';
 import { Reject } from '../lib/http.js';
+import { currentAuth } from '../auth.js';
 import { DOC_SCHEMAS, MAX_RECORD_BYTES, SCHEMAS } from './schemas.js';
 import { RULES, canSee, isAdmin, memberFor, projectFor, removeMemberCascade } from './rules.js';
 
@@ -165,12 +166,21 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
      `atomic` (the public API): the first rejected op rolls the whole batch back, so a request never
      half-applies; its result is `failed`. */
   function apply(auth, ops, clientId, { via = null, atomic = false } = {}) {
-    const ctx = makeCtx(auth, via);
-    const favs = repo.favorites(ctx.uid);
+    let ctx = null;
+    let favs = null;
     const results = [];
     let failed = null;
     try {
       db.tx(() => {
+        // Who is writing, as they are now: the request may have been authenticated before its body
+        // arrived, and the person removed, demoted or signed out since.
+        const fresh = currentAuth(db, auth);
+        if (!fresh) {
+          failed = { ok: false, error: auth.key ? 'That API key is no longer valid.' : 'Sign in to continue.', status: 401, gone: true };
+          throw failed;
+        }
+        ctx = makeCtx(fresh, via);
+        favs = repo.favorites(ctx.uid);
         ops.forEach((op, i) => {
           const mark = ctx.changes.length;
           db.exec('SAVEPOINT op');
@@ -193,7 +203,7 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
       });
     } catch (e) {
       if (!failed || e !== failed) throw e;
-      return { results, links: [], failed };
+      return { results, links: [], failed, ...(failed.gone ? { gone: true } : {}) };
     }
     afterCommit(ctx, clientId);
     return { results, links: ctx.links, failed };
@@ -208,14 +218,21 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
   }
 
   /* Someone deleting their own account: the same cascade as an admin removing them. */
+  /* Returns false (and removes nothing) when the account is no longer the caller's to remove: their
+     session ended meanwhile, or they've since become an Owner. */
   function removeAccount(auth) {
-    const ctx = makeCtx(auth);
+    let ctx = null;
     db.tx(() => {
-      removeMemberCascade(ctx, auth.member);
-      repo.del('members', auth.member.id);
-      ctx.emitDel('members', auth.member.id, null);
+      const fresh = currentAuth(db, auth);
+      if (!fresh || (auth.session && fresh.member.role === 'Owner')) return;
+      ctx = makeCtx(fresh);
+      removeMemberCascade(ctx, fresh.member);
+      repo.del('members', fresh.member.id);
+      ctx.emitDel('members', fresh.member.id, null);
     });
+    if (!ctx) return false;
     afterCommit(ctx, null);
+    return true;
   }
 
   /* The batch is saved: a failure fanning it out (a broken stream, mail) mustn't report it unsaved,

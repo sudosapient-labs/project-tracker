@@ -5,7 +5,7 @@ import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { Hono } from 'hono';
-import { requireAuth } from '../auth.js';
+import { GONE, currentAuth, requireAuth } from '../auth.js';
 import { newId } from '../lib/crypto.js';
 import { fileType, fsize } from '../../src/core/file-types.js';
 import { EDIT } from '../../src/core/access.js';
@@ -21,7 +21,8 @@ export function fileRoutes() {
   const r = new Hono();
 
   /* POST /api/files?project=&task=&name=  with the raw file as the body (streamed to disk). */
-  r.post('/', requireAuth(), async c => {
+  // The body streams to disk, so it's checked again in the transaction that records the file.
+  r.post('/', requireAuth('member', { stream: true }), async c => {
     const { db, repo, config, engine } = c.var;
     const { member } = c.var.auth;
     const q = c.req.query();
@@ -60,13 +61,17 @@ export function fileRoutes() {
     const rec = { id, name, type: fileType(name), size: fsize(bytes), by: member.id, at: now, url: `/api/files/${id}/${encodeURIComponent(name)}` };
     const fileRow = { ...rec, project: p.id, task: q.task || null };
     const changes = [];
-    // Re-read the project and task inside the transaction: either may have been deleted while the
-    // bytes streamed in (then nothing is recorded and the bytes go), and attachments added
-    // concurrently mustn't be lost.
+    // Re-read the uploader, project and task inside the transaction: the session may have ended,
+    // the person lost edit access, or the project or task been deleted while the bytes streamed in
+    // (then nothing is recorded and the bytes go), and attachments added concurrently mustn't be lost.
     let t;
     try {
       t = db.tx(() => {
-        if (!repo.get('projects', p.id)) throw Object.assign(new Error('gone'), { gone: 'That project no longer exists.' });
+        const a = currentAuth(db, c.var.auth);
+        if (!a) throw Object.assign(new Error('gone'), { status: 401, body: GONE });
+        const fp = repo.get('projects', p.id);
+        if (!fp) throw Object.assign(new Error('gone'), { gone: 'That project no longer exists.' });
+        if (projectLevel(fp, a.member) < EDIT) throw Object.assign(new Error('gone'), { status: 403, body: { error: 'You can’t add files to this project.' } });
         if (q.task && repo.get('tasks', String(q.task))?.project !== p.id) throw Object.assign(new Error('gone'), { gone: 'That task no longer exists.' });
         repo.put('files', fileRow, p.id);
         db.run('UPDATE files SET storage_key = ?, mime = ?, bytes = ? WHERE id = ?', rel, mime, bytes, id);
@@ -85,6 +90,7 @@ export function fileRoutes() {
       });
     } catch (e) {
       await fs.promises.rm(full, { force: true });
+      if (e.body) return c.json(e.body, e.status);
       if (!e.gone) throw e;
       return c.json({ error: e.gone }, 404);
     }

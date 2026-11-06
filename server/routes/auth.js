@@ -4,7 +4,18 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import QRCode from 'qrcode';
 import { TEAMS_SEED } from '../../src/core/constants.js';
-import { clearSessionCookie, createSession, forgetDevices, listSessions, readDevice, readSession, rememberDevice, requireAuth } from '../auth.js';
+import {
+  GONE,
+  clearSessionCookie,
+  createSession,
+  currentAuthSamePassword,
+  forgetDevices,
+  listSessions,
+  readDevice,
+  readSession,
+  rememberDevice,
+  requireAuth,
+} from '../auth.js';
 import {
   burnPasswordCheck,
   hashPassword,
@@ -425,13 +436,18 @@ export function authRoutes({ limit }) {
     // and loses the device trust it earned; this browser just proved the password and keeps it.
     // Their API keys go too, and the bot keys they made: making a key needs the password, so anyone
     // who knew the old one could have made one that would otherwise outlive the change.
-    db.tx(() => {
+    // Checked again now the password checks are done: the session (or the password) may have
+    // changed meanwhile, e.g. the owner of a stolen session changed it first.
+    const changed = db.tx(() => {
+      if (!currentAuthSamePassword(db, c.var.auth)) return false;
       db.run('UPDATE users SET password_hash = ? WHERE id = ?', hash, user.id);
       endOtherSessions(db, engine, user.id, c.var.auth.session.id);
       retireEmailChanges(db, user.id);
       forgetDevices(db, user.id);
       db.run('DELETE FROM api_keys WHERE user_id = ? OR created_by = ?', user.id, user.id);
+      return true;
     });
+    if (!changed) return c.json(GONE, 401);
     rememberDevice(c, db, user.id);
     const { member } = c.var.auth;
     return c.json({
@@ -453,6 +469,7 @@ export function authRoutes({ limit }) {
     if (em === user.email.toLowerCase()) return c.json({ error: 'That’s already your email.', field: 'email' }, 400);
     if (emailTaken(c.var, em, user.id)) return c.json({ error: 'Someone in the workspace already uses this email.', field: 'email' }, 409);
     const link = db.tx(() => {
+      if (!currentAuthSamePassword(db, c.var.auth)) return null;
       const l = issueToken(db, config, 'email', em, user.id);
       mailer.queue({
         to: em,
@@ -473,6 +490,7 @@ export function authRoutes({ limit }) {
       });
       return l;
     });
+    if (!link) return c.json(GONE, 401);
     mailer.drain();
     return c.json({ ok: true, ...devLink(c, link) });
   });
@@ -518,7 +536,8 @@ export function authRoutes({ limit }) {
     if (!(await verifyPassword(b.data.password, user.password_hash))) return c.json({ error: 'Your password is incorrect.', field: 'password' }, 400);
     if (member.role === 'Owner')
       return c.json({ error: 'Owners can’t delete their account. Make someone else an Owner and ask them to change your role first.', code: 'owner' }, 400);
-    c.var.engine.removeAccount(c.var.auth);
+    // Re-checked as it's removed: the session may have ended, or this person become an Owner, meanwhile.
+    if (!currentAuthSamePassword(c.var.db, c.var.auth) || !c.var.engine.removeAccount(c.var.auth)) return c.json(GONE, 401);
     clearSessionCookie(c);
     return c.json({ ok: true });
   });
@@ -553,6 +572,7 @@ export function authRoutes({ limit }) {
     const { user } = c.var.auth;
     if (user.totp_enabled) return c.json({ error: 'Two-factor authentication is already on.' }, 400);
     if (!(await verifyPassword(b.data.password, user.password_hash))) return c.json({ error: 'Your password is incorrect.', field: 'password' }, 400);
+    if (!currentAuthSamePassword(db, c.var.auth)) return c.json(GONE, 401);
     const secret = newTotpSecret();
     db.run('UPDATE users SET totp_secret = ? WHERE id = ?', seal(secret, config.secretKey), user.id);
     const label = encodeURIComponent(`Sudo Sapient:${user.email}`);
@@ -591,6 +611,7 @@ export function authRoutes({ limit }) {
     const ok =
       (b.data.password && (await verifyPassword(b.data.password, user.password_hash))) || (b.data.code && useSecondFactor(db, config, user.id, b.data.code));
     if (!ok) return c.json({ error: 'Enter your current password or a code from your authenticator app.', field: 'confirm' }, 400);
+    if (!currentAuthSamePassword(db, c.var.auth)) return c.json(GONE, 401);
     db.tx(() => {
       disableTwoFactor(db, user.id);
       retireEmailChanges(db, user.id);

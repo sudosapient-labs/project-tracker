@@ -3,7 +3,7 @@
    current password. API keys can never manage bots, even alongside a session. */
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { requireAuth } from '../auth.js';
+import { GONE, currentAuthSamePassword, requireAuth } from '../auth.js';
 import { isAdminRole } from '../../src/core/access.js';
 import { parseBody } from '../lib/http.js';
 import { verifyPassword } from '../lib/crypto.js';
@@ -90,10 +90,21 @@ export function botRoutes({ limit }) {
       if (!m) return gone(c);
       if (!(await verifyPassword(b.data.password, c.var.auth.user.password_hash)))
         return c.json({ error: 'Your password is incorrect.', field: 'password' }, 400);
-      if (db.get('SELECT COUNT(*) n FROM api_keys WHERE user_id = ?', m.id).n >= MAX_KEYS)
-        return c.json({ error: `A bot can have up to ${MAX_KEYS} keys. Revoke one it no longer uses first.` }, 400);
       const { password, ...opts } = b.data;
-      const out = createKey(db, m.id, { ...opts, createdBy: c.var.auth.member.id });
+      // Re-checked in the transaction that makes the key: the admin's session, password and role,
+      // and the bot, as they are now (see routes/keys.js).
+      const out = db.tx(() => {
+        const a = currentAuthSamePassword(db, c.var.auth);
+        if (!a) return GONE;
+        if (!isAdminRole(a.member)) return 'forbidden';
+        if (!bot(c)) return 'gone';
+        if (db.get('SELECT COUNT(*) n FROM api_keys WHERE user_id = ?', m.id).n >= MAX_KEYS) return 'full';
+        return createKey(db, m.id, { ...opts, createdBy: a.member.id });
+      });
+      if (out === GONE) return c.json(GONE, 401);
+      if (out === 'forbidden') return c.json({ error: 'Only owners and admins can manage bots.', code: 'forbidden' }, 403);
+      if (out === 'gone') return gone(c);
+      if (out === 'full') return c.json({ error: `A bot can have up to ${MAX_KEYS} keys. Revoke one it no longer uses first.` }, 400);
       return c.json({ ...out, bot: getBot(db, repo, m.id) }, 201);
     },
   );

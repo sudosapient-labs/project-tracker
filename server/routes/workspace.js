@@ -2,7 +2,7 @@
    person's two-factor. */
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { requireAuth } from '../auth.js';
+import { GONE, currentAuthSamePassword, requireAuth } from '../auth.js';
 import { parseBody } from '../lib/http.js';
 import { verifyPassword } from '../lib/crypto.js';
 import { disableTwoFactor, endOtherSessions, issueToken, retireEmailChanges } from './auth.js';
@@ -111,6 +111,10 @@ export function workspaceRoutes({ limit }) {
     if (!target) return c.json({ error: 'That person is no longer in the workspace.' }, 404);
     if (target.id === me.id) return c.json({ error: 'Turn off your own two-factor authentication in Settings → Two-factor.' }, 400);
     if (!target.totp_enabled) return c.json({ error: `${m.name} doesn’t use two-factor authentication.` }, 400);
+    // The Owner's session, password and role as they are now, after the password check.
+    const a = currentAuthSamePassword(db, c.var.auth);
+    if (!a) return c.json(GONE, 401);
+    if (a.member.role !== 'Owner') return c.json({ error: 'Only the workspace owner can reset someone’s two-factor authentication.' }, 403);
     db.tx(() => {
       disableTwoFactor(db, target.id);
       retireEmailChanges(db, target.id);
