@@ -37,7 +37,9 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 export function createClient({ url, key, client = 'API', fetch: doFetch = globalThis.fetch, retry = {}, onRetry, sleep = wait }) {
   const base = String(url || '').replace(/\/+$/, '') + '/api/v1';
   const { retries, maxDelay, maxTotal } = { ...RETRY, ...retry };
-  async function request(method, path, { query, body, idempotencyKey } = {}) {
+  /* `raw`: { body, type } sent as is instead of JSON (a file upload). `binary`: answer with the bytes
+     ({ bytes, type, name }) instead of parsed JSON (a file download). */
+  async function request(method, path, { query, body, idempotencyKey, raw, binary = false } = {}) {
     const qs = query ? new URLSearchParams(Object.entries(query).filter(([, v]) => v != null && v !== '')).toString() : '';
     const init = {
       method,
@@ -46,10 +48,10 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
         // URI-encoded: header values must be Latin-1, and client names needn't be.
         'x-sudo-client': encodeURIComponent(client),
         accept: 'application/json',
-        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...(raw ? { 'content-type': raw.type || 'application/octet-stream' } : body !== undefined ? { 'content-type': 'application/json' } : {}),
         ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}),
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: raw ? raw.body : body !== undefined ? JSON.stringify(body) : undefined,
     };
     let waited = 0;
     for (let attempt = 1; ; attempt++) {
@@ -59,6 +61,7 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
       } catch {
         throw new ApiError(0, null);
       }
+      if (res.ok && binary) return { bytes: new Uint8Array(await res.arrayBuffer()), type: res.headers.get('content-type') || '', name: fileName(res) };
       const data = (res.headers.get('content-type') || '').includes('json') ? await res.json().catch(() => null) : null;
       if (res.ok) return data;
       const header = res.status === 429 ? retryAfterMs(res.headers.get('retry-after')) : null;
@@ -78,6 +81,12 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
     get: (path, query) => request('GET', path, { query }),
     post: (path, body = {}, opts) => request('POST', path, { body, ...opts }),
     patch: (path, body, opts) => request('PATCH', path, { body, ...opts }),
+    put: (path, body = {}, opts) => request('PUT', path, { body, ...opts }),
+    del: (path, opts) => request('DELETE', path, opts),
+    /* POST raw bytes, e.g. upload('/files', { project: 'WEB', name: 'spec.pdf' }, bytes, 'application/pdf'). */
+    upload: (path, query, bytes, type, opts) => request('POST', path, { query, raw: { body: bytes, type }, ...opts }),
+    /* GET bytes: { bytes, type, name }. */
+    download: (path, query) => request('GET', path, { query, binary: true }),
     /* Every page of a list endpoint, up to `max` items. */
     async all(path, query = {}, max = 500) {
       const out = [];
@@ -90,6 +99,16 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
       return out.slice(0, max);
     },
   };
+}
+
+/* The file name a download was sent with (Content-Disposition: filename*=UTF-8''…). */
+function fileName(res) {
+  const m = /filename\*=UTF-8''([^;]+)/i.exec(res.headers.get('content-disposition') || '');
+  try {
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch {
+    return null;
+  }
 }
 
 /* Path segment for a task or project reference (an id or key). */

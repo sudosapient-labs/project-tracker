@@ -63,7 +63,7 @@ async function connectWith(key, label) {
   const onRetry = ({ delay, method, path }) => console.error(`sudo-mcp: rate limited on ${method} ${path}; retrying in ${Math.ceil(delay / 1000)} s`);
   const api = createClient({ url, key, client: label, onRetry });
   const me = await api.get('/me');
-  return { api, scope: me.key.scope };
+  return { api, scope: me.key.scope, admin: me.role === 'Owner' || me.role === 'Admin' };
 }
 
 if (o.http) {

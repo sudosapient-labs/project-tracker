@@ -119,15 +119,19 @@ export function keyClient(app, token, { client } = {}) {
         ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
         ...headers,
       },
-      body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
+      body: body === undefined ? undefined : typeof body === 'string' || body instanceof Uint8Array ? body : JSON.stringify(body),
     });
     const type = res.headers.get('content-type') || '';
-    return { status: res.status, body: type.includes('json') ? await res.json() : await res.text(), headers: res.headers };
+    const data = type.includes('json') ? await res.json() : type.startsWith('text/') ? await res.text() : Buffer.from(await res.arrayBuffer());
+    return { status: res.status, body: data, headers: res.headers };
   }
   return {
     get: (u, h) => req('GET', u, undefined, h),
     post: (u, b = {}, h) => req('POST', u, b, h),
     patch: (u, b, h) => req('PATCH', u, b, h),
+    put: (u, b = {}, h) => req('PUT', u, b, h),
     del: (u, h) => req('DELETE', u, undefined, h),
+    /* Raw bytes as the body (an upload). */
+    upload: (u, bytes, type = 'application/octet-stream') => req('POST', u, bytes, { 'content-type': type }),
   };
 }

@@ -98,5 +98,22 @@ test('a bot made in Settings → API → Bots works through its own key and show
   await page.locator('[data-a="confirmOk"]').click();
   await expect(bots).toContainText('No bots yet.');
   expect((await api('GET', '/me')).status()).toBe(401);
+
+  // The Owner's key manages bots too (but never makes their keys), and Settings shows the result.
+  const made2 = await page.request.post('/api/keys', {
+    headers: { 'x-requested-with': 'sudo-sapient' },
+    data: { name: 'Bot admin', scope: 'write', expiresInDays: 30, password: OWNER.password },
+  });
+  const admin = { authorization: `Bearer ${(await made2.json()).token}` };
+  const nb = await (
+    await request.fetch('/api/v1/bots', { method: 'POST', headers: admin, data: { name: 'Docs Bot', role: 'Guest', projects: ['REL'] } })
+  ).json();
+  expect(nb).toMatchObject({ name: 'Docs Bot', role: 'Guest', projects: ['prel'] });
+  // Settings loads bots when it opens, so reload it.
+  await page.reload();
+  await expect(bots.locator('.srow', { hasText: 'Docs Bot' })).toContainText('1 project · 0 keys');
+  expect((await request.fetch(`/api/v1/bots/${nb.id}`, { method: 'DELETE', headers: admin })).status()).toBe(200);
+  await page.reload();
+  await expect(bots).toContainText('No bots yet.');
   expect(await errors()).toEqual([]);
 });

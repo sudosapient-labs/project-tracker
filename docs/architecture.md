@@ -61,8 +61,11 @@ proxies `/api` to the API on :8787.
 ## Public API, MCP and CLI
 
 - **`/api/v1`** (`server/api/`) is the public REST API for personal API keys (Settings → API).
-  Routes are declared once in `v1.js`; the same table registers them and generates the OpenAPI 3.1
-  document (`/api/v1/openapi.json`, rendered at `/api/docs`) from the zod schemas in `schemas.js`.
+  Routes are declared once in `v1.js` (tasks, comments, search) and `v1-more.js` (everything else),
+  on one table that registers them and generates the OpenAPI 3.1 document
+  (`/api/v1/openapi.json`, rendered at `/api/docs`) from the zod schemas in `schemas.js`. What the
+  app does outside sync (uploads, invite links, resent invites, access requests, bots, display
+  preferences) the API does by calling the same server functions as the app's own routes.
 - **Writes are sync operations.** Each write builds the records and activity lines the app itself
   would send (e.g. a task `put` plus a "created" activity entry) and runs them through
   `engine.apply` in atomic mode: one transaction, all or nothing. So validation, permissions,

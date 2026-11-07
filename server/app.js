@@ -15,7 +15,7 @@ import { csrfGuard } from './auth.js';
 import { createEngine } from './sync/engine.js';
 import { authRoutes } from './routes/auth.js';
 import { dataRoutes } from './routes/data.js';
-import { fileRoutes } from './routes/files.js';
+import { createUploads, fileRoutes } from './routes/files.js';
 import { workspaceRoutes } from './routes/workspace.js';
 import { keyRoutes } from './routes/keys.js';
 import { botRoutes } from './routes/bots.js';
@@ -124,13 +124,14 @@ export function createApp({ db, config, log = console, pushSend }) {
   });
   api.use('*', (c, next) => {
     const p = c.req.path;
-    if (c.req.method === 'POST' && /^\/api\/files\/?$/.test(p)) return next();
+    if (c.req.method === 'POST' && /^\/api\/(v1\/)?files\/?$/.test(p)) return next();
     return (p.startsWith('/api/auth/') ? caps.auth : p === '/api/sync' ? caps.sync : caps.other)(c, next);
   });
   // The token API only takes bearer keys, never the session cookie, so it needs no CSRF header.
   const tokenApi = p => p.startsWith('/api/v1/') || p === '/api/mcp';
   api.use('*', (c, next) => (tokenApi(c.req.path) ? next() : csrfGuard(c, next)));
-  const v1 = v1Routes({ limit });
+  const uploads = createUploads({ limit });
+  const v1 = v1Routes({ limit, uploads });
   api.route('/v1', v1.routes);
   api.route('/docs', docsRoutes({ spec: c => openapi(v1.R, { appUrl: c.var.config.appUrl }) }));
   // MCP tools call /api/v1 in-process, through the same middleware as any other API request.
@@ -138,7 +139,7 @@ export function createApp({ db, config, log = console, pushSend }) {
   api.route('/keys', keyRoutes({ limit }));
   api.route('/bots', botRoutes({ limit }));
   api.route('/auth', authRoutes({ limit }));
-  api.route('/files', fileRoutes({ limit }));
+  api.route('/files', fileRoutes({ uploads }));
   api.route('/', dataRoutes({ limit }));
   api.route('/', workspaceRoutes({ limit }));
   api.get('/health', c => {
