@@ -200,3 +200,21 @@ test('quick edit keeps descriptions intact: plain text decoded, formatting left 
   await expect(drawer(page).locator('#d-desc li', { hasText: 'Gears' })).toBeVisible();
   expect(await errors()).toEqual([]);
 });
+
+test('a field picked as a dialog opens keeps the focus, so typing goes where it was aimed', async ({ page }) => {
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  // Pick the description in the same moment the dialog opens, before its first field takes focus.
+  await page.evaluate(() => {
+    document.querySelector('.side [data-a="newProject"]').click();
+    document.getElementById('p-desc').focus();
+  });
+  await page.keyboard.type('Typed straight away', { delay: 15 });
+  await page.waitForTimeout(100);
+  // Past the dialog's own focus step, whenever it ran: the description still has the focus.
+  await expect(page.locator('#p-desc')).toBeFocused();
+  await expect(page.locator('#p-desc')).toHaveValue('Typed straight away');
+  await expect(page.locator('#p-name')).toHaveValue('');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.modal')).toHaveCount(0);
+});
