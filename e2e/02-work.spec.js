@@ -211,6 +211,8 @@ test('a field picked as a dialog opens keeps the focus, so typing goes where it 
   });
   await page.keyboard.type('Typed straight away', { delay: 15 });
   await page.waitForTimeout(100);
+  // Past the dialog's own focus step, whenever it ran: the description still has the focus.
+  await expect(page.locator('#p-desc')).toBeFocused();
   await expect(page.locator('#p-desc')).toHaveValue('Typed straight away');
   await expect(page.locator('#p-name')).toHaveValue('');
   await page.keyboard.press('Escape');
