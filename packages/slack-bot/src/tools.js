@@ -11,12 +11,13 @@
      dir        directory(api) from people.js
      store      the bot's store (thread links)
      requester  the requester's tracker member
-     slack      { channel, channelName, threadTs, permalink }
+     slack      { channel, channelName, threadTs, permalink, dm, private, project }: where the
+                conversation is; private projects are shown only where shownHere() allows
      touched    task keys created or changed in this run, for the task cards under the reply */
 import { tool } from 'langchain';
 import * as z from 'zod';
 import { TOOLS as MCP, fence } from '@sudosapient/mcp/tools';
-import { COMMENT, EDIT, VIEW, level } from './people.js';
+import { COMMENT, EDIT, VIEW, level, shownHere } from './people.js';
 
 const STATUS = ['backlog', 'todo', 'progress', 'review', 'done'];
 const PRIORITY = ['urgent', 'high', 'medium', 'low', 'none'];
@@ -31,10 +32,17 @@ const ctxOf = runtime => runtime.context;
 /* "me" → the requester; anything else goes to the API as given (id, email, name). */
 const person = (ctx, who) => (who == null ? who : /^(me|myself|i)$/i.test(String(who).trim()) ? ctx.requester.id : who);
 
+const PRIVATE_HERE =
+  "That's in a private project, so it can only be discussed in a DM with the person asking, or in a private channel linked to that project. Tell them that, without naming the project or repeating anything about it.";
+
+/* Projects the requester can open and that may be shown here. */
+const openHere = async ctx => (await ctx.dir.visible(ctx.requester)).filter(p => shownHere(p, ctx.slack));
+
 async function projectFor(ctx, ref, need = VIEW) {
   const p = await ctx.dir.project(ref);
   // Not found and not allowed read the same, so nothing reveals what exists.
   if (!p || level(p, ctx.requester) < VIEW) throw new Refused(`There's no project "${ref}" that ${ctx.requester.name} can open.`);
+  if (!shownHere(p, ctx.slack)) throw new Refused(PRIVATE_HERE);
   if (level(p, ctx.requester) < need) throw new Refused(`${ctx.requester.name} can't ${need >= EDIT ? 'edit tasks' : 'comment'} in ${p.key}.`);
   return p;
 }
@@ -49,6 +57,7 @@ async function taskFor(ctx, ref, need = VIEW) {
   }
   const p = await ctx.dir.projectById(t.project);
   if (!p || level(p, ctx.requester) < VIEW) throw new Refused(`There's no task "${ref}" that ${ctx.requester.name} can open.`);
+  if (!shownHere(p, ctx.slack)) throw new Refused(PRIVATE_HERE);
   if (level(p, ctx.requester) < need) throw new Refused(`${ctx.requester.name} can't ${need >= EDIT ? 'change' : 'comment on'} ${t.key}.`);
   return { task: t, project: p };
 }
@@ -91,7 +100,7 @@ const footer = ctx => `\n\n—\nRequested by ${ctx.requester.name} in Slack${ctx
 
 export const TRACKER_TOOLS = [
   make('search', 'Search tasks, projects and people by words or a task key.' + UNTRUSTED, z.object({ q: z.string().min(1) }), async (ctx, { q }) => {
-    const [r, who, visible] = await Promise.all([ctx.api.get('/search', { q, limit: 20 }), names(ctx), ctx.dir.visible(ctx.requester)]);
+    const [r, who, visible] = await Promise.all([ctx.api.get('/search', { q, limit: 20 }), names(ctx), openHere(ctx)]);
     const keyOf = new Map(visible.map(p => [p.id, p.key]));
     return compact({
       tasks: r.tasks.filter(t => keyOf.has(t.project)).map(t => brief(t, who, keyOf)),
@@ -128,7 +137,7 @@ export const TRACKER_TOOLS = [
       const [tasks, who, visible] = await Promise.all([
         ctx.api.all('/tasks', { project, assignee: person(ctx, assignee), status: status === 'all' ? undefined : status, q }, 500),
         names(ctx),
-        ctx.dir.visible(ctx.requester),
+        openHere(ctx),
       ]);
       const keyOf = new Map(visible.map(p => [p.id, p.key]));
       return tasks
@@ -140,7 +149,7 @@ export const TRACKER_TOOLS = [
   ),
 
   make('list_projects', 'Projects the person asking can open, with open/done counts.' + UNTRUSTED, z.object({}), async ctx => {
-    const [visible, who] = await Promise.all([ctx.dir.visible(ctx.requester), names(ctx)]);
+    const [visible, who] = await Promise.all([openHere(ctx), names(ctx)]);
     return visible
       .filter(p => !p.archived)
       .map(p =>

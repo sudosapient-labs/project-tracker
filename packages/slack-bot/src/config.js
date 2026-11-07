@@ -10,11 +10,12 @@ const list = v =>
     .filter(Boolean);
 
 /* Which tracker writes wait for a Confirm button. `edits` (default): changes to tasks that already
-   exist (status, fields, assignee, completion); creating tasks, commenting and linking a thread run
-   straight away. `all`: every write. `none`: nothing waits. */
+   exist (status, fields, assignee, completion) and comments (signed with the person's name, and
+   they notify people); creating tasks and linking a thread run straight away. `all`: every write.
+   `none`: nothing waits. */
 export const CONFIRM_POLICIES = {
   none: [],
-  edits: ['update_task', 'complete_task', 'assign'],
+  edits: ['update_task', 'complete_task', 'assign', 'comment'],
   all: ['create_task', 'update_task', 'complete_task', 'assign', 'comment', 'link_thread'],
 };
 

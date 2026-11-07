@@ -33,13 +33,24 @@ describe('MCP knowledge sources', () => {
     const { tools, close } = await mcpTools({ wiki: { url, headers: { authorization: `Bearer ${w.token}` }, tools: ['search', 'get_task'] } }, { log: quiet });
     open.push(close);
     expect(tools.map(t => t.name).sort()).toEqual(['wiki_get_task', 'wiki_search']);
-    const out = await tools.find(t => t.name === 'wiki_search').invoke({ q: 'Findable' });
+    const search = tools.find(t => t.name === 'wiki_search');
+    const out = await search.invoke({ q: 'Findable' }, { context: { requester: { role: 'Member' } } });
     expect(out).toContain('<untrusted-user-content>');
     expect(out).toContain('Findable over MCP');
+    // The server answers with its own access, so Guests don't get it.
+    expect(await search.invoke({ q: 'Findable' }, { context: { requester: { role: 'Guest' } } })).toContain('Not allowed');
+  });
+
+  it('loads nothing from a server without a list of allowed tools', async () => {
+    const warned = [];
+    const { tools, close } = await mcpTools({ open: { url: 'http://127.0.0.1:9/mcp' } }, { log: { info() {}, warn: m => warned.push(m) } });
+    open.push(close);
+    expect(tools).toEqual([]);
+    expect(warned[0]).toContain('has no "tools" list');
   });
 
   it('runs without a server that is down', async () => {
-    const { tools, close } = await mcpTools({ down: { url: 'http://127.0.0.1:9/mcp' } }, { log: quiet });
+    const { tools, close } = await mcpTools({ down: { url: 'http://127.0.0.1:9/mcp', tools: ['search'] } }, { log: quiet });
     open.push(close);
     expect(tools).toEqual([]);
   });
@@ -80,7 +91,7 @@ describe('restarts', () => {
       checkpointer: SqliteSaver.fromConnString(config.checkpoints),
     });
     expect(await second.waiting('C1:1.1')).toHaveLength(1);
-    const done = await second.resume({ threadId: 'C1:1.1', approve: true, ctx: ctx() });
+    const done = await second.resume({ threadId: 'C1:1.1', ids: out.pending.map(p => p.id), approve: true, ctx: ctx() });
     expect(done.touched).toEqual([t.key]);
     expect((await w.api.get(`/tasks/${t.key}`)).status).toBe('done');
   });
