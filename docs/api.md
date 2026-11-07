@@ -17,6 +17,30 @@ days or never) and your current password. The key (`ssk_…`) is shown once; onl
 Revoking it stops it straight away, and changing or resetting your password revokes all of yours. Send it as `Authorization: Bearer ssk_…`. Session cookies are not accepted on
 `/api/v1`, and no CSRF header is needed.
 
+Settings → API makes the key with `POST /api/keys` (signed-in session only). Its `201` response has
+two fields, and the names are easy to misread:
+
+```json
+{
+  "key": {
+    "id": "k…",
+    "name": "Laptop CLI",
+    "prefix": "ssk_AbCdEfGh",
+    "scope": "write",
+    "createdAt": 1762500000000,
+    "lastUsedAt": null,
+    "expiresAt": null,
+    "createdBy": "m…"
+  },
+  "token": "ssk_…"
+}
+```
+
+- `key` is the key's **metadata** (what Settings → API lists), not the secret.
+- `token` is the **secret** to send as `Authorization: Bearer …`. It's returned only here, once.
+
+`POST /api/bots/{id}/keys` answers in the same shape, plus `bot` (the bot with its keys).
+
 Optionally send `X-Sudo-Client: <name>` to label your changes in Activity ("via <name>"); otherwise
 they're labelled with the key's name.
 
