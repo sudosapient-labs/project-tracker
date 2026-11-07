@@ -2,11 +2,31 @@
 
 ## Branches
 
-`prod` is the default branch and the only long-lived one. Work happens on short-lived branches and
-lands through a pull request, squash-merged so the PR title becomes the commit on `prod`.
+Two long-lived branches, each deployed to its own Railway environment:
 
-Branch protection is by convention for now (it needs a paid plan to enforce): don't push to `prod`
-directly, and wait for the `ci-ok` check before merging.
+| Branch | Railway environment | URL                                            | What it's for                                  |
+| ------ | ------------------- | ---------------------------------------------- | ---------------------------------------------- |
+| `dev`  | `staging`           | https://sudo-tracker-staging.up.railway.app    | trying changes on a real deployment, test data |
+| `prod` | `production`        | https://sudo-tracker-production.up.railway.app | the live workspace                             |
+
+1. Work happens on short-lived branches cut from `dev`, and lands on `dev` through a pull request,
+   **squash-merged** so the PR title (a Conventional Commit) becomes the commit on `dev`.
+2. Every push to `dev` deploys to staging. Test there; if something's wrong, fix it on a new branch
+   into `dev` (or revert the commit on `dev`) and test again.
+3. When staging is good, open a pull request from `dev` to `prod` and **merge it with a merge
+   commit** (not squash): `prod` then gets each change's own Conventional Commit, which is what
+   release-please reads, and `dev` and `prod` stay in step with nothing to reconcile. Urgent fixes
+   can go straight to `prod`; merge `prod` back into `dev` afterwards.
+
+Staging is its own deployment with its own volume, database and secrets. It sends no email (no
+`RESEND_API_KEY`; links are logged instead, `LOG_EMAIL_LINKS=true`) and doesn't verify email
+addresses (`REQUIRE_EMAIL_VERIFICATION=false`), so test accounts need no mailbox.
+`packages/slack-bot/scripts/seed-staging.js` sets up test people, projects and the Slack bot's
+member. Its services can be stopped between test sessions (Railway → staging → service → Remove
+deployment) and redeployed when needed.
+
+Branch protection is by convention for now (it needs a paid plan to enforce): don't push to `dev`
+or `prod` directly, and wait for the `ci-ok` check before merging.
 
 ### The `main` → `prod` rename
 
@@ -19,7 +39,7 @@ git branch -m main prod && git fetch origin && git branch -u origin/prod prod
 
 ## Pull request checks
 
-Every pull request, and every push to `prod`, runs `.github/workflows/ci.yml`:
+Every pull request, and every push to `dev` or `prod`, runs `.github/workflows/ci.yml`:
 
 ```
 lint ─────────┐
