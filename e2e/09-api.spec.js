@@ -77,3 +77,74 @@ test('a key from Settings → API drives the workspace, and the open app shows e
   expect((await api('GET', '/me')).status()).toBe(401);
   expect(await errors()).toEqual([]);
 });
+
+test('the Owner’s key from Settings → API runs projects, subtasks, files, reactions and the workspace, live in the open app', async ({ page, request }) => {
+  const errors = watchErrors(page);
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+
+  // An ordinary Read and write key: it acts as the Owner, workspace settings included.
+  await page.goto('/#settings/api');
+  await page.fill('#api-name', 'Ops script');
+  await page.fill('#api-pw', OWNER.password);
+  await page.click('#api-create');
+  const token = await page.inputValue('#api-token');
+  await expect(page.locator('.srow', { hasText: 'Ops script' }).locator('.badge')).toHaveText('Read and write');
+  const headers = { authorization: `Bearer ${token}`, 'x-sudo-client': 'Ops script' };
+  const api = async (method, url, data, extra = {}) => {
+    const r = await request.fetch(`/api/v1${url}`, { method, headers: { ...headers, ...extra }, data });
+    expect(r.ok(), `${method} ${url}: ${await r.text()}`).toBe(true);
+    return r.json();
+  };
+
+  // A project made through the API shows in the sidebar straight away. (Leave Settings first: the
+  // app doesn't re-render under someone typing, and the new key's box has the focus.)
+  await page.goto('/#home');
+  const p = await api('POST', '/projects', { name: 'Parity journey', key: 'PAR', status: 'active' });
+  await expect(page.locator('.side [data-drag-proj]', { hasText: 'Parity journey' })).toBeVisible();
+
+  const t = await api('POST', '/tasks', { project: 'PAR', title: 'Check every endpoint', assignee: 'me' });
+  // Opened from the list once it has arrived live (a link to it before then finds nothing yet).
+  await page.goto(`/#project/${p.key.toLowerCase()}/list`);
+  await page.locator('[data-a="openTask"]', { hasText: 'Check every endpoint' }).click();
+  const drawer = page.locator('.drawer');
+  await expect(drawer).toContainText('Check every endpoint');
+
+  // Subtasks, an attachment and a reaction appear in the open drawer.
+  await api('POST', `/tasks/${t.key}/subtasks`, { title: 'Write the matrix' });
+  await expect(drawer.locator('.subt', { hasText: 'Write the matrix' })).toBeVisible();
+  const up = await request.fetch(`/api/v1/files?task=${t.key}&name=matrix.txt`, {
+    method: 'POST',
+    headers: { ...headers, 'content-type': 'text/plain' },
+    data: Buffer.from('REST CLI MCP'),
+  });
+  expect(up.status()).toBe(201);
+  await expect(drawer.locator('.attc', { hasText: 'matrix.txt' })).toBeVisible();
+  const file = await up.json();
+  const got = await request.fetch(`/api/v1/files/${file.id}/content`, { headers });
+  expect(await got.text()).toBe('REST CLI MCP');
+
+  const c = await api('POST', `/tasks/${t.key}/comments`, { text: 'Looks complete' });
+  await api('PUT', `/comments/${c.id}/reactions/${encodeURIComponent('🚀')}`);
+  await drawer.locator('[data-k="drawerTab"][data-v="comments"]').click();
+  await expect(drawer.locator('.cmt', { hasText: 'Looks complete' })).toContainText('🚀');
+
+  // Workspace settings are the Owner's to change; the sidebar shows the new name live.
+  const ws = await api('GET', '/workspace');
+  await api('PATCH', '/workspace', { name: 'Engines via API' });
+  await expect(page.locator('.ws-name')).toHaveText('Engines via API');
+  await api('PATCH', '/workspace', { name: ws.name });
+  await expect(page.locator('.ws-name')).toHaveText(ws.name);
+
+  // Archiving takes it out of the sidebar; deleting removes it for good.
+  await page.keyboard.press('Escape');
+  await api('POST', `/projects/${p.key}/archive`);
+  await expect(page.locator('.side [data-drag-proj]', { hasText: 'Parity journey' })).toHaveCount(0);
+  expect((await api('DELETE', `/projects/${p.key}`)).deleted).toBe(true);
+
+  await page.goto('/#settings/api');
+  await page.locator('.srow', { hasText: 'Ops script' }).locator('[data-a="revokeApiKey"]').click();
+  await page.locator('[data-a="confirmOk"]').click();
+  expect((await request.fetch('/api/v1/me', { headers })).status()).toBe(401);
+  expect(await errors()).toEqual([]);
+});

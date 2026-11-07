@@ -123,9 +123,19 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   changing or resetting their password: making a key needs the password, so anyone who knew the old
   one could have made one. "Sign out of all other sessions" and an email change keep them; revoke
   keys in Settings → API. Keys skip two-factor, as every bearer token does.
-- Scopes: `read` (GET only) or `write`. Writes go through the same sync rules as the app (see
+- Scopes: `read` (GET only) or `write`. A write key can do what its person's role allows, workspace
+  administration included for an Owner or Admin (roles, removing people, workspace settings, bots,
+  the invite link, other people's comments, workspace-wide events, admin recovery of projects). The
+  role is read on every request and the sync rules check it again, so demoting someone takes those
+  powers off all their keys at once. A leaked Owner's or Admin's key is therefore as strong as their
+  session, minus the account actions below; revoke it in Settings → API. Writes go through the same sync rules as the app (see
   [architecture](architecture.md#public-api-mcp-and-cli)); work in projects a key can't open answers
   404, never 403, so it doesn't reveal what exists.
+- Some things are never reachable with a key, whatever its scope, because a stolen key mustn't be
+  able to take over the account or mint more access: changing the password, two-factor, sessions,
+  the sign-in email, deleting the account, making API keys (personal or a bot's), resetting
+  someone's two-factor, Web Push subscriptions, and the Owner's full workspace export. They need a
+  signed-in session (and most also the current password). See [the API reference](api.md#not-reachable-with-an-api-key).
 - `/api/v1` and `/api/mcp` accept only `Authorization: Bearer`, never the session cookie, so they
   need no CSRF header: a cross-site page can't make a browser attach a bearer key, and no CORS is
   offered. `/api/mcp` also refuses browser `Origin`s other than the app's.
