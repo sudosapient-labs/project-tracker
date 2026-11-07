@@ -84,6 +84,11 @@ list it fetched long ago; the app sends what it edited from, and the server merg
 - **Rate limits:** `API_RATE_LIMIT` requests a minute per person, shared by all their keys (default
   120), with `RateLimit-Limit`,
   `RateLimit-Remaining` and `RateLimit-Reset` headers, and `429` with `Retry-After` when spent.
+  A request refused this way was not handled at all, so it's always safe to send again after
+  `Retry-After` seconds, writes included. `@sudosapient/client` (and so the CLI and the MCP server)
+  does that by itself: up to 3 retries, each waiting what `Retry-After` says (at least 1 s) if that's
+  at most 60 s, and at most 120 s in all for one request (for tools on the hosted `/api/mcp`, 20 s in
+  all, so an assistant's tool call doesn't time out first).
   Counted in memory: they reset on restart and assume one instance (see
   [operations](operations.md#known-limits)).
 - **Versioning:** `v1` changes only by adding endpoints and fields. Removing or changing one needs

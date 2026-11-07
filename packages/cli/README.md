@@ -64,6 +64,10 @@ Due dates: `today`, `tomorrow`, a weekday (`friday`, `fri`; today counts), `next
 `2026-11-20`. Set `SUDO_PROJECT=WEB` to skip `-p`. Exit codes: `0` ok, `1` the API refused (the
 message says why; with `--json` it's `{ error, code }` on stderr), `2` a usage error.
 
+Your keys share one rate limit (120 requests a minute by default). When a bulk run reaches it,
+`sudo-cli` waits until the server says it may go on (`rate limited; retrying in 53 s…` on stderr) and
+then carries on, up to 3 times per request.
+
 ## License
 
 UNLICENSED, all rights reserved. The package is public on npm so anyone can install and run it, but

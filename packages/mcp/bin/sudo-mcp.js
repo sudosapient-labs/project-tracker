@@ -59,7 +59,9 @@ if (plainHttpRemote(url) && !o.insecure && !(!o.url && cfg.insecure)) {
 const readOnly = o['read-only'];
 
 async function connectWith(key, label) {
-  const api = createClient({ url, key, client: label });
+  // Rate limits are waited out (Retry-After) by the client; stderr is the log, stdout the protocol.
+  const onRetry = ({ delay, method, path }) => console.error(`sudo-mcp: rate limited on ${method} ${path}; retrying in ${Math.ceil(delay / 1000)} s`);
+  const api = createClient({ url, key, client: label, onRetry });
   const me = await api.get('/me');
   return { api, scope: me.key.scope };
 }
