@@ -10,7 +10,7 @@ import { clearConfig, configPath, loadConfig, saveConfig } from '@sudosapient/cl
 import { ALIASES, NOUNS, PRIORITIES, STATUSES, nounHelp, rawApi, reaction } from './commands.js';
 
 // Kept equal to package.json by release-please (extra-files in release-please-config.json).
-export const VERSION = '0.1.0'; // x-release-please-version
+export const VERSION = '0.2.0'; // x-release-please-version
 
 export const HELP = `sudo-cli: Sudo Sapient from the terminal
 

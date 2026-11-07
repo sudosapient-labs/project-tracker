@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.0](https://github.com/sudosapient-labs/project-tracker/compare/mcp-v0.1.0...mcp-v0.2.0) (2026-11-07)
+
+
+### Features
+
+* **mcp:** tools for everything the API covers, grouped, with admin tools for Owners and Admins ([f208703](https://github.com/sudosapient-labs/project-tracker/commit/f2087033987c3e4332aefb78eb772fcd110e0525))
+
+
+### Bug Fixes
+
+* **client:** wait out rate limits using Retry-After ([5d9a675](https://github.com/sudosapient-labs/project-tracker/commit/5d9a67507e71be49308e317ed4b721fb26d6bfff))
+* **mcp:** check tool arguments against each tool's inputSchema ([97b58f6](https://github.com/sudosapient-labs/project-tracker/commit/97b58f66c0712a350e9cdb632566138200e787c8))
+
 ## 0.1.0 (2026-11-07)
 
 
