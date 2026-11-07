@@ -529,8 +529,10 @@ test('signing out with unsaved changes asks first, and needs the server to end t
   await expect(dlg).toContainText("You're offline, and some of your changes haven't reached the server yet.");
   await dlg.locator('[data-a="closeModal"]').first().click();
   await expect(page.locator('.side')).toBeVisible();
+  // Back online, the backoff retry saves it (clicking "Try again" would race that retry, which
+  // removes the button).
   await page.unroute('**/api/sync');
-  await page.locator('[data-a="retryOnline"]').click();
+  await expect(page.locator('html')).toHaveAttribute('data-sync', 'saved', { timeout: 20_000 });
   await expect.poll(async () => (await serverTask(page, 'tout1'))?.title, { timeout: 20_000 }).toBe('Saved after all');
 
   // The server can't end the session: the tab stays signed in and says so.
