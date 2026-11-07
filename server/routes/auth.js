@@ -4,7 +4,18 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import QRCode from 'qrcode';
 import { TEAMS_SEED } from '../../src/core/constants.js';
-import { clearSessionCookie, createSession, forgetDevices, listSessions, readDevice, readSession, rememberDevice, requireAuth } from '../auth.js';
+import {
+  GONE,
+  clearSessionCookie,
+  createSession,
+  currentAuthSamePassword,
+  forgetDevices,
+  listSessions,
+  readDevice,
+  readSession,
+  rememberDevice,
+  requireAuth,
+} from '../auth.js';
 import {
   burnPasswordCheck,
   hashPassword,
@@ -71,6 +82,12 @@ function findToken(db, kind, raw) {
   if (!t || t.used_at || t.expires_at < Date.now()) return null;
   return t;
 }
+/* A join link only works while whoever made it is still an Owner or Admin (demoting them also
+   retires it, rules.js members.update). */
+function findJoinToken(db, repo, raw) {
+  const t = findToken(db, 'join', raw);
+  return t && isAdminRole(repo.get('members', t.user_id)) ? t : null;
+}
 const useToken = (db, t) => db.run('UPDATE auth_tokens SET used_at = ? WHERE token_hash = ?', Date.now(), t.token_hash);
 const sameSecret = (a, b) => typeof a === 'string' && sha256(a) === sha256(b);
 
@@ -133,6 +150,35 @@ const emailTaken = ({ db }, em, exceptId) =>
   !!db.get('SELECT 1 FROM users WHERE email = ? AND id != ?', em, exceptId) ||
   !!db.get("SELECT 1 FROM members WHERE lower(json_extract(data, '$.email')) = ? AND id != ?", em, exceptId);
 
+/* Failed password checks per account. Sign-in counts them per email (`login-fail:`); signed-in
+   actions that ask for the password count them per person (`pw-confirm:`), so strangers failing to
+   sign in can't lock someone out of changing their own password. Those failures are added to the
+   email's count too, so a stolen session can't guess faster than sign-in allows. Each attempt is
+   reserved before the (slow) check and given back if it was right, so parallel guesses can't all
+   slip past the limit while the first ones are still being checked. */
+const passwordFailKey = em => `login-fail:${em}`;
+const confirmKey = user => `pw-confirm:${user.id}`;
+const PASSWORD_LOCKED = 'Too many incorrect passwords for this account. Try again in 15 minutes.';
+/* true, false, or 'locked' when the person's budget is used up (nothing was checked). */
+export async function checkPassword(limit, user, pw) {
+  const key = confirmKey(user);
+  if (!limit.hit(key, LOGIN_FAILS, LOGIN_FAIL_MS)) return 'locked';
+  const ok = await verifyPassword(pw, user.password_hash);
+  if (ok) limit.refund(key);
+  else limit.hit(passwordFailKey(user.email), LOGIN_FAILS, LOGIN_FAIL_MS);
+  return ok;
+}
+/* checkPassword as a route answers it: null when the password is right, else the error response. */
+export async function passwordError(c, limit, pw, { field = 'password', error = 'Your password is incorrect.' } = {}) {
+  const ok = await checkPassword(limit, c.var.auth.user, pw);
+  if (ok === true) return null;
+  if (ok === 'locked') {
+    c.header('Retry-After', String(limit.blocked(confirmKey(c.var.auth.user), LOGIN_FAILS)));
+    return c.json({ error: PASSWORD_LOCKED, code: 'locked' }, 429);
+  }
+  return c.json({ error, field }, 400);
+}
+
 export function authRoutes({ limit }) {
   const r = new Hono();
 
@@ -155,6 +201,12 @@ export function authRoutes({ limit }) {
     };
   };
   const devLink = (c, link) => (c.var.config.exposeEmailLinks ? { devLink: link } : {});
+  // One answer for every sign-up an invite-only workspace refuses, naming nobody.
+  const inviteOnly = c =>
+    c.json(
+      { error: 'This workspace is invite-only. Ask an admin to invite you, or sign in if you already have an account.', field: 'email', code: 'invite_only' },
+      403,
+    );
 
   r.get('/session', c => c.json(sessionState(c)));
 
@@ -176,13 +228,17 @@ export function authRoutes({ limit }) {
     const { name, email: em, password: pw, invite, join } = b.data;
     if (!repo.workspace() && setup.token && !sameSecret(b.data.setup, setup.token))
       return c.json({ error: 'Open the setup link from the server log to create the first account.', code: 'setup_required' }, 403);
+    const inviteTok = invite && findToken(db, 'invite', invite);
+    const inviteOk = inviteTok && inviteTok.email.toLowerCase() === em;
+    const joinOk = !!findJoinToken(db, repo, join);
+    // Without an invite for this address or a join link, an invite-only workspace answers the same
+    // whether the address has an account, a pending invite or neither, so sign-up can't be used to
+    // find out who is in the workspace.
+    if (repo.workspace() && !config.allowOpenSignup && !inviteOk && !joinOk) return inviteOnly(c);
     if (db.get('SELECT 1 FROM users WHERE email = ?', em))
       return c.json({ error: 'An account with this email already exists. Sign in instead.', field: 'email' }, 409);
 
     const hash = await hashPassword(pw);
-    const inviteTok = invite && findToken(db, 'invite', invite);
-    const inviteOk = inviteTok && inviteTok.email.toLowerCase() === em;
-    const joinOk = !!(join && findToken(db, 'join', join));
     let out;
     try {
       out = db.tx(() => {
@@ -230,7 +286,7 @@ export function authRoutes({ limit }) {
     } catch (e) {
       if (e.code === 'invite_required')
         return c.json({ error: `${em} has a pending invite. Use the invite link in that email to join.`, field: 'email', code: 'invite_required' }, 403);
-      if (e.status === 403) return c.json({ error: `This workspace is invite-only. Ask an admin to invite ${em}.`, field: 'email', code: 'invite_only' }, 403);
+      if (e.status === 403) return inviteOnly(c);
       throw e;
     }
     mailer.drain();
@@ -250,7 +306,7 @@ export function authRoutes({ limit }) {
 
   /* Prefill for the sign-up screen when someone opens a workspace invite link. */
   r.get('/join/:token', c => {
-    if (!findToken(c.var.db, 'join', c.req.param('token'))) return c.json({ error: 'This invite link has expired. Ask for a new one.' }, 404);
+    if (!findJoinToken(c.var.db, c.var.repo, c.req.param('token'))) return c.json({ error: 'This invite link has expired. Ask for a new one.' }, 404);
     return c.json({ workspace: c.var.repo.workspace()?.name || '' });
   });
 
@@ -294,21 +350,29 @@ export function authRoutes({ limit }) {
     // Guessing one account's password from many addresses still hits the per-email limit. A browser
     // that signed in to this account before (device cookie) only answers for its own failures, so
     // failing on purpose elsewhere can't lock the owner out; once it uses those up it's a stranger.
+    // The attempt is counted before the password is checked and given back if it was right, so
+    // parallel guesses can't all be checked before the first failures are counted.
     const device = user && readDevice(c, db, user.id);
     const devKey = device && `login-fail-device:${device.token_hash}`;
-    const failKey = devKey && !limit.blocked(devKey, LOGIN_FAILS) ? devKey : `login-fail:${b.data.email}`;
-    const wait = limit.blocked(failKey, LOGIN_FAILS);
-    if (wait) {
-      c.header('Retry-After', String(wait));
+    const emailKey = passwordFailKey(b.data.email);
+    const failKey = devKey && limit.hit(devKey, LOGIN_FAILS, LOGIN_FAIL_MS) ? devKey : limit.hit(emailKey, LOGIN_FAILS, LOGIN_FAIL_MS) ? emailKey : null;
+    if (!failKey) {
+      c.header('Retry-After', String(limit.blocked(emailKey, LOGIN_FAILS)));
       return c.json({ error: 'Too many failed sign-in attempts for this account. Try again in 15 minutes or reset your password.' }, 429);
     }
     const ok = user ? await verifyPassword(b.data.password, user.password_hash) : await burnPasswordCheck(b.data.password);
-    if (!ok) {
-      limit.hit(failKey, LOGIN_FAILS, LOGIN_FAIL_MS);
-      return c.json({ error: 'Incorrect email or password.' }, 401);
-    }
-    createSession(c, db, user.id, { remember: b.data.remember !== false, pending2fa: !!user.totp_enabled });
-    if (!user.totp_enabled) rememberDevice(c, db, user.id);
+    if (!ok) return c.json({ error: 'Incorrect email or password.' }, 401);
+    // The password may have been changed or reset while it was being checked: the old one must not
+    // get a session (or device trust) after the change signed everyone out. Such an attempt still
+    // counts as a failure.
+    const signedIn = db.tx(() => {
+      if (db.get("SELECT password_hash FROM users WHERE id = ? AND kind = 'person'", user.id)?.password_hash !== user.password_hash) return false;
+      createSession(c, db, user.id, { remember: b.data.remember !== false, pending2fa: !!user.totp_enabled });
+      if (!user.totp_enabled) rememberDevice(c, db, user.id);
+      return true;
+    });
+    if (!signedIn) return c.json({ error: 'Incorrect email or password.' }, 401);
+    limit.refund(failKey);
     return c.json({ ...sessionState(c), twoFactor: !!user.totp_enabled });
   });
 
@@ -345,9 +409,15 @@ export function authRoutes({ limit }) {
       }
       return c.json({ error: "That code didn't work. Check your authenticator app and try again.", field: 'code' }, 401);
     }
-    db.run('UPDATE sessions SET pending_2fa = 0 WHERE id = ?', session.id);
-    db.run('UPDATE users SET tfa_failed = 0, tfa_failed_since = NULL, tfa_locked_until = NULL WHERE id = ?', user.id);
-    rememberDevice(c, db, user.id);
+    // Only a session that still exists, for the password it was opened with, completes sign-in.
+    const done = db.tx(() => {
+      const same = db.get('SELECT password_hash FROM users WHERE id = ?', user.id)?.password_hash === user.password_hash;
+      if (!same || !db.run('UPDATE sessions SET pending_2fa = 0 WHERE id = ? AND pending_2fa = 1', session.id).changes) return false;
+      db.run('UPDATE users SET tfa_failed = 0, tfa_failed_since = NULL, tfa_locked_until = NULL WHERE id = ?', user.id);
+      rememberDevice(c, db, user.id);
+      return true;
+    });
+    if (!done) return c.json(GONE, 401);
     return c.json(sessionState(c));
   });
 
@@ -357,6 +427,8 @@ export function authRoutes({ limit }) {
     if (a) c.var.db.run('DELETE FROM sessions WHERE id = ?', a.session.id);
     if (a) c.var.engine.disconnectSession(a.session.id);
     clearSessionCookie(c);
+    // Whatever this person's session left in the browser's HTTP cache goes too.
+    c.header('Clear-Site-Data', '"cache"');
     return c.json({ ok: true });
   });
 
@@ -396,9 +468,14 @@ export function authRoutes({ limit }) {
     const hash = await hashPassword(b.data.password);
     const user = personByEmail(db, t.email);
     if (!user) return c.json({ error: 'This reset link has expired or was already used. Request a new one.' }, 400);
-    const ids = db.all('SELECT id FROM sessions WHERE user_id = ?', user.id).map(s => s.id);
-    db.tx(() => {
-      useToken(db, t);
+    // The link is used up in the same transaction that sets the password, so two requests racing with
+    // one link can't both reset it; sessions are listed there too, including any opened meanwhile.
+    const ids = db.tx(() => {
+      if (
+        !db.run('UPDATE auth_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at >= ?', Date.now(), t.token_hash, Date.now()).changes
+      )
+        return null;
+      const sessions = db.all('SELECT id FROM sessions WHERE user_id = ?', user.id).map(s => s.id);
       // Following an emailed link also proves the address.
       db.run('UPDATE users SET password_hash = ?, email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?', hash, Date.now(), user.id);
       db.run('DELETE FROM sessions WHERE user_id = ?', user.id);
@@ -407,7 +484,9 @@ export function authRoutes({ limit }) {
       // Recovering the account revokes its API keys: whoever had control may have made one, for
       // themselves or (as an admin) for a bot.
       db.run('DELETE FROM api_keys WHERE user_id = ? OR created_by = ?', user.id, user.id);
+      return sessions;
     });
+    if (!ids) return c.json({ error: 'This reset link has expired or was already used. Request a new one.' }, 400);
     ids.forEach(id => engine.disconnectSession(id));
     clearSessionCookie(c);
     return c.json({ ok: true });
@@ -418,20 +497,26 @@ export function authRoutes({ limit }) {
     const b = await parseBody(c, z.object({ current: z.string().min(1, 'Enter your current password').max(200), password }));
     if (b.error) return b.error;
     const { user } = c.var.auth;
-    if (!(await verifyPassword(b.data.current, user.password_hash))) return c.json({ error: 'Your current password is incorrect.', field: 'current' }, 400);
+    const wrong = await passwordError(c, limit, b.data.current, { field: 'current', error: 'Your current password is incorrect.' });
+    if (wrong) return wrong;
     const { db, engine } = c.var;
     const hash = await hashPassword(b.data.password);
     // Anyone who knew the old password is signed out everywhere else, can't finish an email change
     // and loses the device trust it earned; this browser just proved the password and keeps it.
     // Their API keys go too, and the bot keys they made: making a key needs the password, so anyone
     // who knew the old one could have made one that would otherwise outlive the change.
-    db.tx(() => {
+    // Checked again now the password checks are done: the session (or the password) may have
+    // changed meanwhile, e.g. the owner of a stolen session changed it first.
+    const changed = db.tx(() => {
+      if (!currentAuthSamePassword(db, c.var.auth)) return false;
       db.run('UPDATE users SET password_hash = ? WHERE id = ?', hash, user.id);
       endOtherSessions(db, engine, user.id, c.var.auth.session.id);
       retireEmailChanges(db, user.id);
       forgetDevices(db, user.id);
       db.run('DELETE FROM api_keys WHERE user_id = ? OR created_by = ?', user.id, user.id);
+      return true;
     });
+    if (!changed) return c.json(GONE, 401);
     rememberDevice(c, db, user.id);
     const { member } = c.var.auth;
     return c.json({
@@ -448,11 +533,13 @@ export function authRoutes({ limit }) {
     if (b.error) return b.error;
     const { db, config, mailer } = c.var;
     const { user, member } = c.var.auth;
-    if (!(await verifyPassword(b.data.password, user.password_hash))) return c.json({ error: 'Your password is incorrect.', field: 'password' }, 400);
+    const wrong = await passwordError(c, limit, b.data.password);
+    if (wrong) return wrong;
     const em = b.data.email;
     if (em === user.email.toLowerCase()) return c.json({ error: 'That’s already your email.', field: 'email' }, 400);
     if (emailTaken(c.var, em, user.id)) return c.json({ error: 'Someone in the workspace already uses this email.', field: 'email' }, 409);
     const link = db.tx(() => {
+      if (!currentAuthSamePassword(db, c.var.auth)) return null;
       const l = issueToken(db, config, 'email', em, user.id);
       mailer.queue({
         to: em,
@@ -473,6 +560,7 @@ export function authRoutes({ limit }) {
       });
       return l;
     });
+    if (!link) return c.json(GONE, 401);
     mailer.drain();
     return c.json({ ok: true, ...devLink(c, link) });
   });
@@ -514,11 +602,13 @@ export function authRoutes({ limit }) {
   r.post('/account/delete', limit('account-delete', 5, 10 * MIN), requireAuth('account'), async c => {
     const b = await parseBody(c, z.object({ password: z.string().min(1, 'Enter your password').max(200) }));
     if (b.error) return b.error;
-    const { user, member } = c.var.auth;
-    if (!(await verifyPassword(b.data.password, user.password_hash))) return c.json({ error: 'Your password is incorrect.', field: 'password' }, 400);
+    const { member } = c.var.auth;
     if (member.role === 'Owner')
       return c.json({ error: 'Owners can’t delete their account. Make someone else an Owner and ask them to change your role first.', code: 'owner' }, 400);
-    c.var.engine.removeAccount(c.var.auth);
+    const wrong = await passwordError(c, limit, b.data.password);
+    if (wrong) return wrong;
+    // Re-checked as it's removed: the session may have ended, or this person become an Owner, meanwhile.
+    if (!currentAuthSamePassword(c.var.db, c.var.auth) || !c.var.engine.removeAccount(c.var.auth)) return c.json(GONE, 401);
     clearSessionCookie(c);
     return c.json({ ok: true });
   });
@@ -552,7 +642,9 @@ export function authRoutes({ limit }) {
     const { db, config } = c.var;
     const { user } = c.var.auth;
     if (user.totp_enabled) return c.json({ error: 'Two-factor authentication is already on.' }, 400);
-    if (!(await verifyPassword(b.data.password, user.password_hash))) return c.json({ error: 'Your password is incorrect.', field: 'password' }, 400);
+    const wrong = await passwordError(c, limit, b.data.password);
+    if (wrong) return wrong;
+    if (!currentAuthSamePassword(db, c.var.auth)) return c.json(GONE, 401);
     const secret = newTotpSecret();
     db.run('UPDATE users SET totp_secret = ? WHERE id = ?', seal(secret, config.secretKey), user.id);
     const label = encodeURIComponent(`Sudo Sapient:${user.email}`);
@@ -588,9 +680,11 @@ export function authRoutes({ limit }) {
     if (b.error) return b.error;
     const { db, config } = c.var;
     const { user } = c.var.auth;
-    const ok =
-      (b.data.password && (await verifyPassword(b.data.password, user.password_hash))) || (b.data.code && useSecondFactor(db, config, user.id, b.data.code));
+    const pw = b.data.password ? await checkPassword(limit, user, b.data.password) : false;
+    const ok = pw === true || (b.data.code && useSecondFactor(db, config, user.id, b.data.code));
+    if (!ok && pw === 'locked') return c.json({ error: PASSWORD_LOCKED, code: 'locked' }, 429);
     if (!ok) return c.json({ error: 'Enter your current password or a code from your authenticator app.', field: 'confirm' }, 400);
+    if (!currentAuthSamePassword(db, c.var.auth)) return c.json(GONE, 401);
     db.tx(() => {
       disableTwoFactor(db, user.id);
       retireEmailChanges(db, user.id);

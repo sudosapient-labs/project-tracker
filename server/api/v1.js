@@ -7,8 +7,8 @@
    Routes are declared once in ROUTES; registration and the OpenAPI document both read them. */
 import { Hono } from 'hono';
 import { PR, RECUR_DAYS, ST } from '../../src/core/constants.js';
+import { textToHtml } from '../../src/core/rich-text.js';
 import { newId } from '../lib/crypto.js';
-import { cleanRich } from '../lib/rich-text.js';
 import { canSee, memberFor } from '../sync/rules.js';
 import { bearer, fail, idempotent, scoped } from './middleware.js';
 import { openapi } from './openapi.js';
@@ -33,15 +33,6 @@ export const htmlToText = html =>
     .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, e) => ENT[e])
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-const esc = s => s.replace(/[&<>"']/g, ch => `&${{ '&': 'amp', '<': 'lt', '>': 'gt', '"': 'quot', "'": '#39' }[ch]};`);
-/* Plain text becomes paragraphs, the way the app's own quick-add stores a description. */
-const textToHtml = s =>
-  s
-    .split(/\n{2,}/)
-    .map(p => p.trim())
-    .filter(Boolean)
-    .map(p => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`)
-    .join('');
 const shortDate = v => new Date(v.slice(0, 10) + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 const shiftDate = (v, days) => new Date(Date.parse(v.slice(0, 10) + 'T00:00:00Z') + days * 86_400_000).toISOString().slice(0, 10) + v.slice(10);
 
@@ -163,13 +154,15 @@ export function v1Routes({ limit }) {
     );
 
   /* ---------- writes ---------- */
-  const FIELD = { desc: 'description' };
-  function write(x, ops) {
+  /* `fields`: the API's name for a record field an error names, e.g. which of description and
+     descriptionHtml the request sent. */
+  function write(x, ops, fields = { desc: 'description' }) {
     const { results, failed } = x.c.var.engine.apply(x.c.var.auth, ops, null, { via: x.c.var.via, atomic: true });
     if (!failed) x.c.set('committed', true);
     if (failed) {
       const m = /^(\w+): (.*)$/.exec(failed.error);
-      throw new ApiFail(failed.status || 400, failed.error, undefined, m ? FIELD[m[1]] || m[1] : undefined);
+      const field = m && (fields[m[1]] || m[1]);
+      throw new ApiFail(failed.status || 400, field ? `${field}: ${m[2]}` : failed.error, undefined, field || undefined);
     }
     return results.map(r => r.v);
   }
@@ -179,7 +172,10 @@ export function v1Routes({ limit }) {
     return { c: 'activity', id, k: 'put', v: { id, by: x.me.id, verb, task: t.id, project: t.project, at: Date.now(), extra } };
   };
   const nextOrder = x => (x.db.get("SELECT MAX(json_extract(data, '$.order')) n FROM tasks")?.n || 0) + 1;
-  const descOf = b => (b.descriptionHtml != null ? cleanRich(b.descriptionHtml) : b.description != null ? textToHtml(b.description) : undefined);
+  /* The description as sent. The sync rules check and sanitise it, once (rules.js richDesc), like
+     any description from the app. */
+  const descOf = b => (b.descriptionHtml != null ? b.descriptionHtml : b.description != null ? textToHtml(b.description) : undefined);
+  const descField = b => ({ desc: b.descriptionHtml != null ? 'descriptionHtml' : 'description' });
 
   function newTask(x, f) {
     const now = Date.now();
@@ -248,7 +244,7 @@ export function v1Routes({ limit }) {
       const n = newTask(x, { ...after, due, start: due, status: 'todo', subtasks: (after.subtasks || []).map(s => ({ ...s, done: false })) });
       ops.push({ c: 'tasks', id: n.id, k: 'put', v: n }, actOp(x, n, 'created'));
     }
-    return write(x, ops)[0];
+    return write(x, ops, descField(b))[0];
   }
 
   /* ---------- routes ---------- */
@@ -269,6 +265,20 @@ export function v1Routes({ limit }) {
         workspace: x.repo.workspace()?.name || '',
         key: { id: key.id, name: key.name, scope: key.scope, expiresAt: key.expires_at },
       };
+    },
+  });
+
+  route('delete', '/me/key', {
+    id: 'revokeMyKey',
+    tag: 'Me',
+    summary: 'Revoke the key making this request (read-only keys too); it stops working at once',
+    ok: ok(S.Revoked),
+    run: x => {
+      // Only ever the key presented: there is no id to name another one.
+      const { key } = x.c.var.auth;
+      x.db.run('DELETE FROM api_keys WHERE id = ?', key.id);
+      x.c.set('committed', true);
+      return { revoked: true, id: key.id };
     },
   });
 
@@ -327,7 +337,7 @@ export function v1Routes({ limit }) {
       const p = findProject(x, b.project);
       const assignee = b.assignee == null ? null : findMember(x, b.assignee, 'assignee').id;
       const t = newTask(x, { ...b, project: p.id, assignee, desc: descOf(b) });
-      const [saved] = write(x, [{ c: 'tasks', id: t.id, k: 'put', v: t }, actOp(x, t, 'created')]);
+      const [saved] = write(x, [{ c: 'tasks', id: t.id, k: 'put', v: t }, actOp(x, t, 'created')], descField(b));
       return x.V.task(saved);
     },
   });

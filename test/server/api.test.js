@@ -565,3 +565,27 @@ describe('OpenAPI', () => {
     expect((await t.app.request('/api/docs/try.js')).headers.get('content-type')).toContain('javascript');
   });
 });
+
+describe('a key revoking itself', () => {
+  it('works for any scope, only ever for the key presented, and the key stops working at once', async () => {
+    const t = setup();
+    const { c } = await account(t);
+    const read = await apiKey(c, { name: 'Read', scope: 'read' });
+    const other = await apiKey(c, { name: 'Other' });
+    const api = keyClient(t.app, read);
+    const r = await api.del('/me/key');
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ revoked: true, id: expect.any(String) });
+    expect((await api.get('/me')).status).toBe(401);
+    expect((await api.del('/me/key')).status).toBe(401);
+    // Another key's id in the path, or a body naming it, changes nothing: there is no such route.
+    const rest = keyClient(t.app, other);
+    const ids = (await c.get('/api/keys')).body.map(k => k.id);
+    expect(ids).toHaveLength(1);
+    expect((await rest.del(`/me/key/${ids[0]}`)).status).toBe(404);
+    expect((await rest.get('/me')).status).toBe(200);
+    // With an Idempotency-Key too.
+    expect((await rest.del('/me/key', { 'idempotency-key': 'bye' })).status).toBe(200);
+    expect((await c.get('/api/keys')).body).toEqual([]);
+  });
+});

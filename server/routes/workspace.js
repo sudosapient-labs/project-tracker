@@ -2,10 +2,9 @@
    person's two-factor. */
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { requireAuth } from '../auth.js';
+import { GONE, currentAuthSamePassword, requireAuth } from '../auth.js';
 import { parseBody } from '../lib/http.js';
-import { verifyPassword } from '../lib/crypto.js';
-import { disableTwoFactor, endOtherSessions, issueToken, retireEmailChanges } from './auth.js';
+import { disableTwoFactor, endOtherSessions, issueToken, passwordError, retireEmailChanges } from './auth.js';
 import { HOUR, INVITES_PER_HOUR, canSee } from '../sync/rules.js';
 import { isAdminRole } from '../../src/core/access.js';
 import { notify } from '../notify.js';
@@ -103,14 +102,19 @@ export function workspaceRoutes({ limit }) {
     const b = await parseBody(c, z.object({ password: z.string().min(1, 'Enter your password').max(200) }));
     if (b.error) return b.error;
     const { db, repo, config, mailer, engine } = c.var;
-    const { member: me, user } = c.var.auth;
+    const { member: me } = c.var.auth;
     if (me.role !== 'Owner') return c.json({ error: 'Only the workspace owner can reset someone’s two-factor authentication.' }, 403);
-    if (!(await verifyPassword(b.data.password, user.password_hash))) return c.json({ error: 'Your password is incorrect.', field: 'password' }, 400);
+    const wrong = await passwordError(c, limit, b.data.password);
+    if (wrong) return wrong;
     const m = repo.get('members', c.req.param('id'));
     const target = m && db.get('SELECT id, email, totp_enabled FROM users WHERE id = ?', m.id);
     if (!target) return c.json({ error: 'That person is no longer in the workspace.' }, 404);
     if (target.id === me.id) return c.json({ error: 'Turn off your own two-factor authentication in Settings → Two-factor.' }, 400);
     if (!target.totp_enabled) return c.json({ error: `${m.name} doesn’t use two-factor authentication.` }, 400);
+    // The Owner's session, password and role as they are now, after the password check.
+    const a = currentAuthSamePassword(db, c.var.auth);
+    if (!a) return c.json(GONE, 401);
+    if (a.member.role !== 'Owner') return c.json({ error: 'Only the workspace owner can reset someone’s two-factor authentication.' }, 403);
     db.tx(() => {
       disableTwoFactor(db, target.id);
       retireEmailChanges(db, target.id);

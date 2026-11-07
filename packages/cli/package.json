@@ -22,7 +22,7 @@
     "@sudosapient/client": "workspace:*"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "license": "UNLICENSED",
   "publishConfig": {

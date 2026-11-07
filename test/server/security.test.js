@@ -316,7 +316,8 @@ describe('C16 outbox and housekeeping', () => {
       { c: 'tasks', id: 't201', k: 'put', v: T('t201', 'todo') },
       { c: 'tasks', id: 't202', k: 'put', v: T('t202', 'done') },
     ]);
-    for (const id of ['t201', 't202', 'tgone']) t.db.run("INSERT INTO reminders (task_id, kind, due, sent_at) VALUES (?, 'overdue', '2026-01-01', 1)", id);
+    for (const id of ['t201', 't202', 'tgone'])
+      t.db.run("INSERT INTO reminders (task_id, kind, due, assignee, sent_at) VALUES (?, 'overdue', '2026-01-01', '', 1)", id);
     housekeep(t, now);
     expect(t.db.all("SELECT subject FROM outbox WHERE subject IN ('old', 'new', 'failed')").map(r => r.subject)).toEqual(['new']);
     expect(t.db.all('SELECT task_id FROM reminders').map(r => r.task_id)).toEqual(['t201']);

@@ -17,17 +17,23 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(method, url, body) {
+/* `keepalive`: the request outlives the page (closing the tab doesn't cancel it). `signal` stops it
+   (it then fails as offline).
+   @param {{ keepalive?: boolean, signal?: AbortSignal }} [opts] */
+export async function api(method, url, body, { keepalive = false, signal = undefined, headers = {} } = {}) {
   const form = typeof FormData !== 'undefined' && body instanceof FormData;
   let res;
   try {
     res = await fetch(url, {
       method,
       credentials: 'same-origin',
+      ...(keepalive ? { keepalive } : {}),
+      ...(signal ? { signal } : {}),
       headers: {
         'x-requested-with': 'sudo-sapient',
         'x-client-id': CLIENT_ID,
         ...(body != null && !form ? { 'content-type': 'application/json' } : {}),
+        ...headers,
       },
       body: body == null ? undefined : form ? body : JSON.stringify(body),
     });

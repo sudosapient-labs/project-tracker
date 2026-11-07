@@ -15,7 +15,23 @@ proxies `/api` to the API on :8787.
   effects (task keys, cascading deletes, notifications, invite emails) and returns the canonical
   record; a rejected change is rolled back on the client with a toast. Each batch runs in one SQLite
   transaction. `<html data-sync>` shows `saving` / `saved` / `offline`; changes made while offline
-  are retried.
+  are retried. Consecutive changes to the same record are folded into one queued operation (the
+  later value of each field wins), and each request stays within the server's limits (500 ops,
+  4 MB, 900,000 characters of descriptions); an op the server defers because its per-request
+  budget is spent (`retry`) is sent again, and a batch refused as too large (`413`) is split.
+- **Lists and maps merge.** A project's `members`, `perms` and `milestones`, a task's `subtasks`,
+  `labels` and `deps`, and a comment's reactions (`re`) are whole values, so the client sends each one with the value it edited from (`base`) and
+  the server applies only that client's additions, removals and changes onto the current value
+  (`server/sync/merge.js`). A stale write (an offline queue, a tab behind) can't undo someone else's
+  change: a person taken off a project stays off. Entries are matched by id (milestones by name),
+  and reactions emoji by emoji, so two people reacting at once both count. A patch without `base` (the REST API, which
+  reads and writes in one request) replaces the whole value.
+- **Undo.** Undo puts back only the records the action changed. A record it deleted is re-sent
+  with `restore: true`; the server then restores its own copy, kept in `recent_deletes` for 10
+  minutes and only for the person who deleted it, so a comment keeps its author, time and
+  reactions, a task its key, and nobody is notified again. When there is no such copy (too late,
+  or someone else deleted it) the Undo is refused (`410`); records of other kinds (projects,
+  files, events, …) are created like anything new.
 - **Live updates.** Other people's changes arrive over Server-Sent Events (`GET /api/events`) and are
   merged in, filtered to what each person can see. A tab's own changes aren't echoed back to it
   (`x-client-id`). When the stream drops, the client reconnects and bootstraps again.
@@ -52,7 +68,7 @@ proxies `/api` to the API on :8787.
   `engine.apply` in atomic mode: one transaction, all or nothing. So validation, permissions,
   notifications, emails and live updates to open apps are exactly the app's. The server stamps
   activity with `via` (the client's `X-Sudo-Client` label or the key's name).
-- **MCP** (`packages/mcp`, no dependencies) is a small JSON-RPC server over stdio (`sudo-mcp`) and
+- **MCP** (`packages/mcp`, whose only dependency is `packages/client`) is a small JSON-RPC server over stdio (`sudo-mcp`) and
   Streamable HTTP. The app hosts it at `/api/mcp`, where each tool calls `/api/v1` in-process with the
   caller's key. **The CLI** (`packages/cli`, `sudo-cli`) and the MCP server share
   `packages/client`, a fetch wrapper for `/api/v1`. See [the API reference](api.md).
@@ -94,7 +110,8 @@ and whichever one a change sets wins.
 
 Levels match the share dialog: **Can view**, **Can comment** (own comments and reactions), **Can
 edit** (tasks, files, events, saved views) and **Full access** (also the project's members, privacy,
-permissions, lead, archiving and deleting). One helper, `src/core/access.js`, decides a person's
+permissions, lead, archiving and deleting). Only a comment's author can edit it, and only its text;
+everyone adds and removes only their own reactions. One helper, `src/core/access.js`, decides a person's
 level for the server (sync rules, uploads, file downloads, notifications, digests, bootstrap, live
 updates) and the client (which hides what the server would refuse):
 
@@ -159,6 +176,9 @@ endpoints, `sync/` the bootstrap and sync engine, and `lib/` the pieces with no 
   route handlers validate bodies with zod through `parseBody`.
 - **Migrations:** files in `server/migrations/` run once each, in name order, inside a transaction,
   on start. Use `.sql`, or `.js` exporting `default (db)` for data changes SQL can't express.
+  Foreign keys are off while a migration runs, so a table can be rebuilt (create, copy, drop,
+  rename) without cascading deletes; a migration that leaves a broken reference
+  (`PRAGMA foreign_key_check`) is rolled back and stops the start.
 - **Formatting:** Prettier (`.prettierrc.json`, 160 columns, single quotes) and ESLint flat config;
   comments are short and explain why.
 

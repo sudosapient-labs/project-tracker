@@ -7,6 +7,9 @@
 import crypto from 'node:crypto';
 import { createMcp } from './protocol.js';
 
+/* The largest request body `nodeListener` accepts (the app's /api/mcp has the same 1 MB cap). */
+export const MAX_BODY = 1024 * 1024;
+
 const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
 const encode = label => `${Buffer.from(label).toString('base64url')}.${crypto.randomBytes(9).toString('base64url')}`;
 const decode = id => (id ? Buffer.from(String(id).split('.')[0], 'base64url').toString().slice(0, 40) || null : null);
@@ -40,5 +43,54 @@ export function createHttpHandler({ connect, readOnly = false, origins = [], adm
     const headers = init ? { 'mcp-session-id': encode(s.label || 'MCP') } : {};
     if (!out.length) return new Response(null, { status: 202, headers });
     return json(Array.isArray(msg) ? out : out[0], 200, headers);
+  };
+}
+
+/* The body of a Node request, or a 413 error once it passes `max` bytes (checked against
+   Content-Length first, then as it streams in). */
+function readBody(req, max) {
+  return new Promise((resolve, reject) => {
+    const tooLarge = () => Object.assign(new Error('Request too large'), { status: 413 });
+    if (Number(req.headers['content-length']) > max) return reject(tooLarge());
+    const chunks = [];
+    let size = 0;
+    req.on('data', ch => {
+      size += ch.length;
+      if (size > max) {
+        req.pause();
+        reject(tooLarge());
+      } else chunks.push(ch);
+    });
+    req.on('end', () => resolve(chunks.length ? Buffer.concat(chunks) : undefined));
+    req.on('error', reject);
+  });
+}
+
+/* `handle` (createHttpHandler) as a node:http request listener, for `sudo-mcp --http`: bodies are
+   capped at `maxBody`, and anything that goes wrong answers 500 instead of an unhandled rejection
+   that would stop the server. */
+export function nodeListener(handle, { maxBody = MAX_BODY, log = console } = {}) {
+  const fail = (res, status, message) => {
+    if (res.headersSent) return res.destroy();
+    res.writeHead(status, { 'content-type': 'application/json', ...(status === 413 ? { connection: 'close' } : {}) });
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: status === 413 ? -32600 : -32603, message } }));
+  };
+  return async (req, res) => {
+    try {
+      const body = await readBody(req, maxBody);
+      const r = await handle(
+        new Request(`http://${req.headers.host || 'localhost'}${req.url}`, {
+          method: req.method,
+          headers: req.headers,
+          body: req.method === 'POST' ? body : undefined,
+        }),
+      );
+      res.writeHead(r.status, Object.fromEntries(r.headers));
+      res.end(Buffer.from(await r.arrayBuffer()));
+    } catch (e) {
+      if (e?.status === 413) return fail(res, 413, 'Request too large');
+      log.error?.('sudo-mcp: request failed', e);
+      fail(res, 500, 'Internal error');
+    }
   };
 }

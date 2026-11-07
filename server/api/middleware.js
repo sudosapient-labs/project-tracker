@@ -49,7 +49,14 @@ export const bearer =
     const m = /^Bearer\s+(\S+)$/i.exec(c.req.header('authorization') || '');
     if (!m) return fail(c, 401, 'Send a personal API key: Authorization: Bearer <key>. Create one in Settings → API.');
     const { db, config } = c.var;
-    const a = readKey(db, m[1]);
+    // A bad key is refused before the body is read. A good one is checked again once the whole
+    // request has arrived, not only before a slow body (writes check it again in their
+    // transaction; see engine.apply).
+    let a = readKey(db, m[1]);
+    if (!a.error && c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+      await c.req.arrayBuffer();
+      a = readKey(db, m[1]);
+    }
     if (a.error) return fail(c, 401, KEY_ERRORS[a.error], a.error);
     // A bot has no email to verify (see bots.js); its keys were made by a signed-in admin.
     if (config.requireVerification && a.user.kind !== 'bot' && !a.user.email_verified_at)
@@ -67,9 +74,14 @@ export const bearer =
     return next();
   };
 
-/* Read keys may only read. */
+/* A key revoking itself (DELETE /api/v1/me/key, v1.js): allowed for any scope, since it only takes
+   access away, and it can never name another key. */
+export const SELF_REVOKE = '/api/v1/me/key';
+const revokingItself = c => c.req.method === 'DELETE' && c.req.path.replace(/\/+$/, '') === SELF_REVOKE;
+
+/* Read keys may only read (or revoke themselves). */
 export const scoped = async (c, next) => {
-  if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && c.var.auth.key.scope !== 'write')
+  if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && c.var.auth.key.scope !== 'write' && !revokingItself(c))
     return fail(c, 403, 'This API key is read-only. Create a key with write access to make changes.', 'insufficient_scope');
   return next();
 };
@@ -97,7 +109,8 @@ export const idempotent = async (c, next) => {
   try {
     await next();
     // A write that committed is recorded even if answering then failed, so a retry can't repeat it.
-    if (c.res.status < 500 || c.get('committed'))
+    // (Not when the request revoked its own key: nothing can replay it, and its records went with it.)
+    if ((c.res.status < 500 || c.get('committed')) && db.get('SELECT 1 FROM api_keys WHERE id = ?', keyId))
       db.run(
         'INSERT OR REPLACE INTO api_idempotency (key_id, idem_key, fingerprint, status, body, created_at) VALUES (?, ?, ?, ?, ?, ?)',
         keyId,

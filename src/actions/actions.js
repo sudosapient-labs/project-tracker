@@ -5,6 +5,7 @@ import { $, $$, addD, dOff, esc, fmtDateTime, fmtTime, instant, iso, parse, pars
 import { PR, PSTAT, RECUR_DAYS, ST } from '../core/constants.js';
 import { D, S, allTasks, canSee, commentsOf, logAct, me, mem, memName, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
 import { fileType, fsize, richHtml } from '../ui/helpers.js';
+import { plainDescText, textToHtml } from '../core/rich-text.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
 import { post, upload } from '../core/api.js';
@@ -23,9 +24,12 @@ export const A = {},
   BLUR = {};
 
 /* ---------- task mutations ---------- */
+/* The next key this tab expects the server to give: one past the project's counter (which only the
+   server moves) and every key already in the project. The server keeps it if it's still free. */
 export function nextKey(p) {
-  p.seq = (p.seq || 200) + 1;
-  return p.key + '-' + p.seq;
+  const prefix = p.key + '-';
+  const top = D().tasks.reduce((n, t) => (t.key?.startsWith(prefix) ? Math.max(n, +t.key.slice(prefix.length) || 0) : n), p.seq || 200);
+  return prefix + (top + 1);
 }
 export function createTask(f) {
   const p = proj(f.project) || visibleProjects().find(canSee);
@@ -75,7 +79,17 @@ export function applyPatch(t, patch) {
         logAct('completed', t);
         fxSet({ done: t.id });
       } else logAct('moved', t, `from ${ST[old].name} to ${ST[nv].name}`);
-      if (nv === 'done' && t.recur && t.due) {
+      // Reopened (or the completion undone): the next occurrence it scheduled goes again, unless
+      // someone has worked on it since. A kept one stays linked, so completing again adds no other.
+      if (old === 'done' && nv !== 'done' && t.nextId) {
+        const n = task(t.nextId);
+        if (!n) delete t.nextId;
+        else if (untouchedOccurrence(n)) {
+          deleteTasks([n.id]);
+          delete t.nextId;
+        }
+      }
+      if (nv === 'done' && t.recur && t.due && !(t.nextId && task(t.nextId))) {
         const nd = shiftD(t.due, RECUR_DAYS[t.recur] || 7);
         const n = createTask({
           ...JSON.parse(JSON.stringify(t)),
@@ -89,6 +103,10 @@ export function applyPatch(t, patch) {
           attachments: [],
         });
         delete n.prevStatus;
+        delete n.nextId;
+        // Fresh times: `updated` still equal to `created` is how a reopen knows it's untouched.
+        n.created = n.updated = Date.now();
+        t.nextId = n.id;
         msgs.push(`Next “${t.title}” scheduled for ${fmtDateTime(nd)}`);
       }
     } else if (k === 'assignee') logAct('assigned', t, nv ? `to ${mem(nv)?.name}` : '(unassigned)');
@@ -108,6 +126,8 @@ export function applyPatch(t, patch) {
   }
   return msgs;
 }
+/* A scheduled next occurrence nobody has changed or commented on since it was made. */
+const untouchedOccurrence = n => n.updated === n.created && n.status === 'todo' && !commentsOf(n.id).length;
 export function updateTask(id, patch) {
   if (id === '__form') {
     Object.assign(S.ui.form, patch);
@@ -599,12 +619,13 @@ A.delTask = el => {
 A.editTask = el => {
   const t = task(el.dataset.id);
   if (!t) return;
+  // A formatted description isn't offered as plain text (the modal links to the drawer editor
+  // instead); descOrig is what the textarea starts with, so an untouched one is never rewritten.
+  const text = plainDescText(t.desc);
   S.ui.form = {
     title: t.title,
-    desc: (t.desc || '')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim(),
+    desc: text ?? '',
+    descOrig: text,
     project: t.project,
     status: t.status,
     assignee: t.assignee,
@@ -708,14 +729,7 @@ A.submitTask = () => {
     if (
       !mutate(() => {
         applyPatch(t, base);
-        if (
-          f.desc !==
-          (t.desc || '')
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim()
-        )
-          t.desc = f.desc ? `<p>${esc(f.desc)}</p>` : '';
+        if (f.descOrig != null && f.desc !== f.descOrig) t.desc = textToHtml(f.desc);
       })
     )
       return;
@@ -728,7 +742,7 @@ A.submitTask = () => {
   let t;
   if (
     !mutate(() => {
-      t = createTask({ ...base, desc: f.desc ? `<p>${esc(f.desc)}</p>` : '' });
+      t = createTask({ ...base, desc: textToHtml(f.desc) });
     })
   )
     return;

@@ -20,12 +20,13 @@ node packages/mcp/scripts/results.js     # tool results vs raw API responses
 | Script / CLI creates, comments, completes; the open app shows each step live       | `e2e/09-api.spec.js` (list, drawer comments and activity update without reload); `api.test.js › create → comment → complete …` (SSE fan-out, notifications, bootstrap)                |
 | MCP client finds / creates / completes with a personal key; activity says "via …"  | `packages/mcp/test/mcp.test.js`: the **official MCP SDK client** over Streamable HTTP (`/api/mcp`) and over stdio (spawning `sudo-mcp` against a real HTTP server)                    |
 | Guest and private-project limits enforced                                          | `api.test.js › permissions through the API` and `mcp.test.js › enforces the key’s person`                                                                                             |
-| Read-only scope                                                                    | `api.test.js › read-only keys …` (403 `insufficient_scope`); `mcp.test.js` (write tools hidden and refused)                                                                           |
+| Read-only scope                                                                    | `api.test.js › read-only keys …` (403 `insufficient_scope`); `mcp.test.js` (write tools hidden and refused; `--read-only` / `SUDO_MCP_READ_ONLY=1` registers only reads)              |
+| MCP results fence other people's text; tools carry explicit annotations            | `mcp.test.js › untrusted content` (a title, description and comment trying to close the fence stay inside it) and `› tool annotations`                                                |
 | Writes go through the app's rules, atomically                                      | `api.test.js › writes behave like the app’s` (same activity verbs as the app, recurring tasks, all-or-nothing rollback, `via` can't be forged from the app)                           |
 | Idempotency-Key, cursors, `{ error, code, field }`, RateLimit / 429                | `api.test.js › API conventions`                                                                                                                                                       |
 | OpenAPI 3.1 served and in sync                                                     | `api.test.js › OpenAPI`: every `$ref` resolves, and real responses from every GET endpoint parse against the documented schemas (strictly: no undocumented fields)                    |
 | CLI arguments, dates, happy path                                                   | `packages/cli/test/cli.test.js` (login saves a 0600 config, `new` / `tasks` / `comment` / `assign` / `done` / `show` / `open` / `--json`, every step logged "via CLI")                |
-| MCP tool text stays small                                                          | `mcp.test.js › context budget` fails if any description passes 80 characters or `tools/list` passes 2,700                                                                             |
+| MCP tool text stays small                                                          | `mcp.test.js › context budget` fails if any description passes 100 characters or `tools/list` passes 3,900                                                                            |
 | Impossible dates refused (`2026-02-31` → 400 `due`)                                | `api.test.js › refuses dates that don’t exist, which would otherwise break repeating tasks`                                                                                           |
 | Key names can't inject control / bidi characters into "via"                        | `api.test.js › labels changes with the key’s name when the client sends no label, and the app can’t forge one`                                                                        |
 | One person's keys share one rate limit; each MCP batch message counts              | `api.test.js › limits each person’s keys together, …`; `mcp.test.js › limits protocol messages per person too, counting each message in a batch`                                      |
@@ -106,6 +107,11 @@ shortened four descriptions.
 
 Read-only keys see 6 tools: 1,218 chars ≈ 305 tokens (≈395 with resources and instructions).
 
+**Since audit M7** every tool carries all four annotations (≈100 chars each) and read tools end with
+a 45-character untrusted-output warning: `tools/list` is now 3,805 chars ≈ 952 tokens (≈1,072 with
+resources and instructions; read-only, 1,896 chars ≈ 474 tokens). Each result also gains a constant
+≈156-character fence (the results table below includes it).
+
 For comparison, a generic generator making one tool per OpenAPI operation, with the full request
 schemas, would load 15 tools and 8,395 chars (≈2,099 tokens): 3.2 times as much.
 
@@ -117,11 +123,11 @@ tasks, 9 comments, 8 people), against the raw REST responses a generic bridge wo
 
 | Tool                | Raw REST chars | Tool result chars | Smaller by |
 | ------------------- | -------------: | ----------------: | ---------: |
-| `list_my_work`      |          4,155 |               971 |        77% |
-| `search` "Create"   |          1,275 |               159 |        88% |
-| `get_task` WEB-109  |          3,003 |             1,034 |        66% |
-| `summarise_project` |         10,090 |             1,757 |        83% |
-| `list_projects`     |          2,231 |               450 |        80% |
+| `list_my_work`      |          4,283 |             1,127 |        74% |
+| `search` "Create"   |          1,275 |               315 |        75% |
+| `get_task` WEB-109  |          3,131 |             1,190 |        62% |
+| `summarise_project` |         10,218 |             1,913 |        81% |
+| `list_projects`     |          2,231 |               606 |        73% |
 
 No `outputSchema` or `structuredContent` is sent: they'd repeat each result in the context a second
 time.

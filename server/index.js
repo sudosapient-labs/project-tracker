@@ -30,15 +30,19 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: config.hos
   if (!config.secretKey && config.prod) console.warn('[api] WARNING: SECRET_KEY is not set, so two-factor secrets are stored unencrypted.');
 });
 
-const housekeeping = setInterval(() => {
+function housekeeping() {
   try {
     housekeep({ db });
   } catch (e) {
     console.error('[housekeeping] failed', e);
   }
+}
+housekeeping();
+const housekeepingT = setInterval(() => {
+  housekeeping();
   mailer.drain();
 }, 60_000);
-housekeeping.unref();
+housekeepingT.unref();
 
 const JOBS_MS = 5 * 60_000;
 const jobs = setInterval(() => {
@@ -74,7 +78,7 @@ let stopping = false;
 function shutdown() {
   if (stopping) return;
   stopping = true;
-  clearInterval(housekeeping);
+  clearInterval(housekeepingT);
   clearInterval(jobs);
   clearInterval(backups);
   engine.closeAll();

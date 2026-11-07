@@ -11,8 +11,9 @@ updates:
       minor-and-patch:
         update-types: [minor, patch]
 
+  # The workflows, plus the composite actions under .github/actions (which "/" alone doesn't cover).
   - package-ecosystem: github-actions
-    directory: /
+    directories: ['/', '/.github/actions/*']
     schedule:
       interval: weekly
     commit-message:
@@ -20,3 +21,11 @@ updates:
     groups:
       actions:
         patterns: ['*']
+
+  # The Dockerfile's base image, pinned by digest.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: 'chore(deps)'

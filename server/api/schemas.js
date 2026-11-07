@@ -71,6 +71,12 @@ export const Me = named(
   'The person or bot the API key belongs to.',
 );
 
+export const Revoked = named(
+  'Revoked',
+  z.object({ revoked: z.literal(true), id: z.string().describe('The id of the key that was revoked') }),
+  'The key that made the request is revoked and no longer works.',
+);
+
 export const Subtask = z.object({ id: z.string(), title: z.string(), done: z.boolean(), assignee: z.string().nullable() });
 
 export const Task = named(

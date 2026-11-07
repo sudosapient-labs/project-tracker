@@ -2,15 +2,30 @@
    ACTIONS · SESSION: boot, sign up, verify, sign in (+2FA), sign out,
    password reset, onboarding hand-off, and reloading the workspace.
    ===================================================================== */
-import { $ } from '../core/utils.js';
+import { $, esc } from '../core/utils.js';
 import { setTimeZone } from '../core/utils.js';
 import { validTz } from '../core/constants.js';
-import { D, DEFAULT_PREFS, S, allTasks, canSee, emptyData, me, proj } from '../core/store.js';
+import { D, DEFAULT_PREFS, PREFS_KEY, S, allTasks, canSee, emptyData, me, proj } from '../core/store.js';
 import { ApiError, get, post } from '../core/api.js';
 import { toast } from '../ui/toast.js';
 import { hashFor, render, routeFromHash } from '../shell/render.js';
-import { commit, connectLive, onSync, prime, stopSync } from '../shell/sync.js';
-import { A, EMAIL_RE } from './actions.js';
+import {
+  OFFLINE_MSG,
+  collect,
+  commit,
+  connectLive,
+  flush,
+  loadingFresh,
+  onSync,
+  pendingCount,
+  prime,
+  refresh,
+  reloadWhenSaved,
+  sameUser,
+  settled,
+  stopSync,
+} from '../shell/sync.js';
+import { A, EMAIL_RE, confirmDlg } from './actions.js';
 import { disablePushHere, refreshPush } from './push.js';
 
 const AUTH_SCREENS = ['login', 'signup', 'forgot'];
@@ -30,17 +45,33 @@ let reloading = null;
 export function reload() {
   reloading ||= (async () => {
     try {
-      await commit();
-      hydrate(await get('/api/bootstrap'));
+      // A tab waking up (back from the back/forward cache, the stream reconnecting) may find
+      // someone else signed in on this browser: then it sends nothing and signs out.
+      if (!(await sameUser())) return void reloadWhenSaved();
+      // Send what's queued first, even if the last attempt left us offline (the live stream that
+      // asked for this reload just reconnected). If it still can't be saved, keep it and reload
+      // once it is: a bootstrap mustn't replace local changes the server hasn't seen. Refused
+      // changes are reported as usual (not taken from a commit() someone else is waiting on).
+      await settled({ retry: true });
+      if (pendingCount()) return reloadWhenSaved();
+      // Edits keep flowing while the bootstrap loads: what the server confirms meanwhile, and what
+      // is still waiting out the save delay when it arrives, are laid over it (see prime).
+      loadingFresh();
+      const b = await get('/api/bootstrap');
+      collect(false);
+      hydrate(b);
+      if (pendingCount()) flush();
       if (S.ui.drawer && !allTasks().some(t => t.id === S.ui.drawer)) S.ui.drawer = null;
       if (S.ui.route === 'project' && !proj(S.ui.params.id)) {
         S.ui.route = 'projects';
         S.ui.params = {};
       }
-      render();
+      // Not under someone's caret: shown once they leave the field they're typing in.
+      refresh();
     } catch (e) {
       if (e.status === 401 || e.status === 403) signedOut();
     } finally {
+      loadingFresh(false);
       reloading = null;
     }
   })();
@@ -87,9 +118,39 @@ function openRoute(h = '') {
   if (f && canSee(proj(f.project))) A.previewFile({ dataset: { id: f.id } });
 }
 
+/* Who this browser's session belongs to, for the app's other tabs (see stillMe). */
+const WHO_KEY = 'sudo-sapient.who';
+const who = () => {
+  try {
+    return localStorage.getItem(WHO_KEY);
+  } catch {
+    return null;
+  }
+};
+/* Whether this tab's person is still the one this browser is signed in as (as far as the other tabs
+   have said: a sign-in in one of them replaces the session cookie all of them send). */
+const stillMe = () => !S.ui.me || !who() || who() === S.ui.me.id;
+/* Someone else signed in on this browser: their session mustn't send this person's changes, so the
+   tab signs out at once, sending nothing. */
+function otherUser() {
+  const lost = pendingCount();
+  signedOut(`Someone else signed in on this browser, so you were signed out here.${lost ? " Changes that hadn't been saved yet were not sent." : ''}`, {
+    keepWho: true,
+  });
+}
+addEventListener('storage', e => {
+  if (e.key === WHO_KEY && e.newValue && S.ui.me && e.newValue !== S.ui.me.id) otherUser();
+});
+
 /* Decide what to show for a session state from /api/auth/session. */
 async function route(s, hash = '', msg) {
   S.ui.me = s.user;
+  if (s.user)
+    try {
+      localStorage.setItem(WHO_KEY, s.user.id);
+    } catch {
+      /* storage blocked: the tabs still check with the server when they wake */
+    }
   S.ui.wsName = s.workspace?.name || '';
   if (!s.user) {
     // Remember a deep link opened while signed out, and go there after signing in.
@@ -116,6 +177,7 @@ function show(screen) {
 const clearHash = () => history.replaceState(null, '', location.pathname + location.search);
 
 export async function boot() {
+  const flash = takeFlash();
   S.ui.af = { email: '', name: '' };
   S.ui.auth = 'boot';
   render();
@@ -185,6 +247,7 @@ export async function boot() {
       }
     }
     await route(s, ['verify', 'reset', 'invite', 'join', 'setup', 'email'].includes(kind) ? '' : hash);
+    if (flash) toast(flash, { kind: 'info', ms: 6000 });
   } catch (e) {
     S.ui.auth = 'boot-error';
     S.ui.bootError = e.message;
@@ -402,26 +465,84 @@ A.doReset = async () => {
 };
 
 /* ---------- sign out ---------- */
-export function signedOut(msg) {
+/* A message for the next page load to show (signing out reloads the page). */
+const FLASH_KEY = 'sudo-sapient.flash';
+/* Display preferences the browser may keep for whoever signs in next (so the theme applies before
+   the first request); everything else in them is the person's. */
+const DEVICE_PREFS = ['theme', 'accent', 'side', 'density', 'motion'];
+
+/* Signed out (or the session ended): nothing of this person may stay in the tab for whoever uses it
+   next. Personal preferences leave the browser and the page reloads, so no state survives: a new
+   API key or bot key, recovery codes, two-factor setup, drafts, half-filled forms, searches. */
+let leaving = false;
+export function signedOut(msg, { keepWho = false } = {}) {
+  // Once: the live stream closing can report the same sign-out again before the reload.
+  if (leaving) return;
+  leaving = true;
+  const mine = S.ui.me && who() === S.ui.me.id;
   stopSync();
   S.data = emptyData();
   S.views = {};
   Object.assign(S.ui, { pop: null, palette: null, drawer: null, modals: [], route: 'home', params: {}, history: [], errors: {}, me: null, offline: false });
   S.ui.sel.clear();
+  try {
+    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null') || {};
+    localStorage.setItem(PREFS_KEY, JSON.stringify(Object.fromEntries(DEVICE_PREFS.filter(k => k in p).map(k => [k, p[k]]))));
+    if (msg) sessionStorage.setItem(FLASH_KEY, msg);
+    else sessionStorage.removeItem(FLASH_KEY);
+    if (mine && !keepWho) localStorage.removeItem(WHO_KEY);
+  } catch {
+    /* storage blocked: nothing was kept there either */
+  }
   clearHash();
-  S.ui.auth = 'login';
-  render();
-  if (msg) toast(msg, { kind: 'info', ms: 6000 });
+  location.reload();
 }
+/* The message signedOut left for this page load, once. */
+function takeFlash() {
+  try {
+    const m = sessionStorage.getItem(FLASH_KEY);
+    sessionStorage.removeItem(FLASH_KEY);
+    return m;
+  } catch {
+    return null;
+  }
+}
+/* Signing out first saves what's queued. If some of it can't be saved (offline, or refused), it
+   asks before dropping it; and it only signs out here once the server has ended the session, so
+   the reloaded tab isn't still signed in behind the sign-in screen. */
 A.signOut = async () => {
   S.ui.pop = null;
-  await commit().catch(() => {});
-  await disablePushHere();
-  await post('/api/auth/logout').catch(() => {});
-  signedOut();
+  render();
+  const errs = await commit();
+  const refused = errs.filter(e => e !== OFFLINE_MSG);
+  const waiting = pendingCount();
+  if (waiting || refused.length) {
+    const why = waiting
+      ? `${S.ui.offline ? "You're offline, and some" : 'Some'} of your changes haven't reached the server yet. If you sign out now, they're lost.`
+      : `Some of your changes couldn't be saved: ${refused[0]}`;
+    return confirmDlg({ title: 'Sign out without saving?', body: esc(why), ok: 'Sign out anyway', danger: true, icon: 'log-out', run: leave });
+  }
+  await leave();
 };
+async function leave() {
+  await disablePushHere();
+  try {
+    await post('/api/auth/logout');
+  } catch (e) {
+    // Already signed out (401) is fine; otherwise stay, with everything still queued.
+    if (e.status !== 401) {
+      refreshPush();
+      toast(e.offline ? "You're offline, so you can't sign out yet. Try again once you're connected." : `Couldn't sign out. ${e.message}`, {
+        kind: 'err',
+        ms: 7000,
+      });
+      return;
+    }
+  }
+  signedOut();
+}
 
-onSync({ signedOut: () => signedOut('Your session ended. Sign in again to continue.'), resync: reload });
+onSync({ signedOut: () => signedOut('Your session ended. Sign in again to continue.'), otherUser, stillMe, resync: reload });
 
 /* ---------- onboarding ---------- */
 async function finishSetup() {
