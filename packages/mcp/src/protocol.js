@@ -1,7 +1,7 @@
 /* The MCP server core: JSON-RPC 2.0 messages in, responses out, independent of transport (stdio.js,
    http.js). Implements initialize, ping, tools and resources; nothing server-initiated, so it needs
    no sessions beyond remembering which client connected (for "Ada via Claude"). */
-import { FENCE_OPEN, RESOURCES, RESOURCE_TEMPLATES, fence, isWrite, readResource, registry, toolsFor } from './tools.js';
+import { FENCE_OPEN, RESOURCES, RESOURCE_TEMPLATES, checkArgs, fence, isWrite, readResource, registry, toolsFor } from './tools.js';
 
 export const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 // Kept equal to package.json by release-please (extra-files in release-please-config.json).
@@ -87,8 +87,12 @@ export function createMcp({ connect, readOnly = false }) {
         if (!tool) throw fail(-32602, `Unknown tool: ${params.name}`);
         if (isWrite(tool) && scope !== 'write')
           return { content: [{ type: 'text', text: 'insufficient_scope: this connection is read-only.' }], isError: true };
+        // Bad arguments are a result the model can correct, not a protocol error (as the MCP spec
+        // recommends for input validation).
+        const checked = checkArgs(tool.inputSchema, params.arguments);
+        if (checked.error) return { content: [{ type: 'text', text: `invalid_arguments: ${checked.error}` }], isError: true };
         try {
-          const out = await tool.run(api, params.arguments || {});
+          const out = await tool.run(api, checked.args);
           return { content: [{ type: 'text', text: fence(out) }] };
         } catch (e) {
           if (e.status === undefined) throw e;

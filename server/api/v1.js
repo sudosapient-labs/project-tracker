@@ -515,7 +515,10 @@ export function v1Routes({ limit }) {
     if (res.success) return res.data;
     const i = res.error.issues[0];
     const field = String(i.path[0] ?? (i.code === 'unrecognized_keys' ? i.keys?.[0] : '') ?? '');
-    const msg = i.code === 'unrecognized_keys' ? `Unknown field: ${i.keys.join(', ')}.` : field ? `${field}: ${i.message}` : i.message;
+    // A field that wasn't sent at all: zod says "expected nonoptional, received undefined".
+    const absent = i.code === 'invalid_type' && i.path.length === 1 && (v == null || typeof v !== 'object' || v[field] === undefined);
+    const msg =
+      i.code === 'unrecognized_keys' ? `Unknown field: ${i.keys.join(', ')}.` : absent ? `${field} is required.` : field ? `${field}: ${i.message}` : i.message;
     throw new ApiFail(400, where === 'body' || !field ? msg : `${msg} (in the ${where})`, 'invalid_request', field || undefined);
   };
   for (const rt of R)
