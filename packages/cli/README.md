@@ -1,7 +1,7 @@
 # @sudosapient/cli (`sudo-cli`)
 
-Sudo Sapient from the terminal: capture, list, assign, comment on and complete tasks, with `--json`
-for scripts. It talks only to the public API (`/api/v1`) with a personal API key, so it can do exactly
+Sudo Sapient from the terminal: everything you can do in the app, from capturing a task to sharing a
+project, uploading a file or managing people, with `--json` for scripts. It talks only to the public API (`/api/v1`) with a personal API key, so it can do exactly
 what you can do in the app, and its changes show in Activity as "you via CLI".
 
 ## Install
@@ -59,6 +59,43 @@ sudo-cli projects
 sudo-cli open WEB-212             # in the browser (--print just prints the URL)
 sudo-cli tasks --json | jq '.[].key'
 ```
+
+### Everything else
+
+`sudo-cli help <command>` lists a command's subcommands and options (or `sudo-cli <command> --help`).
+
+```bash
+sudo-cli tasks edit WEB-212 --status review --label bug,frontend --repeat weekly --depends WEB-200
+sudo-cli tasks archive WEB-212 · tasks restore · tasks dup · tasks fav · tasks rm · tasks undelete <id>
+sudo-cli subtask add WEB-212 "Write tests" -a grace   # ids come from sudo-cli show WEB-212
+sudo-cli subtask done WEB-212 <id> · subtask edit · subtask rm · subtask promote
+sudo-cli comment edit <id> "…" · comment rm <id> · comment undelete <id> · react <id> 👍 · unreact <id> 👍
+sudo-cli projects new "Mobile App" --prefix MOB --private --members grace --perm edit
+sudo-cli projects edit MOB --status risk --due 2026-12-01 --milestone "Beta=2026-11-20"
+sudo-cli projects share MOB grace@example.com --perm comment · projects unshare MOB grace
+sudo-cli projects show · archive · restore · dup · rm · request-access · fav · order WEB MOB
+sudo-cli teams new Platform --members grace,ada · teams edit · teams rm
+sudo-cli people invite cara@example.com --role Guest · people resend · people edit · people role grace Admin · people rm
+sudo-cli files upload ./spec.pdf --task WEB-212 · files download <id> [-o path|-] · files attach <id> WEB-212
+sudo-cli files rename · detach · dup · rm
+sudo-cli events new "Launch" --date 2026-12-01 --time 09:30 -p WEB · events --from today --to +30d
+sudo-cli views new "Urgent" -p WEB --type board --filter priority=urgent,high --filter assignee!=me
+sudo-cli inbox --unread · inbox read <id> · inbox read --all · activity -p WEB · search "login"
+sudo-cli me edit --title Engineer · prefs set theme=dark tz=Europe/Berlin · notify-prefs set email_comment=on
+sudo-cli workspace · favorites
+sudo-cli api GET /tasks -f project=WEB      # any endpoint; -f sends strings, -F typed values, --data JSON
+```
+
+- **Admin commands** (`people role`, `people rm`, others' names and titles, `workspace edit`,
+  `workspace invite-link`, `bots …`) work when the key's person is an Owner or Admin, as in the app.
+  For anyone else they fail with "Only owners and admins can do this".
+- **Deleting** a project, person, bot, team or file asks first; `--yes` (`-y`) skips the question,
+  and without a terminal to ask at (a script) `--yes` is required. Tasks and comments don't ask:
+  `tasks rm` and `comment rm` print how to undo them, which works for 10 minutes.
+- **Downloads** go to the file's own name in the current directory (reduced to a plain file name), or
+  `-o <path>`, or `-o -` for stdout. An existing file is never overwritten without `--force`.
+- Bot keys are made in Settings → API → Bots only; `bots` can list, change, remove and revoke them.
+- `none` clears a field: `--due none`, `--team none`, `--repeat none`, `--label none`.
 
 Due dates: `today`, `tomorrow`, a weekday (`friday`, `fri`; today counts), `next week`, `+3d`, `+2w`, or
 `2026-11-20`. Set `SUDO_PROJECT=WEB` to skip `-p`. Exit codes: `0` ok, `1` the API refused (the

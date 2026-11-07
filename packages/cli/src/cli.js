@@ -7,11 +7,10 @@ import readline from 'node:readline';
 import { parseArgs } from 'node:util';
 import { ApiError, createClient, plainHttpRemote, seg } from '@sudosapient/client';
 import { clearConfig, configPath, loadConfig, saveConfig } from '@sudosapient/client/config';
+import { ALIASES, NOUNS, PRIORITIES, STATUSES, nounHelp, rawApi, reaction } from './commands.js';
 
 // Kept equal to package.json by release-please (extra-files in release-please-config.json).
 export const VERSION = '0.1.0'; // x-release-please-version
-const STATUSES = ['backlog', 'todo', 'progress', 'review', 'done'];
-const PRIORITIES = ['urgent', 'high', 'medium', 'low', 'none'];
 
 export const HELP = `sudo-cli: Sudo Sapient from the terminal
 
@@ -27,8 +26,19 @@ Usage
   sudo-cli comment <KEY> "<text>"
   sudo-cli projects [list]
   sudo-cli open <KEY>                        opens a task or project in the browser (--print: just the URL)
+  sudo-cli search "<text>"
+
+More (sudo-cli help <command> lists each one's subcommands)
+  tasks       edit, rm, undelete, archive, restore, dup, fav, unfav
+  subtask     add, done, undo, edit, rm, promote
+  comment     edit, rm, undelete;  react / unreact <comment id> <emoji>
+  projects    show, new, edit, archive, restore, dup, rm, share, unshare, request-access, fav, unfav, order
+  teams, people, bots, files, events, views, inbox, activity, workspace, me, prefs, notify-prefs, favorites
+  api <METHOD> <path> [--data <json>] [-f key=value]... [-F key=value]...   any endpoint, JSON out
 
 Shortcuts: new, done, assign, show (= tasks …). Dates: today, tomorrow, friday, +3d, +2w, 2026-11-20.
+Deleting a project, person, bot, team or file asks first (--yes to skip; required without a
+terminal). Deleted tasks and comments can be undeleted for 10 minutes, so they don't ask.
 Options: --json (machine-readable output), --url, --insecure (allow a plain http:// URL to another
 machine; login remembers it). The key comes from login, else SUDO_API_KEY; --key works too, but it
 lands in your shell history and the process list, so prefer the prompt or the variable.
@@ -50,6 +60,42 @@ const OPTIONS = {
   mine: { type: 'boolean' },
   all: { type: 'boolean' },
   print: { type: 'boolean' },
+  archived: { type: 'boolean' },
+  title: { type: 'string' },
+  start: { type: 'string' },
+  label: { type: 'string', multiple: true },
+  repeat: { type: 'string' },
+  estimate: { type: 'string' },
+  depends: { type: 'string' },
+  order: { type: 'string' },
+  yes: { type: 'boolean', short: 'y' },
+  force: { type: 'boolean' },
+  output: { type: 'string', short: 'o' },
+  task: { type: 'string' },
+  perm: { type: 'string' },
+  name: { type: 'string' },
+  lead: { type: 'string' },
+  team: { type: 'string' },
+  private: { type: 'boolean' },
+  public: { type: 'boolean' },
+  milestone: { type: 'string', multiple: true },
+  members: { type: 'string' },
+  projects: { type: 'string' },
+  role: { type: 'string' },
+  color: { type: 'string' },
+  icon: { type: 'string' },
+  prefix: { type: 'string' },
+  unread: { type: 'boolean' },
+  from: { type: 'string' },
+  to: { type: 'string' },
+  date: { type: 'string' },
+  time: { type: 'string' },
+  type: { type: 'string' },
+  filter: { type: 'string', multiple: true },
+  brand: { type: 'string' },
+  data: { type: 'string' },
+  field: { type: 'string', short: 'F', multiple: true },
+  'raw-field': { type: 'string', short: 'f', multiple: true },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean', short: 'v' },
 };
@@ -114,18 +160,43 @@ export async function run(argv, io = {}) {
     err.write(`sudo-cli: ${e.message}\nRun sudo-cli --help for usage.\n`);
     return 2;
   }
+  const noun = n => (NOUNS[n] ? n : ALIASES[n]);
+  // `sudo-cli help tasks` and `sudo-cli tasks --help` list a command's subcommands.
+  if (pos[0] === 'help' || (o.help && noun(pos[0]))) {
+    const n = noun(pos[0] === 'help' ? pos[1] : pos[0]);
+    print(n ? nounHelp(n) : HELP);
+    return 0;
+  }
   if (o.version || o.help || !pos.length) {
     print(o.version ? VERSION : HELP);
     return o.version || o.help ? 0 : 2;
   }
 
-  // `tasks new …` and `new …` are the same command.
+  // `tasks new …` and `new …` are the same command. Subcommands with a handler in commands.js
+  // (`tasks edit`, `projects share`, `teams`, …) run from its table.
   let [cmd, ...args] = pos;
-  if (cmd === 'tasks' || cmd === 'task') {
+  let table = null;
+  const verbOf = (n, v) => (NOUNS[n].verbs[v]?.run ? NOUNS[n].verbs[v] : null);
+  const n0 = noun(cmd);
+  if (n0 === 'tasks') {
     const sub = args[0];
-    [cmd, ...args] = ['new', 'done', 'assign', 'show', 'list'].includes(sub) ? [sub === 'list' ? 'ls' : sub, ...args.slice(1)] : ['ls', ...args];
+    if (verbOf('tasks', sub)) table = { noun: 'tasks', verb: sub, args: args.slice(1) };
+    else [cmd, ...args] = ['new', 'done', 'assign', 'show', 'list'].includes(sub) ? [sub === 'list' ? 'ls' : sub, ...args.slice(1)] : ['ls', ...args];
+  } else if (n0 === 'projects') {
+    if (verbOf('projects', args[0])) table = { noun: 'projects', verb: args[0], args: args.slice(1) };
+    else [cmd, args] = ['projects', args[0] === 'list' ? args.slice(1) : args];
+  } else if (n0 === 'comment') {
+    if (verbOf('comment', args[0])) table = { noun: 'comment', verb: args[0], args: args.slice(1) };
+    else cmd = 'comment';
+  } else if (n0 === 'me' && !args.length) cmd = 'whoami';
+  else if (n0) {
+    const v = verbOf(n0, args[0]) ? args[0] : !args.length || args[0].startsWith('-') ? NOUNS[n0].default : null;
+    if (!v || !verbOf(n0, v)) {
+      err.write(`sudo-cli: Unknown command “${[cmd, args[0]].filter(Boolean).join(' ')}”. Run sudo-cli help ${n0}.\n`);
+      return 2;
+    }
+    table = { noun: n0, verb: v, args: v === args[0] ? args.slice(1) : args };
   }
-  if (cmd === 'projects' || cmd === 'project') [cmd, args] = ['projects', args[0] === 'list' ? args.slice(1) : args];
 
   const cfg = loadConfig(env);
   const url = (o.url || cfg.url || '').replace(/\/+$/, '');
@@ -150,7 +221,7 @@ export async function run(argv, io = {}) {
       f =>
       async (...args) =>
         clean(await f(...args));
-    return { ...a, get: wrap(a.get), post: wrap(a.post), patch: wrap(a.patch), all: wrap(a.all) };
+    return { ...a, get: wrap(a.get), post: wrap(a.post), patch: wrap(a.patch), put: wrap(a.put), del: wrap(a.del), upload: wrap(a.upload), all: wrap(a.all) };
   };
   const json = v => print(JSON.stringify(v, null, 2));
   const who = async a => new Map((await a.all('/members')).map(m => [m.id, m.name]));
@@ -162,7 +233,38 @@ export async function run(argv, io = {}) {
     return v;
   };
 
+  /* What commands.js handlers get. */
+  const x = {
+    o,
+    io: { ...io, stdout: out },
+    url,
+    api,
+    print,
+    json,
+    bold,
+    dim,
+    pad,
+    need,
+    names: who,
+    usage: msg => {
+      throw new UsageError(msg);
+    },
+    date: v => (/^none$/i.test(String(v)) ? null : parseDue(v)),
+    emit: (data, human) => (o.json ? json(data) : human(data)),
+    cancelled: () => (err.write('sudo-cli: cancelled.\n'), 1),
+    /* A yes at the terminal, or --yes. Without a terminal to ask at, --yes is required. */
+    async confirm(question) {
+      if (o.yes) return true;
+      if (!(io.stdin || process.stdin).isTTY) throw new UsageError(`${question} Pass --yes to go ahead (there's no terminal to ask at).`);
+      return /^y(es)?$/i.test((await ask(io, `${question} [y/N] `)).trim());
+    },
+  };
+
   try {
+    if (table) {
+      x.args = table.args;
+      return (await NOUNS[table.noun].verbs[table.verb].run(x)) || 0;
+    }
     switch (cmd) {
       case 'login': {
         const u = (o.url || (await ask(io, `Workspace URL${cfg.url ? ` (${cfg.url})` : ''}: `)) || cfg.url || '').trim().replace(/\/+$/, '');
@@ -215,7 +317,8 @@ export async function run(argv, io = {}) {
         const mine = o.mine || !project;
         const status = o.status || (o.all ? undefined : 'open');
         const n = Math.min(Math.max(Number(o.limit) || 50, 1), 500);
-        const [tasks, names] = await Promise.all([a.all('/tasks', { project, status, assignee: mine ? 'me' : undefined }, n), who(a)]);
+        const query = { project, status, assignee: mine ? 'me' : undefined, ...(o.archived ? { includeArchived: 'true' } : {}) };
+        const [tasks, names] = await Promise.all([a.all('/tasks', query, n), who(a)]);
         if (o.json) {
           json(tasks);
           return 0;
@@ -278,8 +381,17 @@ export async function run(argv, io = {}) {
         print(`${bold(t.key)} ${t.title}`);
         print(dim(`${t.status} · ${t.priority} · ${names.get(t.assignee) || 'unassigned'}${t.due ? ` · due ${t.due.slice(0, 10)}` : ''}`));
         if (t.description) print('\n' + t.description);
-        for (const s of t.subtasks) print(`  [${s.done ? 'x' : ' '}] ${s.title}`);
-        for (const c of comments.data) print(`\n${bold(names.get(c.author) || '?')} ${dim(new Date(c.createdAt).toLocaleString())}\n${c.text}`);
+        for (const s of t.subtasks)
+          print(
+            `  [${s.done ? 'x' : ' '}] ${s.title}${s.assignee ? ` · ${names.get(s.assignee) || '?'}` : ''}${s.due ? ` · ${s.due.slice(0, 10)}` : ''}  ${dim(s.id)}`,
+          );
+        for (const c of comments.data)
+          print(
+            `\n${bold(names.get(c.author) || '?')} ${dim(new Date(c.createdAt).toLocaleString())}  ${dim(c.id)}\n${c.text}${Object.entries(c.reactions || {})
+              .map(([e, w]) => ` ${e}${w.length}`)
+              .join('')
+              .replace(/^ /, '\n')}`,
+          );
         print('\n' + dim(t.url));
         return 0;
       }
@@ -293,13 +405,15 @@ export async function run(argv, io = {}) {
         return 0;
       }
       case 'projects': {
-        const ps = await api().all('/projects');
+        const ps = await api().all('/projects', o.archived ? { includeArchived: 'true' } : {});
         if (o.json) {
           json(ps);
           return 0;
         }
         for (const p of ps)
-          print(`${bold(pad(p.key, 8))} ${pad(p.name, 28)} ${dim(`${p.openTasks} open · ${p.doneTasks} done${p.private ? ' · private' : ''}`)}`);
+          print(
+            `${bold(pad(p.key, 8))} ${pad(p.name, 28)} ${dim(`${p.openTasks} open · ${p.doneTasks} done${p.private ? ' · private' : ''}${p.archived ? ' · archived' : ''}`)}`,
+          );
         return 0;
       }
       case 'open': {
@@ -327,6 +441,33 @@ export async function run(argv, io = {}) {
           .unref();
         return 0;
       }
+      case 'react':
+      case 'unreact': {
+        const [id, e] = args;
+        need(id && e, `sudo-cli ${cmd} <comment id> 👍  (comment ids are in sudo-cli show <KEY>)`);
+        const path = `/comments/${seg(id)}/reactions/${seg(reaction(x, e))}`;
+        const c = cmd === 'react' ? await api().put(path) : await api().del(path);
+        x.emit(c, () => print(`${cmd === 'react' ? 'Reacted' : 'Took back'} ${reaction(x, e)}`));
+        return 0;
+      }
+      case 'search': {
+        const q = need(args.join(' ').trim(), 'What to search for? sudo-cli search "login bug"');
+        const a = api();
+        const [r, names] = await Promise.all([a.get('/search', { q }), who(a)]);
+        if (o.json) {
+          json(r);
+          return 0;
+        }
+        for (const t of r.tasks) print(row(t, names));
+        for (const p of r.projects) print(`${bold(pad(p.key, 9))} ${dim('project')}  ${p.name}`);
+        for (const m of r.members) print(`${bold(pad(m.name, 22))} ${dim(m.email || m.kind)}`);
+        if (!r.tasks.length && !r.projects.length && !r.members.length) print(dim('No matches.'));
+        return 0;
+      }
+      case 'api':
+        x.args = args;
+        await rawApi(x);
+        return 0;
       default:
         throw new UsageError(`Unknown command “${cmd}”. Run sudo-cli --help.`);
     }
