@@ -1,0 +1,50 @@
+{
+  "_metadata": { "major_version": 2, "minor_version": 1 },
+  "display_information": {
+    "name": "Sudo Tracker",
+    "description": "File, find and update Sudo Sapient tasks from Slack.",
+    "long_description": "Mention @Sudo Tracker in a thread or DM it to turn conversations into tasks, update them, and ask about your work. It acts in the Sudo Sapient tracker as its own bot member, only within what you could see and change in the app, and asks you to confirm before changing existing tasks.",
+    "background_color": "#1f2937"
+  },
+  "features": {
+    "app_home": { "home_tab_enabled": false, "messages_tab_enabled": true, "messages_tab_read_only_enabled": false },
+    "bot_user": { "display_name": "Sudo Tracker", "always_online": true },
+    "shortcuts": [{ "name": "Create task", "type": "message", "callback_id": "create_task", "description": "Create a Sudo Sapient task from this message" }],
+    "slash_commands": [
+      {
+        "command": "/sudo",
+        "description": "Create and find tasks",
+        "usage_hint": "new <title> | my | search <words> | project <KEY> | help",
+        "should_escape": false
+      }
+    ],
+    "unfurl_domains": ["sudo-tracker-production.up.railway.app"]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "commands",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "im:write",
+        "links:read",
+        "links:write",
+        "users:read",
+        "users:read.email"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": { "bot_events": ["app_mention", "link_shared", "message.im"] },
+    "interactivity": { "is_enabled": true },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}
