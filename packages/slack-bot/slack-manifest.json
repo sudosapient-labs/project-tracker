@@ -18,7 +18,7 @@
         "should_escape": false
       }
     ],
-    "unfurl_domains": ["tracker.example.com"]
+    "unfurl_domains": ["sudo-tracker-production.up.railway.app"]
   },
   "oauth_config": {
     "scopes": {

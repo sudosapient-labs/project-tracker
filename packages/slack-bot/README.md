@@ -54,8 +54,10 @@ instruction hidden in a thread can't silently close or reassign work.
    it on the private projects it should work in, and make it a **Read and write** key. That key is
    `SUDO_API_KEY`.
 2. **Slack:** at https://api.slack.com/apps choose **Create New App → From a manifest**, pick the
-   workspace, and paste [`slack-manifest.json`](slack-manifest.json). Change `unfurl_domains` to your
-   tracker's domain (or remove it). Then:
+   workspace, and paste [`slack-manifest.json`](slack-manifest.json) (production) or
+   [`slack-manifest.staging.json`](slack-manifest.staging.json) ("Sudo Tracker (staging)", with
+   `/sudo-staging`, so the two can live in one workspace). Each lists its tracker's domain for
+   link previews. Then:
    - **Basic Information → App-Level Tokens:** create one with `connections:write`. That's
      `SLACK_APP_TOKEN` (`xapp-…`).
    - **Install App:** install it to the workspace. The **Bot User OAuth Token** is
