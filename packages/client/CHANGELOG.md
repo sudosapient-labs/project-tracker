@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/sudosapient-labs/project-tracker/compare/client-v0.1.0...client-v0.2.0) (2026-11-07)
+
+
+### Features
+
+* **api:** cover everything people do in the app, as the key's person ([273cc9e](https://github.com/sudosapient-labs/project-tracker/commit/273cc9ea3b21ed4b8cd9459aa04f0e87f7120af0))
+
+
+### Bug Fixes
+
+* **client:** wait out rate limits using Retry-After ([5d9a675](https://github.com/sudosapient-labs/project-tracker/commit/5d9a67507e71be49308e317ed4b721fb26d6bfff))
+
 ## 0.1.0 (2026-11-07)
 
 

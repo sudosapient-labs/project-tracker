@@ -1,6 +1,6 @@
 {
   "name": "@sudosapient/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Sudo Sapient from the terminal: capture, list, assign and complete tasks.",
   "repository": {
     "type": "git",

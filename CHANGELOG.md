@@ -5,6 +5,21 @@ All notable changes to this project are documented here. From 0.2.0 on this file
 when the release PR is merged (see [CI and releases](docs/ci-and-releases.md)), so don't edit those
 entries by hand. Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/sudosapient-labs/project-tracker/compare/v0.2.0...v0.3.0) (2026-11-07)
+
+
+### Features
+
+* **api:** cover everything people do in the app, as the key's person ([273cc9e](https://github.com/sudosapient-labs/project-tracker/commit/273cc9ea3b21ed4b8cd9459aa04f0e87f7120af0))
+
+
+### Bug Fixes
+
+* **app:** load over plain http on another address, not a blank page ([66c1e34](https://github.com/sudosapient-labs/project-tracker/commit/66c1e3481c9642d3ac74e715e1edaec5a3b07247))
+* **client:** wait out rate limits using Retry-After ([5d9a675](https://github.com/sudosapient-labs/project-tracker/commit/5d9a67507e71be49308e317ed4b721fb26d6bfff))
+* **mcp:** check tool arguments against each tool's inputSchema ([97b58f6](https://github.com/sudosapient-labs/project-tracker/commit/97b58f66c0712a350e9cdb632566138200e787c8))
+* **ui:** don't pull focus to a dialog's first field after someone picked another ([#21](https://github.com/sudosapient-labs/project-tracker/issues/21)) ([b88bbc2](https://github.com/sudosapient-labs/project-tracker/commit/b88bbc22d00b7ffd12322ce616fe96d97d31ed26))
+
 ## [0.2.0](https://github.com/sudosapient-labs/project-tracker/compare/v0.1.1...v0.2.0) (2026-11-07)
 
 
