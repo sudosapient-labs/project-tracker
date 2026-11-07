@@ -55,6 +55,12 @@ Create a personal API key in **Settings → API**, then use the REST API (`/api/
 `/api/mcp` ([setup](packages/mcp/README.md)). Keys act as you, and changes show live in the app as
 "you via CLI" or "via Claude". See [Public API, MCP and CLI](docs/api.md).
 
+### Slack
+
+[Sudo Tracker](packages/slack-bot/README.md) is a Slack agent, run as its own service: mention it in a thread
+to file tasks, update them or ask about work. It acts as a bot member, within what the person asking can see
+([roadmap](packages/slack-bot/ROADMAP.md)).
+
 ## Documentation
 
 - [Architecture](docs/architecture.md): how data flows, layers, conventions and the permission model
@@ -111,6 +117,7 @@ packages/
   client/               @sudosapient/client: fetch client for /api/v1, shared CLI/MCP config
   mcp/                  @sudosapient/mcp: MCP server (stdio `sudo-mcp`; hosted at /api/mcp)
   cli/                  @sudosapient/cli: the `sudo-cli` command
+  slack-bot/            @sudosapient/slack-bot: Sudo Tracker, the Slack agent (LangChain; its own service)
 test/server/            API tests (Vitest); packages/*/test hold the MCP and CLI tests
 e2e/                    user journeys (Playwright); serve.js starts the throwaway server
 docs/                   documentation and the README screenshot
