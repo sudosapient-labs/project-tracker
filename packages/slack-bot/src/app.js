@@ -91,7 +91,8 @@ export async function startApp(config, { log = console } = {}) {
 
 function healthServer(port, host) {
   const server = http.createServer((req, res) => {
-    const ok = req.method === 'GET' && (req.url === '/health' || req.url === '/');
+    // /api/health too, the tracker's path, in case a host applies the repository's root config.
+    const ok = req.method === 'GET' && ['/health', '/api/health', '/'].includes(req.url);
     res.writeHead(ok ? 200 : 404, { 'content-type': 'application/json' });
     res.end(JSON.stringify(ok ? { ok: true } : { error: 'not found' }));
   });
