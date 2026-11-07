@@ -127,3 +127,45 @@ describe('rate limits', () => {
     expect(calls.map(c => new URL(c.url).searchParams.get('cursor'))).toEqual([null, 'c2', 'c2']);
   });
 });
+
+describe('methods', () => {
+  it('put and del send JSON and no body', async () => {
+    const { api, calls } = client([ok({ favorite: true }), ok({ deleted: true })]);
+    await api.put('/tasks/WEB-1/favorite');
+    await api.del('/comments/c1');
+    expect(calls.map(c => [c.method, c.body, c.headers['content-type']])).toEqual([
+      ['PUT', '{}', 'application/json'],
+      ['DELETE', undefined, undefined],
+    ]);
+  });
+
+  it('uploads raw bytes with their type, and retries them on a rate limit', async () => {
+    const { api, calls } = client([limited('1'), { status: 201, body: { id: 'f1' } }]);
+    const bytes = new TextEncoder().encode('hello');
+    expect(await api.upload('/files', { project: 'WEB', name: 'a b.txt' }, bytes, 'text/plain')).toEqual({ id: 'f1' });
+    expect(calls).toHaveLength(2);
+    for (const c of calls) {
+      expect(c.url).toBe('https://sudo.test/api/v1/files?project=WEB&name=a+b.txt');
+      expect(c.headers['content-type']).toBe('text/plain');
+      expect(c.body).toBe(bytes);
+    }
+  });
+
+  it('downloads bytes with their type and file name', async () => {
+    const fetch = async () =>
+      new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { 'content-type': 'application/pdf', 'content-disposition': "attachment; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf" },
+      });
+    const api = createClient({ url: 'https://sudo.test', key: 'k', fetch });
+    const got = await api.download('/files/f1/content');
+    expect(got).toEqual({ bytes: new Uint8Array([1, 2, 3]), type: 'application/pdf', name: 'résumé.pdf' });
+    // A failed download is an ApiError like any other.
+    const missing = createClient({
+      url: 'https://sudo.test',
+      key: 'k',
+      fetch: fakeFetch([{ status: 404, body: { error: 'No file', code: 'not_found' } }]).fetch,
+    });
+    expect(await missing.download('/files/x/content').catch(e => e)).toMatchObject({ status: 404, code: 'not_found' });
+  });
+});

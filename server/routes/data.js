@@ -18,6 +18,28 @@ const PING_MS = 25_000;
    can ask for. */
 export const SYNCS_PER_MINUTE = 600;
 
+/* Save a person's display preferences, view settings and sidebar state (each optional; `prefs`
+   replaces theirs whole). Shared with the public API's PATCH /me/preferences. */
+export function saveState({ repo, engine }, uid, { prefs, views, collapsed }) {
+  const patch = {};
+  if (prefs) {
+    // Name and title live on the member record; prefs only mirrors them.
+    const { name, title, ...rest } = prefs;
+    patch.prefs = rest;
+  }
+  if (views) patch.views = views;
+  if (collapsed != null) patch.collapsed = collapsed;
+  repo.saveUserState(uid, patch);
+  // Show the person's local city on their profile, from their time-zone preference.
+  const city = TIMEZONES.some(z => z.id === prefs?.tz) && prefs.tz.split('/').pop().replace(/_/g, ' ');
+  const m = repo.get('members', uid);
+  if (city && m && m.tz !== city) {
+    m.tz = city;
+    repo.put('members', m);
+    engine.publish([{ c: 'members', id: m.id, v: m }]);
+  }
+}
+
 export function dataRoutes({ limit }) {
   const r = new Hono();
 
@@ -46,24 +68,7 @@ export function dataRoutes({ limit }) {
     const { prefs, views, collapsed } = b.data;
     if (JSON.stringify(prefs || {}).length > 32_000 || JSON.stringify(views || {}).length > 512_000)
       return c.json({ error: 'Settings are too large to save.' }, 413);
-    const patch = {};
-    if (prefs) {
-      // Name and title live on the member record; prefs only mirrors them.
-      const { name, title, ...rest } = prefs;
-      patch.prefs = rest;
-    }
-    if (views) patch.views = views;
-    if (collapsed != null) patch.collapsed = collapsed;
-    const { repo, engine } = c.var;
-    repo.saveUserState(c.var.auth.member.id, patch);
-    // Show the person's local city on their profile, from their time-zone preference.
-    const city = TIMEZONES.some(z => z.id === prefs?.tz) && prefs.tz.split('/').pop().replace(/_/g, ' ');
-    const m = repo.get('members', c.var.auth.member.id);
-    if (city && m && m.tz !== city) {
-      m.tz = city;
-      repo.put('members', m);
-      engine.publish([{ c: 'members', id: m.id, v: m }]);
-    }
+    saveState(c.var, c.var.auth.member.id, { prefs, views, collapsed });
     return c.json({ ok: true });
   });
 

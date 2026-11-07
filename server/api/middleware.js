@@ -11,10 +11,17 @@ const CODES = {
   403: 'forbidden',
   404: 'not_found',
   409: 'conflict',
+  410: 'gone',
   413: 'too_large',
   422: 'unprocessable',
   429: 'rate_limited',
+  507: 'storage_full',
 };
+
+/* File uploads (POST /api/v1/files) stream their body to disk, so it isn't buffered here, and is
+   checked again in the transaction that records the file (routes/files.js). */
+export const UPLOAD_PATH = '/api/v1/files';
+export const isUpload = c => c.req.method === 'POST' && c.req.path.replace(/\/+$/, '') === UPLOAD_PATH;
 const KEY_ERRORS = {
   invalid_key: 'That API key isn’t valid. It may have been revoked; create a new one in Settings → API.',
   expired_key: 'That API key has expired. Create a new one in Settings → API.',
@@ -53,7 +60,7 @@ export const bearer =
     // request has arrived, not only before a slow body (writes check it again in their
     // transaction; see engine.apply).
     let a = readKey(db, m[1]);
-    if (!a.error && c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+    if (!a.error && c.req.method !== 'GET' && c.req.method !== 'HEAD' && !isUpload(c)) {
       await c.req.arrayBuffer();
       a = readKey(db, m[1]);
     }
@@ -79,7 +86,7 @@ export const bearer =
 export const SELF_REVOKE = '/api/v1/me/key';
 const revokingItself = c => c.req.method === 'DELETE' && c.req.path.replace(/\/+$/, '') === SELF_REVOKE;
 
-/* Read keys may only read (or revoke themselves). */
+/* Read keys may only read (or revoke themselves). What a write key may do is its person's role. */
 export const scoped = async (c, next) => {
   if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && c.var.auth.key.scope !== 'write' && !revokingItself(c))
     return fail(c, 403, 'This API key is read-only. Create a key with write access to make changes.', 'insufficient_scope');
@@ -93,6 +100,8 @@ const inflight = new Set();
 export const idempotent = async (c, next) => {
   const idem = c.req.header('idempotency-key');
   if (c.req.method === 'GET' || c.req.method === 'HEAD' || idem == null) return next();
+  // An upload's body streams to disk instead of being read here, so it can't be fingerprinted.
+  if (isUpload(c)) return fail(c, 400, 'Idempotency-Key isn’t supported on uploads.', 'invalid_request', 'Idempotency-Key');
   if (!/^[\x21-\x7e]{1,255}$/.test(idem)) return fail(c, 400, 'Idempotency-Key must be 1–255 printable characters.', 'invalid_request', 'Idempotency-Key');
   const { db } = c.var;
   const keyId = c.var.auth.key.id;

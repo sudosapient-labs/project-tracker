@@ -31,18 +31,18 @@ async function freeBytes(dir) {
 }
 const FULL = 'There’s no room for more files in this workspace. Delete some files, or ask an admin to make room.';
 
-export function fileRoutes({ limit }) {
-  const r = new Hono();
+/* Uploading and serving files, shared by the app's /api/files and the public API's /api/v1/files, so
+   both check, store and announce a file the same way. Each answers with a Response, as /api/files
+   always has ({ error } on failure). `q` is { project, task, name }: ids, and the file's name. */
+export function createUploads({ limit }) {
   // Bytes reserved by uploads still streaming in (this process serves one workspace, so this is
   // both the workspace's and the disk's).
   let reserved = 0;
 
-  /* POST /api/files?project=&task=&name=  with the raw file as the body (streamed to disk). */
   // The body streams to disk, so it's checked again in the transaction that records the file.
-  r.post('/', requireAuth('member', { stream: true }), async c => {
+  async function upload(c, q) {
     const { db, repo, config } = c.var;
     const { member } = c.var.auth;
-    const q = c.req.query();
     const sent = Number(c.req.header('content-length') || 0);
     if (sent > config.maxUploadBytes) return c.json({ error: `Files can be up to ${fsize(config.maxUploadBytes)}.` }, 413);
     const p = repo.get('projects', String(q.project || ''));
@@ -68,7 +68,7 @@ export function fileRoutes({ limit }) {
     } finally {
       reserved -= max;
     }
-  });
+  }
 
   /* Stream the body to disk (at most `max` bytes, the reservation) and record the file. */
   async function receive(c, { p, q, max, sent }) {
@@ -110,7 +110,11 @@ export function fileRoutes({ limit }) {
     try {
       t = db.tx(() => {
         const a = currentAuth(db, c.var.auth);
-        if (!a) throw Object.assign(new Error('gone'), { status: 401, body: GONE });
+        if (!a)
+          throw Object.assign(new Error('gone'), {
+            status: 401,
+            body: c.var.auth.key ? { error: 'That API key is no longer valid.', code: 'invalid_key' } : GONE,
+          });
         const fp = repo.get('projects', p.id);
         if (!fp) throw Object.assign(new Error('gone'), { gone: 'That project no longer exists.' });
         if (projectLevel(fp, a.member) < EDIT) throw Object.assign(new Error('gone'), { status: 403, body: { error: 'You can’t add files to this project.' } });
@@ -126,7 +130,17 @@ export function fileRoutes({ limit }) {
           task.updated = now;
           repo.put('tasks', task, p.id);
           changes.push({ c: 'tasks', id: task.id, v: task, pid: p.id });
-          const a = { id: newId('a'), by: member.id, verb: 'added a file to', task: task.id, project: p.id, at: now, extra: name };
+          // `via`: what made the change when it wasn't the app (an API key, the CLI, an assistant).
+          const a = {
+            id: newId('a'),
+            by: member.id,
+            verb: 'added a file to',
+            task: task.id,
+            project: p.id,
+            at: now,
+            extra: name,
+            ...(q.via ? { via: q.via } : {}),
+          };
           repo.put('activity', a, p.id);
           changes.push({ c: 'activity', id: a.id, v: a, pid: p.id });
         }
@@ -149,14 +163,16 @@ export function fileRoutes({ limit }) {
     );
   }
 
-  r.get('/:id/:name?', requireAuth(), c => {
+  /* The bytes of file `id`, for someone who can see its project. `download`: always as an attachment. */
+  function serve(c, id, { download = false } = {}) {
     const { db, repo, config } = c.var;
-    const row = db.get('SELECT project_id, storage_key, mime, bytes, data FROM files WHERE id = ?', c.req.param('id'));
-    if (!row?.storage_key || !canSee(repo.get('projects', row.project_id), c.var.auth.member)) return c.json({ error: 'File not found.' }, 404);
+    const row = db.get('SELECT project_id, storage_key, mime, bytes, data FROM files WHERE id = ?', id);
+    if (!row?.storage_key || !canSee(repo.get('projects', row.project_id), c.var.auth.member))
+      return c.json({ error: 'File not found.', code: 'not_found' }, 404);
     const full = path.join(config.uploadDir, row.storage_key);
-    if (!fs.existsSync(full)) return c.json({ error: 'File not found.' }, 404);
+    if (!fs.existsSync(full)) return c.json({ error: 'File not found.', code: 'not_found' }, 404);
     const name = safeName(JSON.parse(row.data).name);
-    const inline = INLINE.test(row.mime) && c.req.query('download') == null;
+    const inline = INLINE.test(row.mime) && !download;
     c.header('Content-Type', inline ? row.mime : 'application/octet-stream');
     c.header('Content-Length', String(row.bytes));
     c.header('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(name)}`);
@@ -170,7 +186,18 @@ export function fileRoutes({ limit }) {
     );
     c.header('Cache-Control', 'no-store');
     return c.body(Readable.toWeb(fs.createReadStream(full)));
-  });
+  }
 
+  return { upload, serve };
+}
+
+export function fileRoutes({ uploads }) {
+  const r = new Hono();
+  /* POST /api/files?project=&task=&name=  with the raw file as the body (streamed to disk). */
+  r.post('/', requireAuth('member', { stream: true }), c => {
+    const { project, task, name } = c.req.query();
+    return uploads.upload(c, { project, task, name });
+  });
+  r.get('/:id/:name?', requireAuth(), c => uploads.serve(c, c.req.param('id'), { download: c.req.query('download') != null }));
   return r;
 }
