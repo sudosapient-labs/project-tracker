@@ -17,6 +17,9 @@ export function openModal(m) {
   setTimeout(() => {
     const all = $$('.modal');
     const last = all[all.length - 1];
+    // Someone (or something) already picked a field in it: moving focus now would send what
+    // they're typing to the first field instead.
+    if (last?.contains(document.activeElement)) return;
     const af = last?.querySelector('[autofocus]');
     (af || last?.querySelector('input,textarea,button'))?.focus();
   }, 30);
