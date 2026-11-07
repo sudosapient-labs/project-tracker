@@ -2,13 +2,15 @@
 /* Context budget: what an assistant loads from this server before doing anything (tools/list,
    resources, instructions), per tool and in total. Tokens are estimated at 4 characters each,
    close to what Claude and GPT tokenizers give for this kind of JSON. Usage:
-     node packages/mcp/scripts/budget.js [--read-only] [--json] */
+     node packages/mcp/scripts/budget.js [--read-only | --admin] [--json]
+   (the tools a read key, a write key, or an Owner's or Admin's write key is offered; write by
+   default) */
 import { RESOURCES, RESOURCE_TEMPLATES, toolsFor } from '../src/tools.js';
 import { INSTRUCTIONS } from '../src/protocol.js';
 
 const readOnly = process.argv.includes('--read-only');
 const tok = s => Math.ceil(s.length / 4);
-const tools = toolsFor({ scope: readOnly ? 'read' : 'write' });
+const tools = toolsFor({ scope: readOnly ? 'read' : 'write', admin: process.argv.includes('--admin') });
 const rows = tools.map(t => ({
   tool: t.name,
   description: t.description.length,
