@@ -1,5 +1,7 @@
 # Sudo Sapient: one Node process serves the API and the built client.
-FROM node:24-slim AS build
+# The base image is pinned by digest (the multi-arch index of node:24-slim), so a re-pushed tag can't
+# change what is built; Dependabot (docker) moves the digest and the tag together.
+FROM node:24-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9 AS build
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -10,7 +12,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build && pnpm prune --prod
 
-FROM node:24-slim
+FROM node:24-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
 WORKDIR /app
 ENV NODE_ENV=production PORT=8787 DATABASE_PATH=/data/sudo-sapient.db UPLOAD_DIR=/data/uploads
 COPY --from=build /app/node_modules ./node_modules

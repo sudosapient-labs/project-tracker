@@ -67,7 +67,7 @@ export function taskModal(m, H) {
   const f = S.ui.form;
   const p = proj(f.project);
   const err = S.ui.errors.title;
-  return `${H(m.edit ? 'Edit task' : 'New task', m.edit ? `<span class="mono">${task(m.edit)?.key}</span>` : '')}
+  return `${H(m.edit ? 'Edit task' : 'New task', m.edit ? `<span class="mono">${esc(task(m.edit)?.key)}</span>` : '')}
   <form class="modal-b" data-submit="submitTask" style="gap:12px">
     <div class="field"><label class="sr" for="f-title">Task name</label><input class="input input-lg ${err ? 'is-error' : ''}" id="f-title" data-in="form" data-f="title" value="${esc(f.title)}" placeholder="Task name" autofocus aria-invalid="${!!err}" aria-describedby="f-title-err" style="font-size:15px;font-weight:500">${err ? `<span class="err" id="f-title-err">${ic('circle-alert', 12)}${esc(err)}</span>` : ''}</div>
     ${

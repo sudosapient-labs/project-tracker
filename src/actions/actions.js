@@ -79,7 +79,17 @@ export function applyPatch(t, patch) {
         logAct('completed', t);
         fxSet({ done: t.id });
       } else logAct('moved', t, `from ${ST[old].name} to ${ST[nv].name}`);
-      if (nv === 'done' && t.recur && t.due) {
+      // Reopened (or the completion undone): the next occurrence it scheduled goes again, unless
+      // someone has worked on it since. A kept one stays linked, so completing again adds no other.
+      if (old === 'done' && nv !== 'done' && t.nextId) {
+        const n = task(t.nextId);
+        if (!n) delete t.nextId;
+        else if (untouchedOccurrence(n)) {
+          deleteTasks([n.id]);
+          delete t.nextId;
+        }
+      }
+      if (nv === 'done' && t.recur && t.due && !(t.nextId && task(t.nextId))) {
         const nd = shiftD(t.due, RECUR_DAYS[t.recur] || 7);
         const n = createTask({
           ...JSON.parse(JSON.stringify(t)),
@@ -93,6 +103,10 @@ export function applyPatch(t, patch) {
           attachments: [],
         });
         delete n.prevStatus;
+        delete n.nextId;
+        // Fresh times: `updated` still equal to `created` is how a reopen knows it's untouched.
+        n.created = n.updated = Date.now();
+        t.nextId = n.id;
         msgs.push(`Next “${t.title}” scheduled for ${fmtDateTime(nd)}`);
       }
     } else if (k === 'assignee') logAct('assigned', t, nv ? `to ${mem(nv)?.name}` : '(unassigned)');
@@ -112,6 +126,8 @@ export function applyPatch(t, patch) {
   }
   return msgs;
 }
+/* A scheduled next occurrence nobody has changed or commented on since it was made. */
+const untouchedOccurrence = n => n.updated === n.created && n.status === 'todo' && !commentsOf(n.id).length;
 export function updateTask(id, patch) {
   if (id === '__form') {
     Object.assign(S.ui.form, patch);

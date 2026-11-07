@@ -36,8 +36,12 @@ describe('sign up, verify, sign in, sign out', () => {
     expect(weak.status).toBe(400);
     expect(weak.body.field).toBe('password');
     await account(t);
+    // Invite-only: an existing account gets the same answer as anyone else (see audit-low.test.js).
     const dup = await t.client().post('/api/auth/signup', { name: 'B', email: 'ADA@example.com', password: PW });
-    expect(dup.status).toBe(409);
+    expect(dup.status).toBe(403);
+    expect(dup.body.code).toBe('invite_only');
+    t.config.allowOpenSignup = true;
+    expect((await t.client().post('/api/auth/signup', { name: 'B', email: 'ADA@example.com', password: PW })).status).toBe(409);
 
     const bad = await t.client().post('/api/auth/login', { email: 'ada@example.com', password: 'wrong-password-1' });
     expect(bad.status).toBe(401);

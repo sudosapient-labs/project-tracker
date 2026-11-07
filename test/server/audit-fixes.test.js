@@ -861,16 +861,25 @@ describe('M5 undoing a delete restores the record as it was', () => {
   it('can’t be used by someone else, or to forge an author', async () => {
     const { t, ada, carol, original } = await thread();
     await ada.sync([{ c: 'comments', id: 'c1', k: 'del' }]);
-    await carol.sync([{ c: 'comments', id: 'c1', k: 'put', v: { ...original, by: 'mbob', at: 1 }, restore: true }]);
-    expect(t.repo.get('comments', 'c1')).toMatchObject({ by: 'mcarol', re: {} });
-    expect(t.repo.get('comments', 'c1').at).toBeGreaterThan(1);
+    const before = notifs(t);
+    const r = await carol.sync([{ c: 'comments', id: 'c1', k: 'put', v: { ...original, by: 'mbob', at: 1 }, restore: true }]);
+    // Refused rather than created anew (which would re-author it and notify people again).
+    expect(r.body.results[0]).toMatchObject({ ok: false, status: 410, v: null });
+    expect(t.repo.get('comments', 'c1')).toBeNull();
+    expect(notifs(t)).toBe(before);
   });
 
   it('only shortly after the delete', async () => {
     const { t, ada, adaId, original } = await thread();
     await ada.sync([{ c: 'comments', id: 'c1', k: 'del' }]);
     t.db.run('UPDATE recent_deletes SET deleted_at = deleted_at - ?', 11 * 60_000);
-    await ada.sync([{ c: 'comments', id: 'c1', k: 'put', v: original, restore: true }]);
+    const before = notifs(t);
+    const r = await ada.sync([{ c: 'comments', id: 'c1', k: 'put', v: original, restore: true }]);
+    expect(r.body.results[0]).toMatchObject({ ok: false, status: 410, error: 'This can no longer be undone.' });
+    expect(t.repo.get('comments', 'c1')).toBeNull();
+    expect(notifs(t)).toBe(before);
+    // The same record sent as an ordinary new one (no `restore`) is still created, authored by the sender.
+    await ada.sync([{ c: 'comments', id: 'c1', k: 'put', v: original }]);
     expect(t.repo.get('comments', 'c1')).toMatchObject({ by: adaId, re: {} });
   });
 

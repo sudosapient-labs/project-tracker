@@ -11,5 +11,7 @@ data/
 backups/
 test-results/
 playwright-report/
-# local CLI state
-.railway/
+# local Railway CLI state (the project link); .railway/railway.ts, the config-as-code that is to
+# replace railway.json, is committed
+.railway/*
+!.railway/railway.ts

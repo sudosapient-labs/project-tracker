@@ -8,15 +8,17 @@ import { parseArgs } from 'node:util';
 import { ApiError, createClient, plainHttpRemote, seg } from '@sudosapient/client';
 import { clearConfig, configPath, loadConfig, saveConfig } from '@sudosapient/client/config';
 
-export const VERSION = '0.1.0';
+// Kept equal to package.json by release-please (extra-files in release-please-config.json).
+export const VERSION = '0.1.0'; // x-release-please-version
 const STATUSES = ['backlog', 'todo', 'progress', 'review', 'done'];
 const PRIORITIES = ['urgent', 'high', 'medium', 'low', 'none'];
 
 export const HELP = `sudo-cli: Sudo Sapient from the terminal
 
 Usage
-  sudo-cli login [--url <workspace url>] [--key <api key>]
-  sudo-cli logout | whoami
+  sudo-cli login [--url <workspace url>]       asks for the key (or pipe it in)
+  sudo-cli logout [--revoke]                   --revoke: also revoke the key on the server
+  sudo-cli whoami
   sudo-cli tasks [list] [--mine] [-p <project>] [-s <status>] [--all] [-n <limit>]
   sudo-cli tasks new "<title>" -p <project> [--due <date>] [-a <who>] [--priority <p>] [-d <text>]
   sudo-cli tasks done <KEY>...
@@ -27,8 +29,9 @@ Usage
   sudo-cli open <KEY>                        opens a task or project in the browser (--print: just the URL)
 
 Shortcuts: new, done, assign, show (= tasks …). Dates: today, tomorrow, friday, +3d, +2w, 2026-11-20.
-Options: --json (machine-readable output), --url, --key (else SUDO_URL / SUDO_API_KEY, else login),
---insecure (allow a plain http:// URL to another machine; login remembers it).
+Options: --json (machine-readable output), --url, --insecure (allow a plain http:// URL to another
+machine; login remembers it). The key comes from login, else SUDO_API_KEY; --key works too, but it
+lands in your shell history and the process list, so prefer the prompt or the variable.
 Create a key in Settings → API. Config: ${'$'}XDG_CONFIG_HOME/sudo-sapient/config.json.`;
 
 const OPTIONS = {
@@ -36,6 +39,7 @@ const OPTIONS = {
   url: { type: 'string' },
   key: { type: 'string' },
   insecure: { type: 'boolean' },
+  revoke: { type: 'boolean' },
   project: { type: 'string', short: 'p' },
   status: { type: 'string', short: 's' },
   assignee: { type: 'string', short: 'a' },
@@ -70,6 +74,16 @@ export function parseDue(s, now = new Date()) {
 }
 
 class UsageError extends Error {}
+
+/* `link` is on the same site as the workspace (scheme, host and port), so nothing the server sends
+   can make the CLI open some other page or program. */
+export function sameOrigin(link, workspace) {
+  try {
+    return new URL(link).origin === new URL(workspace).origin;
+  } catch {
+    return false;
+  }
+}
 
 /* Text from the workspace is printed to a terminal: drop control characters (escape sequences could
    rewrite the screen or the clipboard), keeping newlines and tabs. */
@@ -116,6 +130,8 @@ export async function run(argv, io = {}) {
   const cfg = loadConfig(env);
   const url = (o.url || cfg.url || '').replace(/\/+$/, '');
   const key = o.key || cfg.key;
+  if (o.key)
+    err.write('sudo-cli: warning: --key leaves the key in your shell history and the process list. Prefer the prompt (sudo-cli login) or SUDO_API_KEY.\n');
   // The key goes in a header on every request: never in the clear to another machine unless asked.
   const insecureOk = o.insecure || (!o.url && cfg.insecure);
   const needSecure = (u, ok = insecureOk) => {
@@ -159,11 +175,31 @@ export async function run(argv, io = {}) {
         else print(`Logged in to ${me.workspace || u} as ${me.name} (${me.key.scope} key “${me.key.name}”). Saved to ${file}`);
         return 0;
       }
-      case 'logout':
+      case 'logout': {
+        // Revoke the key on the server too: when asked (--revoke), or after a yes at the terminal.
+        const tty = (io.stdin || process.stdin).isTTY;
+        const revoke =
+          !!(url && key) &&
+          (o.revoke ||
+            (tty && !o.json && /^y(es)?$/i.test((await ask(io, 'Also revoke this key on the server, so it stops working everywhere? [y/N] ')).trim())));
+        let revoked = false;
+        if (revoke)
+          try {
+            await api().request('DELETE', '/me/key');
+            revoked = true;
+          } catch (e) {
+            // Already revoked or expired: nothing left to do on the server.
+            if (!(e instanceof ApiError && e.status === 401)) throw e;
+            revoked = true;
+          }
         clearConfig(env);
-        if (!o.json) print(`Removed ${configPath(env)}. Revoke the key itself in Settings → API.`);
-        else json({ ok: true });
+        if (o.json) json({ ok: true, revoked });
+        else
+          print(
+            `Removed ${configPath(env)}.${revoked ? ' The key is revoked.' : ' The key still works until you revoke it in Settings → API (logout --revoke does both).'}`,
+          );
         return 0;
+      }
       case 'whoami': {
         const me = await api().get('/me');
         if (o.json) json(me);
@@ -269,6 +305,12 @@ export async function run(argv, io = {}) {
         need(url, 'Not logged in. Run: sudo-cli login');
         // Keys look like WEB-12 (a task) or WEB (a project); resolve through the API so typos fail here.
         const target = /-\d+$/.test(k) ? (await api().get(`/tasks/${seg(k)}`)).url : (await api().get(`/projects/${seg(k)}`)).url;
+        // The link comes from the server and goes to xdg-open / open / explorer, which would run or
+        // open anything: only a page of the workspace itself is opened (or printed).
+        if (!sameOrigin(target, url)) {
+          err.write(`sudo-cli: the workspace answered with a link outside ${new URL(url).origin}; not opening it.\n`);
+          return 1;
+        }
         if (o.json) {
           json({ url: target });
           return 0;
@@ -292,8 +334,10 @@ export async function run(argv, io = {}) {
       return 2;
     }
     if (e instanceof ApiError) {
-      if (o.json) err.write(JSON.stringify({ error: e.message, code: e.code, ...(e.field ? { field: e.field } : {}) }) + '\n');
-      else err.write(`sudo-cli: ${e.message}${e.status === 401 ? ' Run sudo-cli login.' : ''}\n`);
+      // The message is the server's text: stripped of control characters like everything else it sends.
+      const msg = clean(e.message);
+      if (o.json) err.write(JSON.stringify(clean({ error: msg, code: e.code, ...(e.field ? { field: e.field } : {}) })) + '\n');
+      else err.write(`sudo-cli: ${msg}${e.status === 401 ? ' Run sudo-cli login.' : ''}\n`);
       return 1;
     }
     throw e;

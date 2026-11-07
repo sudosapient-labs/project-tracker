@@ -74,9 +74,14 @@ export const bearer =
     return next();
   };
 
-/* Read keys may only read. */
+/* A key revoking itself (DELETE /api/v1/me/key, v1.js): allowed for any scope, since it only takes
+   access away, and it can never name another key. */
+export const SELF_REVOKE = '/api/v1/me/key';
+const revokingItself = c => c.req.method === 'DELETE' && c.req.path.replace(/\/+$/, '') === SELF_REVOKE;
+
+/* Read keys may only read (or revoke themselves). */
 export const scoped = async (c, next) => {
-  if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && c.var.auth.key.scope !== 'write')
+  if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && c.var.auth.key.scope !== 'write' && !revokingItself(c))
     return fail(c, 403, 'This API key is read-only. Create a key with write access to make changes.', 'insufficient_scope');
   return next();
 };
@@ -104,7 +109,8 @@ export const idempotent = async (c, next) => {
   try {
     await next();
     // A write that committed is recorded even if answering then failed, so a retry can't repeat it.
-    if (c.res.status < 500 || c.get('committed'))
+    // (Not when the request revoked its own key: nothing can replay it, and its records went with it.)
+    if ((c.res.status < 500 || c.get('committed')) && db.get('SELECT 1 FROM api_keys WHERE id = ?', keyId))
       db.run(
         'INSERT OR REPLACE INTO api_idempotency (key_id, idem_key, fingerprint, status, body, created_at) VALUES (?, ?, ?, ?, ?, ?)',
         keyId,

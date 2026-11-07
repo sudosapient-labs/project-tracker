@@ -3,6 +3,22 @@
    this if the API ever runs on several instances. */
 const TOO_MANY = 'Too many attempts. Wait a minute and try again.';
 
+/* The rate-limit key for a client address. An IPv6 client is keyed on its /64: one subscriber is
+   usually given a whole /64, so keying on full addresses would hand each of them 2^64 budgets. */
+export function ipKey(/** @type {string} */ ip) {
+  if (!ip?.includes(':')) return ip;
+  const [h, t] = ip.split('%')[0].toLowerCase().split('::');
+  // An embedded IPv4 address (::ffff:1.2.3.4 style) takes the place of two groups.
+  const groups = (/** @type {string | undefined} */ s) => (s ? s.split(':').flatMap(g => (g.includes('.') ? ['0', '0'] : [g])) : []);
+  const head = groups(h);
+  const tail = groups(t);
+  const all = t === undefined ? head : [...head, ...Array(Math.max(0, 8 - head.length - tail.length)).fill('0'), ...tail];
+  return `${all
+    .slice(0, 4)
+    .map(g => (parseInt(g, 16) || 0).toString(16))
+    .join(':')}::/64`;
+}
+
 export function rateLimiter({ enabled = true } = {}) {
   const hits = new Map();
   setInterval(() => {
@@ -45,9 +61,9 @@ export function rateLimiter({ enabled = true } = {}) {
     return h && h.reset >= Date.now() && h.n >= limit ? Math.ceil((h.reset - Date.now()) / 1000) : 0;
   };
 
-  /* Middleware, keyed by client IP unless `keyOf(c)` says otherwise (e.g. the signed-in person). */
+  /* Middleware, keyed by client IP (an IPv6 client by its /64) unless `keyOf(c)` says otherwise (e.g. the signed-in person). */
   const limit =
-    (name, n, windowMs, { keyOf = c => c.get('ip'), message = TOO_MANY } = {}) =>
+    (name, n, windowMs, { keyOf = c => ipKey(c.get('ip')), message = TOO_MANY } = {}) =>
     async (c, next) => {
       const key = `${name}:${keyOf(c)}`;
       if (!hit(key, n, windowMs)) {

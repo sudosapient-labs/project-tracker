@@ -82,6 +82,12 @@ function findToken(db, kind, raw) {
   if (!t || t.used_at || t.expires_at < Date.now()) return null;
   return t;
 }
+/* A join link only works while whoever made it is still an Owner or Admin (demoting them also
+   retires it, rules.js members.update). */
+function findJoinToken(db, repo, raw) {
+  const t = findToken(db, 'join', raw);
+  return t && isAdminRole(repo.get('members', t.user_id)) ? t : null;
+}
 const useToken = (db, t) => db.run('UPDATE auth_tokens SET used_at = ? WHERE token_hash = ?', Date.now(), t.token_hash);
 const sameSecret = (a, b) => typeof a === 'string' && sha256(a) === sha256(b);
 
@@ -195,6 +201,12 @@ export function authRoutes({ limit }) {
     };
   };
   const devLink = (c, link) => (c.var.config.exposeEmailLinks ? { devLink: link } : {});
+  // One answer for every sign-up an invite-only workspace refuses, naming nobody.
+  const inviteOnly = c =>
+    c.json(
+      { error: 'This workspace is invite-only. Ask an admin to invite you, or sign in if you already have an account.', field: 'email', code: 'invite_only' },
+      403,
+    );
 
   r.get('/session', c => c.json(sessionState(c)));
 
@@ -216,13 +228,17 @@ export function authRoutes({ limit }) {
     const { name, email: em, password: pw, invite, join } = b.data;
     if (!repo.workspace() && setup.token && !sameSecret(b.data.setup, setup.token))
       return c.json({ error: 'Open the setup link from the server log to create the first account.', code: 'setup_required' }, 403);
+    const inviteTok = invite && findToken(db, 'invite', invite);
+    const inviteOk = inviteTok && inviteTok.email.toLowerCase() === em;
+    const joinOk = !!findJoinToken(db, repo, join);
+    // Without an invite for this address or a join link, an invite-only workspace answers the same
+    // whether the address has an account, a pending invite or neither, so sign-up can't be used to
+    // find out who is in the workspace.
+    if (repo.workspace() && !config.allowOpenSignup && !inviteOk && !joinOk) return inviteOnly(c);
     if (db.get('SELECT 1 FROM users WHERE email = ?', em))
       return c.json({ error: 'An account with this email already exists. Sign in instead.', field: 'email' }, 409);
 
     const hash = await hashPassword(pw);
-    const inviteTok = invite && findToken(db, 'invite', invite);
-    const inviteOk = inviteTok && inviteTok.email.toLowerCase() === em;
-    const joinOk = !!(join && findToken(db, 'join', join));
     let out;
     try {
       out = db.tx(() => {
@@ -270,7 +286,7 @@ export function authRoutes({ limit }) {
     } catch (e) {
       if (e.code === 'invite_required')
         return c.json({ error: `${em} has a pending invite. Use the invite link in that email to join.`, field: 'email', code: 'invite_required' }, 403);
-      if (e.status === 403) return c.json({ error: `This workspace is invite-only. Ask an admin to invite ${em}.`, field: 'email', code: 'invite_only' }, 403);
+      if (e.status === 403) return inviteOnly(c);
       throw e;
     }
     mailer.drain();
@@ -290,7 +306,7 @@ export function authRoutes({ limit }) {
 
   /* Prefill for the sign-up screen when someone opens a workspace invite link. */
   r.get('/join/:token', c => {
-    if (!findToken(c.var.db, 'join', c.req.param('token'))) return c.json({ error: 'This invite link has expired. Ask for a new one.' }, 404);
+    if (!findJoinToken(c.var.db, c.var.repo, c.req.param('token'))) return c.json({ error: 'This invite link has expired. Ask for a new one.' }, 404);
     return c.json({ workspace: c.var.repo.workspace()?.name || '' });
   });
 
@@ -411,6 +427,8 @@ export function authRoutes({ limit }) {
     if (a) c.var.db.run('DELETE FROM sessions WHERE id = ?', a.session.id);
     if (a) c.var.engine.disconnectSession(a.session.id);
     clearSessionCookie(c);
+    // Whatever this person's session left in the browser's HTTP cache goes too.
+    c.header('Clear-Site-Data', '"cache"');
     return c.json({ ok: true });
   });
 

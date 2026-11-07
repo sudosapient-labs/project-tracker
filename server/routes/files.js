@@ -168,7 +168,7 @@ export function fileRoutes({ limit }) {
         ? "default-src 'none'; object-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'"
         : "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox",
     );
-    c.header('Cache-Control', 'private, max-age=3600');
+    c.header('Cache-Control', 'no-store');
     return c.body(Readable.toWeb(fs.createReadStream(full)));
   });
 

@@ -1,5 +1,5 @@
 /* A minimal client for the Sudo Sapient public API (/api/v1), shared by the CLI and the MCP server.
-   No dependencies: it runs on any fetch (Node 20+, or an in-process `app.request`). */
+   No dependencies: it runs on any fetch (Node 22+, or an in-process `app.request`). */
 
 export class ApiError extends Error {
   constructor(status, body) {

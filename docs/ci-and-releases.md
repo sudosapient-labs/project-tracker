@@ -86,24 +86,28 @@ They stay `UNLICENSED` with no license file: visible, but all rights reserved.
   (`client-vX.Y.Z`, `cli-vX.Y.Z`, `mcp-vX.Y.Z`). A commit counts for a package when it touches files in
   that package's folder; the app (`.`) ignores commits that only touch `packages/`. The same release PR
   carries every component that has something to release.
-- Merging the release PR runs two jobs in `release-please.yml`, only when a package was released:
+- Merging the release PR runs three jobs in `release-please.yml`, only when a package was released:
 
   ```
-  release-please ─► pack-npm ─► publish-npm (environment: npm)
+                 ┌─► check-npm ─┐
+  release-please ┤              ├─► publish-npm (environment: npm)
+                 └─► pack-npm ──┘
   ```
 
   | Job           | Permissions                 | Runs                                                                                                                                              |
   | ------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `pack-npm`    | `contents: read`            | `pnpm install`, then `lint`, `typecheck` and `test` again (CI runs on the same push in parallel), then `pnpm pack` for each released package      |
+  | `check-npm`   | `contents: read`            | `pnpm install`, then `lint`, `typecheck` and `test` again (CI runs on the same push in parallel); publishing waits for it                         |
+  | `pack-npm`    | `contents: read`            | `pnpm pack` for each released package, with nothing installed: no dependency's code runs in the job whose output is published                     |
   | `publish-npm` | `id-token: write`, no other | downloads those tarballs and runs `npm publish <tarball> --access public --provenance` on each, `client` first; no checkout, no install, no cache |
 
-  `pnpm pack` turns `workspace:*` into the real version (`pack-npm` fails if a tarball still has a
-  `workspace:` dependency), and the tarballs reach `publish-npm` as the `npm-tarballs` artifact. A version
+  `pnpm pack` turns `workspace:*` into the real version from the workspace's own `package.json` files,
+  which needs no `node_modules` (`pack-npm` fails if a tarball still has a `workspace:` dependency, or
+  if anything was installed), and the tarballs reach `publish-npm` as the `npm-tarballs` artifact. A version
   that's already on npm is skipped, so re-running `publish-npm` is safe; the artifact is kept for 7 days.
 
 - `publish-npm` is the only job in the repository with `id-token: write`, the permission that lets a job
   ask GitHub for the OIDC token npm accepts. Keeping it apart means the dev dependencies and tests that
-  `pack-npm` runs can't reach that token.
+  `check-npm` runs can't reach that token, and they never touch the tarballs either.
 - It authenticates with [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC):
   there is no npm token in GitHub. npm checks that `repository.url` in the package's `package.json` is
   this repository, so keep it. Each version gets a provenance attestation linking it to the workflow run.
@@ -112,8 +116,29 @@ They stay `UNLICENSED` with no license file: visible, but all rights reserved.
   reviewers, on purpose: a publish waiting for approval keeps the release run open, and Railway's
   "Wait for CI" would wait on it.
 
+The version `sudo-cli --version` and `sudo-mcp --version` print (and the MCP server reports) is a
+constant in `packages/cli/src/cli.js` and `packages/mcp/src/protocol.js`, marked
+`// x-release-please-version`; release-please bumps it with `package.json` (`extra-files`), and a
+test fails if the two differ.
+
 `cli` and `mcp` pin the exact `client` version they were released with. A `client`-only release
 doesn't reach them until they're released again.
+
+### Releases and Railway deploys
+
+Railway deploys each push to `prod` once its GitHub checks are done ("Wait for CI"). Those checks
+can include the **Release** workflow as well as CI: a push that merges a release PR runs both, and
+Railway may wait for every check on the commit. So when a release PR carries an npm package, a
+publish that fails, or a run left waiting (on the `npm` environment, or for a re-run), can hold the
+app's deploy back even though the app itself passed CI. That is also why the `npm` environment has
+no required reviewers.
+
+Release the app and the packages in **separate release PRs** where you can: merge the app's release
+on its own, and the packages' (only `packages/` changed) in another. release-please puts every
+component with something to release in one PR, so to split them, merge the release PR when only one
+side has unreleased commits, or land the other side's changes after it. If a publish does fail on a
+combined release, fix or re-run `publish-npm` (the tarballs are kept 7 days) rather than leaving the
+run failed, or redeploy from Railway once you've checked the app.
 
 ### One-time npm setup
 
@@ -143,9 +168,12 @@ the publish step sees the version is already on npm and skips it.
 ## Dependencies
 
 Dependabot (`.github/dependabot.yml`) opens a weekly PR for npm (minor and patch updates grouped;
-majors come one by one) and one for GitHub Actions. Their titles are already Conventional Commits
-(`chore(deps)`, `ci(deps)`).
+majors come one by one), one for GitHub Actions and one for the Dockerfile's base image. Their titles
+are already Conventional Commits (`chore(deps)`, `ci(deps)`).
 
 Every third-party action, in the workflows and in `.github/actions/setup`, is pinned to a full commit SHA
 with the version in a comment (`uses: actions/checkout@<sha> # v4.4.0`), so a moved tag can't change
 what runs. Dependabot updates the SHA and the comment together; keep the comment when pinning by hand.
+The Dockerfile's base image is pinned the same way, by the digest of its multi-arch index
+(`FROM node:24-slim@sha256:…`); to move it by hand, take the digest from
+`docker buildx imagetools inspect node:24-slim` and update both `FROM` lines.

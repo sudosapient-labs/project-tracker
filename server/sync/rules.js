@@ -6,7 +6,7 @@ import { PR, ST } from '../../src/core/constants.js';
 import { COMMENT, EDIT, PERMS, VIEW, canManageProject, canSeeProject, isAdminRole, projectLevel } from '../../src/core/access.js';
 import { fileType, fsize } from '../../src/core/file-types.js';
 import { Reject } from '../lib/http.js';
-import { cleanRich, richTextProblem } from '../lib/rich-text.js';
+import { cleanCheckedRich, richTextProblem } from '../lib/rich-text.js';
 import { RICH_MS_PER_REQUEST } from './budget.js';
 import { mentioned, notify } from '../notify.js';
 import { issueToken } from '../routes/auth.js';
@@ -129,7 +129,7 @@ function richDesc(ctx, desc, pid) {
 }
 function settleDesc(ctx, desc, pid) {
   const problem = richTextProblem(desc);
-  if (!problem) return cleanRich(desc);
+  if (!problem) return cleanCheckedRich(desc);
   // A description already stored (it was sanitised then, before nesting was limited) may be copied
   // as it is, e.g. into the next repeat of a task: an old record must not block that.
   if (problem.includes('nested') && ctx.db.get("SELECT 1 FROM tasks WHERE project_id = ? AND json_extract(data, '$.desc') = ? LIMIT 1", pid, desc)) return desc;
@@ -259,6 +259,8 @@ export function removeMemberCascade(ctx, m) {
   // Sessions take their push subscriptions with them; devices go with the user row.
   for (const t of ['sessions', 'favorites', 'user_state', 'notifications', 'push_subscriptions', 'recent_deletes'])
     ctx.db.run(`DELETE FROM ${t} WHERE user_id = ?`, m.id);
+  // Their deleted comments kept for someone else's Undo go too, so nothing they wrote outlives them there.
+  ctx.db.run("DELETE FROM recent_deletes WHERE json_extract(data, '$.by') = ?", m.id);
   ctx.db.run('DELETE FROM users WHERE id = ?', m.id);
   ctx.db.run('UPDATE auth_tokens SET used_at = ? WHERE (email = ? OR user_id = ?) AND used_at IS NULL', ctx.now, m.email, m.id);
 }
@@ -397,15 +399,17 @@ export const RULES = {
       cm.by = before.by;
       cm.task = before.task;
       cm.project = before.project;
-      if (before.by === ctx.uid) return cm;
-      // Other people may only add or remove their own reactions.
+      // The author may change the text; everyone (the author too) may only add or remove their own
+      // reactions. Who wrote it and when stay the server's.
       const mine = (a = {}, b = {}) =>
         [...new Set([...Object.keys(a), ...Object.keys(b)])].every(e => {
           const x = new Set(a[e] || []),
             y = new Set(b[e] || []);
           return [...x].every(i => y.has(i) || i === ctx.uid) && [...y].every(i => x.has(i) || i === ctx.uid);
         });
-      if (keys.some(k => k !== 're') || !mine(before.re, cm.re)) throw new Reject('You can only edit your own comments.');
+      const editable = before.by === ctx.uid ? ['text', 're'] : ['re'];
+      if (keys.some(k => !editable.includes(k))) throw new Reject('You can only edit your own comments.');
+      if (!mine(before.re, cm.re)) throw new Reject('You can only add or remove your own reactions.');
       return cm;
     },
     remove(ctx, cm) {
@@ -493,6 +497,9 @@ export const RULES = {
         // Against the members as they are in this transaction, so concurrent changes can't leave none.
         if (before.role === 'Owner' && m.role !== 'Owner' && !ctx.repo.all('members').some(x => x.id !== m.id && x.role === 'Owner'))
           throw new Reject('The workspace needs at least one owner.');
+        // Only Owners and Admins may make the join link, so one made by someone who no longer is stops working.
+        if (isAdminRole(before) && !isAdminRole(m))
+          ctx.db.run("UPDATE auth_tokens SET used_at = ? WHERE kind = 'join' AND user_id = ? AND used_at IS NULL", ctx.now, before.id);
       }
       return m;
     },

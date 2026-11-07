@@ -245,7 +245,10 @@ describe('bots never sign in or get mail', () => {
     expect((await anon.post('/api/auth/forgot', { email: user.email })).body).toEqual({ ok: true });
     expect(t.db.get('SELECT COUNT(*) n FROM auth_tokens WHERE email = ? OR user_id = ?', user.email, b.id).n).toBe(0);
     // Its address is taken, so nobody can sign up as it either.
+    expect((await anon.post('/api/auth/signup', { name: 'Imposter', email: user.email, password: PW })).status).toBe(403);
+    t.config.allowOpenSignup = true;
     expect((await anon.post('/api/auth/signup', { name: 'Imposter', email: user.email, password: PW })).status).toBe(409);
+    t.config.allowOpenSignup = false;
     // Even a reset or verify token minted by hand wouldn't touch it, and none can be issued.
     expect(() => issueToken(t.db, t.config, 'reset', user.email, b.id)).toThrow(/Bots/);
     const plant = (kind, raw) =>

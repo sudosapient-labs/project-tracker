@@ -10,7 +10,11 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   first can't claim it.
 - After that the workspace is invite-only unless `ALLOW_OPEN_SIGNUP=true`. An invited address (and the
   role it was invited with) can only be claimed through its own invite link; the reusable join link
-  makes Members. Making a new join link retires the previous one, and only Owners and Admins can.
+  makes Members. Making a new join link retires the previous one, and only Owners and Admins can. A
+  join link stops working once whoever made it is no longer an Owner or Admin (or leaves).
+- Sign-up without a valid invite for that address or a join link gets one answer in an invite-only
+  workspace (`403 invite_only`), whether the address already has an account, has a pending invite
+  or neither, so it can't be used to find out who is in the workspace.
 - New accounts verify their email (`REQUIRE_EMAIL_VERIFICATION`), except those who signed up through
   an emailed invite, which already proves the address.
 - Passwords: at least 10 characters including a number or symbol, hashed with scrypt.
@@ -33,7 +37,7 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 
 ## Sign-in throttling and device cookies
 
-- Auth endpoints are rate-limited per client IP (see `TRUST_PROXY`), e.g. 10 sign-ins a minute, 10
+- Auth endpoints are rate-limited per client IP (an IPv6 client per /64; see `TRUST_PROXY`), e.g. 10 sign-ins a minute, 10
   sign-ups and 5 password-reset requests per 10 minutes.
 - Each email is locked for 15 minutes after 10 failed sign-ins from anywhere. Each attempt is counted
   before the password is checked (and given back when it was right), so parallel guesses can't all
@@ -88,7 +92,8 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   reserve their size (their `Content-Length`, or as much as they may take) against the quota and
   the disk reserve, so parallel uploads can't each count the same room, and a body that runs past
   its `Content-Length` is cut off.
-- **Other rate limits:** invites (50 an hour per person, emailed or resent), invite links (10 an hour
+- **Other rate limits:** sync requests (600 a minute per person, all their tabs and devices
+  together; far above what the app sends), invites (50 an hour per person, emailed or resent), invite links (10 an hour
   per person), access requests (3 an hour per person and project) and the Owner's two-factor resets.
   Asking for access answers the same whether or not the project exists.
 - **Access is checked when the write happens:** a request without a valid session or key is
@@ -108,7 +113,8 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 
 - Created and revoked in Settings → API with a signed-in session (and its CSRF header); creating one
   also needs the current password, so a signed-in browser alone (say, a stolen session) can't mint a
-  credential that outlives it. A key can't create, list or revoke keys. A key is `ssk_` + 32 random
+  credential that outlives it. A key can't create or list keys, and the only key it can revoke is itself
+  (`DELETE /api/v1/me/key`, allowed for read-only keys too, since it only takes access away). A key is `ssk_` + 32 random
   bytes, shown once; only its SHA-256 is stored (like session tokens it's high-entropy, so a slow
   hash adds nothing), with a 12-character prefix for the list. Each has a last-used time and an
   optional expiry (30, 90 or 365 days); at most 25 per person.
@@ -133,8 +139,9 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   instructions. Tools carry explicit `readOnlyHint` / `destructiveHint` annotations so clients
   confirm writes; `sudo-mcp --read-only` (or `SUDO_MCP_READ_ONLY=1`) and Read only keys offer
   reads only. See the [MCP README](../packages/mcp/README.md#untrusted-content).
-- `sudo-cli` strips control characters from workspace text before printing it, so a task title
-  can't send escape sequences to someone's terminal.
+- `sudo-cli` strips control characters from workspace text (error messages included) before
+  printing it, so a task title can't send escape sequences to someone's terminal, and `sudo-cli
+open` only opens (or prints) a link on the workspace's own origin.
 
 ## Bot members
 
@@ -160,14 +167,18 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
 
 - Every response carries a strict CSP: scripts only from the app, `base-uri 'none'`,
   `form-action 'self'`, `object-src 'none'`, `frame-ancestors 'none'` (styles and fonts also allow
-  Google Fonts).
+  Google Fonts), and `X-Frame-Options: DENY` to match.
+- Every `/api` response, file downloads included, carries `Cache-Control: no-store`, so no data
+  is kept in the browser's cache or a shared one; signing out also sends
+  `Clear-Site-Data: "cache"`.
 - Served files get their own CSP with `sandbox` (no scripts, no same origin), and only images, PDFs
   and plain text are shown inline; everything else downloads. Inline PDFs are the exception to the
   sandbox (Chromium won't render a sandboxed PDF) and get a CSP without scripts or other origins.
 - Everything people type is escaped when rendered. Task descriptions are the one rich-text field: the
   server sanitises them on write (sanitize-html) and the client again when rendering or pasting
   (DOMPurify), both against the editor's own allowlist (`src/core/rich-text.js`: paragraphs, bold,
-  italic, lists, a heading and http(s)/mailto links).
+  italic, lists, a heading and http(s)/mailto links). A link longer than 2,048 characters loses its
+  `href` before the link check runs (that check is quadratic in some long links).
   Before sanitising, a description must be text of at most 100,000 characters with elements nested
   at most 64 deep (sanitising gets superlinear with depth, so huge or deeply nested markup could
   stall the server). The depth is measured by running the sanitiser's own parser (the htmlparser2
@@ -176,8 +187,12 @@ How Sudo Sapient protects accounts and data. Production behaviour applies whenev
   fallback, `noscript`, `noembed`, `noframes`) is dropped instead. As a backstop that doesn't rely on
   any of that, one request may have at most 1,000,000 characters of descriptions checked and
   sanitised and spend at most 500 ms doing it; the rest of a batch is refused (`413`, which the app
-  retries in a later request). Any synced value over 256 KB is refused before rules look at it. A
-  description stored before these limits may still be copied as it is (into a task's next repeat).
+  retries in a later request). Any synced value over 256 KB is refused before rules look at it. One
+  exception, so tasks stored before the nesting limit keep working (e.g. their next repeat copies
+  the description): a description nested too deeply is still accepted, as it is and unsanitised,
+  when it exactly equals one already stored on a task in the same project. That holds for any create
+  or update in that project, by anyone who may edit there, through the app or the API; such markup
+  was sanitised when it was first stored, and the length limit still applies.
 - Task keys and each project's key counter are the server's: a client can't set the counter or edit
   a key, and an optimistic key is only kept if it doesn't skip ahead of the counter, so nobody can
   run a project out of task numbers.

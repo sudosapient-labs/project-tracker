@@ -12,19 +12,33 @@ import { pushEndpointAllowed } from '../lib/push.js';
 
 const MAX_OPS = 500;
 const PING_MS = 25_000;
+/* Sync requests per person a minute (all their tabs and devices together). The app sends one
+   request at a time, at most one per 150 ms pause in typing, so this is several times what anyone
+   produces; it bounds how much work (each request may spend up to 500 ms sanitising) one session
+   can ask for. */
+export const SYNCS_PER_MINUTE = 600;
 
-export function dataRoutes() {
+export function dataRoutes({ limit }) {
   const r = new Hono();
 
   r.get('/bootstrap', requireAuth(), c => c.json(bootstrap(c.var, c.var.auth)));
 
-  r.post('/sync', requireAuth(), async c => {
-    const b = await parseBody(c, z.object({ ops: z.array(z.looseObject({ c: z.string(), k: z.string() })).max(MAX_OPS) }));
-    if (b.error) return b.error;
-    const { results, links, gone } = c.var.engine.apply(c.var.auth, b.data.ops, c.req.header('x-client-id'));
-    if (gone) return c.json(GONE, 401);
-    return c.json({ results, ...(c.var.config.exposeEmailLinks && links.length ? { links } : {}) });
-  });
+  r.post(
+    '/sync',
+    requireAuth(),
+    limit('sync', SYNCS_PER_MINUTE, 60_000, { keyOf: c => c.var.auth.member.id, message: 'You’re saving changes very fast. Wait a moment.' }),
+    async c => {
+      // The app says whose changes these are: a tab still showing someone who has since been
+      // replaced by another sign-in in this browser mustn't save its queue as the new person.
+      const expected = c.req.header('x-sudo-user');
+      if (expected && expected !== c.var.auth.user?.id) return c.json({ error: 'Someone else is signed in now.', code: 'other_user' }, 409);
+      const b = await parseBody(c, z.object({ ops: z.array(z.looseObject({ c: z.string(), k: z.string() })).max(MAX_OPS) }));
+      if (b.error) return b.error;
+      const { results, links, gone } = c.var.engine.apply(c.var.auth, b.data.ops, c.req.header('x-client-id'));
+      if (gone) return c.json(GONE, 401);
+      return c.json({ results, ...(c.var.config.exposeEmailLinks && links.length ? { links } : {}) });
+    },
+  );
 
   r.put('/me/state', requireAuth(), async c => {
     const b = await parseBody(c, z.object({ prefs: z.looseObject({}).optional(), views: z.looseObject({}).optional(), collapsed: z.boolean().optional() }));

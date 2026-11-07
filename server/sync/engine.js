@@ -156,16 +156,18 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
     if (!before) {
       if (k === 'patch') throw new Reject('This item was deleted.', 404);
       // Undo of a delete: the server's own copy comes back as it was (author, time, reactions; no
-      // notifications), only for the person who deleted it and only shortly after. Otherwise (or
-      // when it's no longer kept) it's created like anything new.
+      // notifications), only for the person who deleted it and only shortly after. Once it's no
+      // longer kept the Undo is refused: creating it anew would re-author a comment and notify
+      // people again. (Collections without a `restore` rule are created like anything new.)
+      const restoring = op.restore === true && rule.restore;
       const kept =
-        op.restore === true &&
-        rule.restore &&
+        restoring &&
         db.get('SELECT data FROM recent_deletes WHERE coll = ? AND id = ? AND user_id = ? AND deleted_at >= ?', c, id, ctx.uid, ctx.now - RESTORE_MS);
       if (kept) {
         db.run('DELETE FROM recent_deletes WHERE coll = ? AND id = ?', c, id);
         after = rule.restore(ctx, { ...JSON.parse(kept.data), id });
-      } else after = rule.create(ctx, { ...v, id });
+      } else if (restoring) throw new Reject('This can no longer be undone.', 410);
+      else after = rule.create(ctx, { ...v, id });
     } else {
       after = k === 'put' ? { ...v, id } : { ...before, ...v, id };
       for (const f of rule.serverOwned || []) {
@@ -189,7 +191,14 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
       if (c === 'notifs') ctx.changes.push({ c, id, v: after, uid: ctx.uid });
       else ctx.emit(c, after, before && scopeOf(c, before) !== scopeOf(c, after) ? scopeOf(c, before) : null);
     }
-    if ('fav' in personal && (c === 'projects' || c === 'tasks')) {
+    // A patch that changes nothing (the app re-reads a record this way) answers like a missing record
+    // for one this person can't see, so it can't be used to learn that a hidden record exists.
+    if (!changed && before && !visible(c, before, ctx.me)) throw new Reject('This item was deleted.', 404);
+    // A favourite needs a record this person can open: for one they can't, a change of only the
+    // favourite answers like a missing record, and none is stored.
+    const favOk = 'fav' in personal && canSee(c === 'projects' ? after : repo.get('projects', after.project), ctx.me);
+    if ('fav' in personal && !favOk && !changed) throw new Reject('This item was deleted.', 404);
+    if (favOk && (c === 'projects' || c === 'tasks')) {
       const on = !!personal.fav;
       if (favs[c].has(id) !== on) {
         repo.setFavorite(ctx.uid, c, id, on);

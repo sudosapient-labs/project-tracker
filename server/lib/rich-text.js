@@ -12,6 +12,9 @@ import { RICH_ATTRS, RICH_SCHEMES, RICH_TAGS } from '../../src/core/rich-text.js
    are checked before any parsing happens. */
 export const RICH_MAX = 100_000;
 export const RICH_MAX_DEPTH = 64;
+/* The longest link kept. sanitize-html's link check (launder's cleanHref) strips `<!-- -->` pairs
+   one at a time, which is quadratic in the length of an href full of them; no real link is this long. */
+export const HREF_MAX = 2048;
 
 /* sanitize-html's default nonTextTags, plus the tags whose content it would otherwise keep: when an
    <iframe> is discarded its content is re-parsed as HTML (a second parser per level), and noscript,
@@ -27,6 +30,14 @@ const OPTS = {
   disallowedTagsMode: 'discard',
   nonTextTags: NON_TEXT,
   nestingLimit: RICH_MAX_DEPTH,
+  // Runs before the attributes are checked, so an over-long href never reaches the link check.
+  transformTags: {
+    a: (tagName, attribs) => {
+      if (!(attribs.href?.length > HREF_MAX)) return { tagName, attribs };
+      const { href, ...rest } = attribs;
+      return { tagName, attribs: rest };
+    },
+  },
 };
 /* The options sanitize-html gives its parser (its htmlParserDefaults merged with ours). */
 const PARSER_OPTS = { decodeEntities: true };
@@ -71,10 +82,14 @@ export function richTextProblem(html) {
   return null;
 }
 
-export const cleanRich = html => {
-  const problem = richTextProblem(html);
-  if (problem) throw new RangeError(`Rich text refused: ${problem}`);
-  return sanitizeHtml(String(html ?? ''), OPTS)
+/* Sanitise a description richTextProblem has just passed, without parsing it again to check. */
+export const cleanCheckedRich = (/** @type {string | null | undefined} */ html) =>
+  sanitizeHtml(String(html ?? ''), OPTS)
     .replace(/<br \/>/g, '<br>')
     .replace(/\u00a0/g, '&nbsp;');
+
+export const cleanRich = (/** @type {string | null | undefined} */ html) => {
+  const problem = richTextProblem(html);
+  if (problem) throw new RangeError(`Rich text refused: ${problem}`);
+  return cleanCheckedRich(html);
 };

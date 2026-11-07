@@ -16,10 +16,11 @@
   },
   "files": [
     "index.js",
-    "config.js"
+    "config.js",
+    "README.md"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "license": "UNLICENSED",
   "publishConfig": {
