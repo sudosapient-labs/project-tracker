@@ -1,8 +1,9 @@
 // @ts-check
 /* ---------- HTTP client for /api ---------- */
+import { randomHex } from './random.js';
 
 /* Identifies this tab, so the server doesn't echo our own changes back over the event stream. */
-export const CLIENT_ID = 'tab' + crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+export const CLIENT_ID = 'tab' + randomHex(16);
 
 export class ApiError extends Error {
   constructor(status, body) {

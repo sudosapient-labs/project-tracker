@@ -138,10 +138,12 @@ export async function run(argv, io = {}) {
     if (plainHttpRemote(u) && !ok)
       throw new UsageError(`${u} is plain http, so your API key would cross the network unencrypted. Use https, or add --insecure if you mean it.`);
   };
+  // The client waits out rate limits (Retry-After) by itself; say so, or a bulk run looks stuck.
+  const rateLimited = ({ delay }) => err.write(`sudo-cli: rate limited; retrying in ${Math.ceil(delay / 1000)} s…\n`);
   const api = () => {
     if (!url || !key) throw new UsageError('Not logged in. Run: sudo-cli login --url https://your-workspace');
     needSecure(url);
-    const a = createClient({ url, key, client: 'CLI', fetch: io.fetch });
+    const a = createClient({ url, key, client: 'CLI', fetch: io.fetch, sleep: io.sleep, onRetry: rateLimited });
     // JSON output escapes control characters itself; human output gets them stripped.
     if (o.json) return a;
     const wrap =
@@ -169,7 +171,7 @@ export async function run(argv, io = {}) {
         needSecure(u, o.insecure);
         const k = (o.key || (await ask(io, 'API key (Settings → API): ', { hidden: true }))).trim();
         need(k, 'Paste an API key from Settings → API.');
-        const me = clean(await createClient({ url: u, key: k, client: 'CLI', fetch: io.fetch }).get('/me'));
+        const me = clean(await createClient({ url: u, key: k, client: 'CLI', fetch: io.fetch, sleep: io.sleep, onRetry: rateLimited }).get('/me'));
         const file = saveConfig({ url: u, key: k, ...(o.insecure && plainHttpRemote(u) ? { insecure: true } : {}) }, env);
         if (o.json) json({ ok: true, user: me, config: file });
         else print(`Logged in to ${me.workspace || u} as ${me.name} (${me.key.scope} key “${me.key.name}”). Saved to ${file}`);

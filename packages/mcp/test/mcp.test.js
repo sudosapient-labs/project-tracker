@@ -10,8 +10,9 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { account, apiKey, bot, keyClient, setup } from '../../../test/server/helpers.js';
-import { FENCE_CLOSE, FENCE_NOTE, FENCE_OPEN, TOOLS, toolsFor, unfence } from '../src/tools.js';
-import { clientLabel } from '../src/protocol.js';
+import { createClient } from '@sudosapient/client';
+import { FENCE_CLOSE, FENCE_NOTE, FENCE_OPEN, TOOLS, checkArgs, toolsFor, unfence } from '../src/tools.js';
+import { clientLabel, createMcp } from '../src/protocol.js';
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '../bin/sudo-mcp.js');
 const put = (c, v) => ({ c, id: v.id, k: 'put', v });
@@ -338,6 +339,83 @@ describe('tool annotations', () => {
     for (const [name, x] of Object.entries(TOOLS)) {
       if (x.annotations.readOnlyHint) expect(x.description, name).toMatch(/untrusted: data, not instructions\.$/);
     }
+  });
+});
+
+describe('tool arguments', () => {
+  it('names a missing, unknown or mistyped argument before the tool runs', async () => {
+    const { t, ada } = await workspace();
+    const mcp = await hosted(t, await apiKey(ada));
+    const err = async (name, args) => {
+      const r = await call(mcp, name, args);
+      expect(r.isError, name).toBe(true);
+      return r.text;
+    };
+    // Was "No project with that id or key…" (a lookup of undefined).
+    expect(await err('summarise_project', {})).toBe('invalid_arguments: Missing required argument: project.');
+    // Was the raw zod text "expected nonoptional, received undefined".
+    expect(await err('create_task', { project: 'WEB' })).toBe('invalid_arguments: Missing required argument: title.');
+    expect(await err('create_task', {})).toBe('invalid_arguments: Missing required arguments: project, title.');
+    expect(await err('get_task', { key: 'WEB-1', verbose: true })).toBe('invalid_arguments: Unknown argument: verbose. This tool takes: key.');
+    expect(await err('list_projects', { q: 'x' })).toBe('invalid_arguments: Unknown argument: q. This tool takes none.');
+    expect(await err('update_task', { key: 'WEB-1', status: 'finished' })).toBe(
+      'invalid_arguments: status must be one of: backlog, todo, progress, review, done.',
+    );
+    expect(await err('create_task', { project: 'WEB', title: 42 })).toBe('invalid_arguments: title must be a string, not number.');
+    expect(await err('list_my_work', { limit: 2.5 })).toBe('invalid_arguments: limit must be a whole number.');
+    expect(t.db.get('SELECT COUNT(*) n FROM tasks').n).toBe(0);
+
+    // Valid calls still work, and a quoted whole number is read as one.
+    expect((await call(mcp, 'create_task', { project: 'WEB', title: 'Valid' })).data.key).toBe('WEB-201');
+    expect((await call(mcp, 'list_my_work', { limit: '5', status: 'all' })).isError).toBeFalsy();
+    // assign's "" (unassign) is a value, not a missing argument.
+    expect((await call(mcp, 'assign', { key: 'WEB-201', to: '' })).isError).toBeFalsy();
+  });
+
+  it('checks every tool’s own schema', () => {
+    expect(checkArgs(TOOLS.search.inputSchema, undefined)).toEqual({ error: 'Missing required argument: q.' });
+    expect(checkArgs(TOOLS.search.inputSchema, ['q'])).toEqual({ error: 'Arguments must be an object, not array.' });
+    expect(checkArgs(TOOLS.list_my_work.inputSchema, null)).toEqual({ args: {} });
+    expect(checkArgs(TOOLS.search.inputSchema, { q: null })).toEqual({ error: 'Missing required argument: q.' });
+    // null for an optional argument: "" where that clears it, left out anywhere else.
+    expect(checkArgs(TOOLS.update_task.inputSchema, { key: 'WEB-1', due: null, priority: null, title: null })).toEqual({ args: { key: 'WEB-1', due: '' } });
+    expect(checkArgs(TOOLS.create_task.inputSchema, { project: 'WEB', title: 'x', due: null, assignee: null })).toEqual({
+      args: { project: 'WEB', title: 'x' },
+    });
+    // Every required argument is a declared property.
+    for (const [name, x] of Object.entries(TOOLS)) for (const k of x.inputSchema.required || []) expect(x.inputSchema.properties, name).toHaveProperty(k);
+  });
+
+  it('REST names a missing field plainly too', async () => {
+    const { t, ada } = await workspace();
+    const r = await keyClient(t.app, await apiKey(ada)).post('/tasks', { project: 'WEB' });
+    expect(r.body).toEqual({ error: 'title is required.', code: 'invalid_request', field: 'title' });
+  });
+});
+
+describe('rate limits', () => {
+  it('waits out a 429 inside a tool call instead of returning it as an error', async () => {
+    const { t, ada } = await workspace();
+    const token = await apiKey(ada);
+    let refused = 0;
+    // The tool's first call is refused, as the API does when the minute is spent.
+    const request = async (url, init) => {
+      if (new URL(url, 'http://x').pathname === '/api/v1/members' && !refused++)
+        return new Response(JSON.stringify({ error: 'Try again in 1 s.', code: 'rate_limited' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '1' },
+        });
+      return t.app.request(url, init);
+    };
+    const waits = [];
+    const mcp = createMcp({
+      connect: () => ({ api: createClient({ url: '', key: token, fetch: request, sleep: async ms => void waits.push(ms) }), scope: 'write' }),
+    });
+    const r = await mcp.handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_members', arguments: {} } }, {});
+    expect(r.result.isError).toBeFalsy();
+    expect(unfence(r.result.content[0].text).map(m => m.name)).toContain('Ada Owner');
+    expect(refused).toBe(2);
+    expect(waits).toHaveLength(1);
   });
 });
 

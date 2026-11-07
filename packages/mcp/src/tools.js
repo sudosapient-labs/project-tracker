@@ -221,6 +221,48 @@ export const TOOLS = {
   },
 };
 
+/* Arguments checked against the tool's inputSchema before it runs, so a missing or misspelt one is
+   named in plain words ("Missing required argument: project.") instead of surfacing as whatever the
+   API makes of it (a lookup of "undefined", or a validation message about a field the model never
+   saw). Covers the schema subset tools use: an object of string, integer, boolean and enum
+   properties with `required`. An integer sent as a numeric string ("30") is accepted as the number,
+   since models often quote numbers. Returns { args } or { error }. */
+const typeName = v => (v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v);
+/* An argument whose description offers "" to clear or unset it. */
+const clears = p => p.type === 'string' && /""/.test(p.description || '');
+export function checkArgs(schema, input) {
+  if (input == null) input = {};
+  if (typeName(input) !== 'object') return { error: `Arguments must be an object, not ${typeName(input)}.` };
+  const props = schema.properties || {};
+  const known = Object.keys(props);
+  const unknown = Object.keys(input).filter(k => !Object.hasOwn(props, k));
+  if (unknown.length)
+    return {
+      error: `Unknown argument${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}. ${known.length ? `This tool takes: ${known.join(', ')}.` : 'This tool takes none.'}`,
+    };
+  const missing = (schema.required || []).filter(k => input[k] === undefined || input[k] === null);
+  if (missing.length) return { error: `Missing required argument${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}.` };
+  const args = {};
+  for (const [k, v] of Object.entries(input)) {
+    const p = props[k];
+    // Models often send null for an optional argument: "clear it" where the schema tells them ""
+    // clears, "not given" anywhere else (where "" would be refused, e.g. create_task's due).
+    if (v === null) {
+      if (clears(p)) args[k] = '';
+      continue;
+    }
+    let val = v;
+    if (p.type === 'integer' && typeof v === 'string' && /^-?\d+$/.test(v.trim())) val = Number(v);
+    if (p.enum) {
+      if (!p.enum.includes(val)) return { error: `${k} must be one of: ${p.enum.join(', ')}.` };
+    } else if (p.type === 'integer') {
+      if (!Number.isInteger(val)) return { error: `${k} must be a whole number.` };
+    } else if (p.type && typeName(val) !== p.type) return { error: `${k} must be a ${p.type}, not ${typeName(val)}.` };
+    args[k] = val;
+  }
+  return { args };
+}
+
 /* Untrusted-content fencing (audit M7). The whole result is one block: a short note, then the
    compact JSON between <untrusted-user-content> tags. One fence per result rather than one per
    field: per-field tags would cost ~50 characters on every title and comment (more than doubling a

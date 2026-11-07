@@ -17,6 +17,30 @@ days or never) and your current password. The key (`ssk_…`) is shown once; onl
 Revoking it stops it straight away, and changing or resetting your password revokes all of yours. Send it as `Authorization: Bearer ssk_…`. Session cookies are not accepted on
 `/api/v1`, and no CSRF header is needed.
 
+Settings → API makes the key with `POST /api/keys` (signed-in session only). Its `201` response has
+two fields, and the names are easy to misread:
+
+```json
+{
+  "key": {
+    "id": "k…",
+    "name": "Laptop CLI",
+    "prefix": "ssk_AbCdEfGh",
+    "scope": "write",
+    "createdAt": 1762500000000,
+    "lastUsedAt": null,
+    "expiresAt": null,
+    "createdBy": "m…"
+  },
+  "token": "ssk_…"
+}
+```
+
+- `key` is the key's **metadata** (what Settings → API lists), not the secret.
+- `token` is the **secret** to send as `Authorization: Bearer …`. It's returned only here, once.
+
+`POST /api/bots/{id}/keys` answers in the same shape, plus `bot` (the bot with its keys).
+
 Optionally send `X-Sudo-Client: <name>` to label your changes in Activity ("via <name>"); otherwise
 they're labelled with the key's name.
 
@@ -84,6 +108,11 @@ list it fetched long ago; the app sends what it edited from, and the server merg
 - **Rate limits:** `API_RATE_LIMIT` requests a minute per person, shared by all their keys (default
   120), with `RateLimit-Limit`,
   `RateLimit-Remaining` and `RateLimit-Reset` headers, and `429` with `Retry-After` when spent.
+  A request refused this way was not handled at all, so it's always safe to send again after
+  `Retry-After` seconds, writes included. `@sudosapient/client` (and so the CLI and the MCP server)
+  does that by itself: up to 3 retries, each waiting what `Retry-After` says (at least 1 s) if that's
+  at most 60 s, and at most 120 s in all for one request (for tools on the hosted `/api/mcp`, 20 s in
+  all, so an assistant's tool call doesn't time out first).
   Counted in memory: they reset on restart and assume one instance (see
   [operations](operations.md#known-limits)).
 - **Versioning:** `v1` changes only by adding endpoints and fields. Removing or changing one needs

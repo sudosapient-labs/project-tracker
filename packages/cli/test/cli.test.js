@@ -2,14 +2,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { account, apiKey, bot, setup } from '../../../test/server/helpers.js';
 import { parseDue, run, sameOrigin } from '../src/cli.js';
 import { plainHttpRemote } from '@sudosapient/client';
 import { saveConfig } from '@sudosapient/client/config';
 
 /* Runs the CLI with captured output and its own config directory. */
-function cli(t, env = {}) {
+function cli(t, env = {}, extra = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sudo-cli-'));
   return async (...argv) => {
     let out = '',
@@ -27,6 +27,7 @@ function cli(t, env = {}) {
         },
       },
       fetch: t ? (url, init) => t.app.request(url, init) : undefined,
+      ...extra,
     });
     return { code, out, err, home };
   };
@@ -180,6 +181,48 @@ describe('against a workspace', () => {
     expect((await c('whoami')).out).toBe('Release Bot (bot) · Member in http://localhost · write key “GitHub Actions”\n');
     expect((await c('new', 'Release', '1.4', '-p', 'WEB')).out).toMatch(/^Created WEB-201 Release 1\.4/);
     expect(t.db.get("SELECT json_extract(data, '$.by') by, json_extract(data, '$.via') via FROM activity")).toEqual({ by: b.id, via: 'CLI' });
+  });
+});
+
+describe('rate limits', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('waits out the rate limit in a bulk run instead of failing part of it', async () => {
+    const t = setup({ DISABLE_RATE_LIMIT: 'false', API_RATE_LIMIT: '4' });
+    const ada = await account(t);
+    const project = { id: 'pweb', key: 'WEB', name: 'Website', icon: 'globe', color: 'indigo', status: 'active', team: '', lead: null, members: [], desc: '' };
+    const tasks = Array.from({ length: 6 }, (_, i) => ({
+      id: `t${i}`,
+      key: `WEB-${201 + i}`,
+      project: 'pweb',
+      title: `Task ${i}`,
+      status: 'todo',
+      priority: 'none',
+      labels: [],
+      subtasks: [],
+      attachments: [],
+      deps: [],
+      desc: '',
+      created: 1,
+      updated: 1,
+      order: i,
+    }));
+    await ada.c.sync([{ c: 'projects', id: 'pweb', k: 'put', v: { ...project, milestones: [] } }, ...tasks.map(v => ({ c: 'tasks', id: v.id, k: 'put', v }))]);
+    const token = await apiKey(ada.c);
+    // The limiter counts per minute of wall time: "waiting" moves the clock on instead.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const waited = [];
+    const sleep = async ms => {
+      waited.push(ms);
+      vi.setSystemTime(Date.now() + ms);
+    };
+    const c = cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: token }, { sleep });
+    const r = await c('done', ...tasks.map(x => x.key));
+    expect(r.code).toBe(0);
+    expect(r.out.trim().split('\n')).toHaveLength(6);
+    expect(r.err).toMatch(/^sudo-cli: rate limited; retrying in \d+ s…$/m);
+    expect(waited.length).toBeGreaterThan(0);
+    expect(t.db.get("SELECT COUNT(*) n FROM tasks WHERE json_extract(data, '$.status') = 'done'").n).toBe(6);
   });
 });
 

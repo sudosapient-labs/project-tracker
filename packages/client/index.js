@@ -2,40 +2,76 @@
    No dependencies: it runs on any fetch (Node 22+, or an in-process `app.request`). */
 
 export class ApiError extends Error {
-  constructor(status, body) {
+  constructor(status, body, retryAfter = null) {
     super(body?.error || (status ? `Request failed (${status})` : 'Couldn’t reach Sudo Sapient. Check the URL and your connection.'));
     this.status = status;
     this.code = body?.code || (status ? 'http_' + status : 'offline');
     this.field = body?.field || null;
+    this.retryAfter = retryAfter;
   }
 }
 
+/* Rate limits (429). The API refuses a request over the limit before handling it (middleware.js
+   `bearer`), so nothing of it was applied and retrying is safe for every method, writes included.
+   The client waits as long as Retry-After says (at least a second), up to `retries` times, never
+   longer than `maxDelay` at once nor `maxTotal` in all for one request: a wait past either is
+   reported instead (an ApiError with `retryAfter`, in seconds). A 429 without Retry-After (e.g.
+   "too many invites this hour") isn't retried. */
+export const RETRY = { retries: 3, maxDelay: 60_000, maxTotal: 120_000 };
+const MIN_WAIT = 1000;
+
+/* Milliseconds to wait from a Retry-After header (seconds, or an HTTP date), or null. */
+export function retryAfterMs(value, now = Date.now()) {
+  const v = String(value ?? '').trim();
+  if (!v) return null;
+  if (/^\d+$/.test(v)) return Number(v) * 1000;
+  const at = Date.parse(v);
+  return Number.isFinite(at) ? Math.max(0, at - now) : null;
+}
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 /* `url`: the workspace's base URL (https://sudo.example.com). `client`: a label for activity, e.g.
-   "CLI" or "Claude", shown as "Ada via Claude". */
-export function createClient({ url, key, client = 'API', fetch: doFetch = globalThis.fetch }) {
+   "CLI" or "Claude", shown as "Ada via Claude". `retry`: { retries, maxDelay, maxTotal } for rate limits (see
+   RETRY; `{ retries: 0 }` turns retrying off). `onRetry({ attempt, delay, method, path })` is called
+   before each wait, e.g. to tell someone at a terminal why it paused. */
+export function createClient({ url, key, client = 'API', fetch: doFetch = globalThis.fetch, retry = {}, onRetry, sleep = wait }) {
   const base = String(url || '').replace(/\/+$/, '') + '/api/v1';
+  const { retries, maxDelay, maxTotal } = { ...RETRY, ...retry };
   async function request(method, path, { query, body, idempotencyKey } = {}) {
     const qs = query ? new URLSearchParams(Object.entries(query).filter(([, v]) => v != null && v !== '')).toString() : '';
-    let res;
-    try {
-      res = await doFetch(base + path + (qs ? `?${qs}` : ''), {
-        method,
-        headers: {
-          authorization: `Bearer ${key}`,
-          // URI-encoded: header values must be Latin-1, and client names needn't be.
-          'x-sudo-client': encodeURIComponent(client),
-          accept: 'application/json',
-          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-          ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}),
-        },
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
-    } catch {
-      throw new ApiError(0, null);
+    const init = {
+      method,
+      headers: {
+        authorization: `Bearer ${key}`,
+        // URI-encoded: header values must be Latin-1, and client names needn't be.
+        'x-sudo-client': encodeURIComponent(client),
+        accept: 'application/json',
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    };
+    let waited = 0;
+    for (let attempt = 1; ; attempt++) {
+      let res;
+      try {
+        res = await doFetch(base + path + (qs ? `?${qs}` : ''), init);
+      } catch {
+        throw new ApiError(0, null);
+      }
+      const data = (res.headers.get('content-type') || '').includes('json') ? await res.json().catch(() => null) : null;
+      if (res.ok) return data;
+      const header = res.status === 429 ? retryAfterMs(res.headers.get('retry-after')) : null;
+      // "Retry-After: 0" still waits a moment, so a client can't spin against the limit.
+      const after = header == null ? null : Math.max(header, MIN_WAIT);
+      if (after == null || after > maxDelay || waited + after > maxTotal || attempt > retries)
+        throw new ApiError(res.status, data, header == null ? null : Math.ceil(header / 1000));
+      // A little jitter, so clients that were refused together don't all come back in the same instant.
+      const delay = after + Math.floor(Math.random() * 250);
+      waited += delay;
+      onRetry?.({ attempt, delay, method, path });
+      await sleep(delay);
     }
-    const data = (res.headers.get('content-type') || '').includes('json') ? await res.json().catch(() => null) : null;
-    if (!res.ok) throw new ApiError(res.status, data);
-    return data;
   }
   return {
     request,

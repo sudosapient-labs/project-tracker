@@ -78,6 +78,12 @@ STDIO with `npx -y @sudosapient/mcp` and the two `SUDO_` variables.
 | `comment` ✎         | `@Name` mentions notify                                | write, destructive             |
 
 ✎ needs a Read and write key (and no `--read-only`). `openWorldHint` is `false` on all of them.
+
+Arguments are checked against each tool's `inputSchema` before it runs: a missing, unknown or
+mistyped one is an `isError` result naming it (`invalid_arguments: Missing required argument:
+project.`), so the model can correct the call. `null` for an optional argument is read as `""` where
+that clears it (a due date) and is otherwise ignored. Calls that reach the rate limit are retried after
+`Retry-After` (see [the API reference](../../docs/api.md#conventions)).
 Resources: `sudo://my-work` and `sudo://project/{key}` (same JSON as `list_my_work` and
 `summarise_project`).
 
