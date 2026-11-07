@@ -192,3 +192,15 @@ tracker. The cases cover:
 
 They spend tokens (about a dollar a run), so run them before merging changes to prompts, skills or
 tools, not on every commit.
+
+With `SUDO_STAGING_URL` and `SUDO_STAGING_KEY` (the staging bot member's key) set, the same command
+also runs [`test/live/staging.live.js`](test/live/staging.live.js) against the **deployed** staging
+tracker, without Slack. It runs as the people `scripts/seed-staging.js` makes, covering:
+
+- filing with priority and a due date, and the "via Slack (Bea Member)" label;
+- a reschedule after confirmation;
+- "my plate";
+- no leaks from a private project;
+- a Guest refused without a confirmation.
+
+It archives what it created.
