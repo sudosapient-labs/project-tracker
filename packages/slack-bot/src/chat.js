@@ -34,7 +34,8 @@ export async function chatSession(config, { as, project = null, decide, log = co
     dir,
     store,
     requester,
-    slack: { channel: 'terminal', channelName: 'terminal', threadTs: null, permalink: '' },
+    // Only the person at the terminal sees the answers, like a DM.
+    slack: { channel: 'terminal', channelName: 'terminal', threadTs: null, permalink: '', dm: true, private: true, project },
     touched: [],
   });
 
@@ -43,7 +44,7 @@ export async function chatSession(config, { as, project = null, decide, log = co
       now: new Date(),
       timezone: config.timezone,
       requester,
-      channel: { id: 'terminal', name: 'terminal', project },
+      channel: { id: 'terminal', name: 'terminal', dm: true, project },
       transcript: '',
       text,
     });
@@ -53,11 +54,11 @@ export async function chatSession(config, { as, project = null, decide, log = co
     while (out.pending.length) {
       const approve = await decide(out.pending);
       c = ctx();
-      out = await agent.resume({ threadId, approve, ctx: c });
-      if (!out) break;
+      out = await agent.resume({ threadId, ids: out.pending.map(p => p.id), approve, ctx: c });
+      if (out.stale) break;
       touched.push(...out.touched);
     }
-    return { text: out?.text || '', touched: [...new Set(touched)] };
+    return { text: out.stale ? '' : out.text || '', touched: [...new Set(touched)] };
   }
   return { requester, send, close: () => (store.close(), mcp.close()) };
 }

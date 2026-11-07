@@ -4,11 +4,15 @@
    - people:   Slack user → tracker member (matched by email, or linked by a tracker admin)
    - channels: Slack channel → the tracker project it's about (`/sudo project WEB`)
    - threads:  task ↔ Slack thread it was created from or linked to (for synced threads later)
-   - pending:  writes waiting for a Confirm button, with who asked and where
+   - confirmations: changes waiting for a Confirm button. Each card has its own id, and names the
+               conversation and the exact interrupts it shows, who asked, and where it was posted
    - guidance: instructions admins give the agent, workspace-wide or per channel
    - seen:     Slack events already handled (Slack retries; Socket Mode can redeliver)
-   - cursors:  the last Slack message the agent saw in a thread, so a follow-up mention sends only
-               what's new */
+   - conversations: one per Slack thread per person (or per DM per day). `round` starts a fresh
+               agent conversation when the old one can't continue (a change was superseded, or a
+               run broke off); `cursor` is the last Slack message the agent saw, so a follow-up
+               sends only what's new */
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -37,8 +41,10 @@ CREATE TABLE IF NOT EXISTS threads (
   PRIMARY KEY (task, channel, thread_ts)
 );
 CREATE INDEX IF NOT EXISTS threads_by_thread ON threads (channel, thread_ts);
-CREATE TABLE IF NOT EXISTS pending (
-  thread_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS confirmations (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  interrupts TEXT NOT NULL,
   requester TEXT NOT NULL,
   channel TEXT NOT NULL,
   thread_ts TEXT,
@@ -46,6 +52,7 @@ CREATE TABLE IF NOT EXISTS pending (
   data TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS confirmations_by_thread ON confirmations (thread_id);
 CREATE TABLE IF NOT EXISTS guidance (
   scope TEXT PRIMARY KEY,
   text TEXT NOT NULL,
@@ -56,9 +63,10 @@ CREATE TABLE IF NOT EXISTS seen (
   id TEXT PRIMARY KEY,
   at INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS cursors (
-  thread_id TEXT PRIMARY KEY,
-  ts TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS conversations (
+  base TEXT PRIMARY KEY,
+  round INTEGER NOT NULL DEFAULT 0,
+  cursor TEXT
 );
 `;
 
@@ -70,6 +78,7 @@ export function openStore(file = ':memory:') {
   const one = (sql, ...a) => db.prepare(sql).get(...a);
   const all = (sql, ...a) => db.prepare(sql).all(...a);
   const run = (sql, ...a) => db.prepare(sql).run(...a);
+  const row = r => (r ? { ...r, interrupts: JSON.parse(r.interrupts), data: JSON.parse(r.data) } : null);
 
   return {
     close: () => db.close(),
@@ -115,29 +124,28 @@ export function openStore(file = ':memory:') {
     threadsOf: task => all('SELECT * FROM threads WHERE task = ? ORDER BY created_at', task),
     tasksIn: (channel, threadTs) => all('SELECT task FROM threads WHERE channel = ? AND thread_ts = ? ORDER BY created_at', channel, threadTs).map(r => r.task),
 
-    pending: threadId => {
-      const r = one('SELECT * FROM pending WHERE thread_id = ?', threadId);
-      return r ? { ...r, data: JSON.parse(r.data) } : null;
-    },
-    savePending: ({ threadId, requester, channel, threadTs, messageTs = null, data }, now = Date.now()) =>
+    /* A confirmation card: returns its id (the button's value). */
+    saveConfirmation: ({ threadId, interrupts, requester, channel, threadTs, messageTs = null, data }, now = Date.now()) => {
+      const id = randomBytes(12).toString('base64url');
       run(
-        `INSERT INTO pending (thread_id, requester, channel, thread_ts, message_ts, data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (thread_id) DO UPDATE SET requester = excluded.requester, channel = excluded.channel, thread_ts = excluded.thread_ts,
-           message_ts = excluded.message_ts, data = excluded.data, created_at = excluded.created_at`,
+        'INSERT INTO confirmations (id, thread_id, interrupts, requester, channel, thread_ts, message_ts, data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        id,
         threadId,
+        JSON.stringify(interrupts),
         requester,
         channel,
         threadTs,
         messageTs,
         JSON.stringify(data),
         now,
-      ),
-    setPendingMessage: (threadId, messageTs) => run('UPDATE pending SET message_ts = ? WHERE thread_id = ?', messageTs, threadId),
-    /* Take a pending confirmation, once: two clicks on Confirm can't both resume it. */
-    takePending: threadId => {
-      const r = one('DELETE FROM pending WHERE thread_id = ? RETURNING *', threadId);
-      return r ? { ...r, data: JSON.parse(r.data) } : null;
+      );
+      return id;
     },
+    confirmation: id => row(one('SELECT * FROM confirmations WHERE id = ?', id)),
+    /* Take a confirmation, once: two clicks on Confirm can't both act on it. */
+    takeConfirmation: id => row(one('DELETE FROM confirmations WHERE id = ? RETURNING *', id)),
+    /* Every confirmation still open in a conversation, taken (to mark their cards superseded). */
+    takeConfirmationsIn: threadId => all('DELETE FROM confirmations WHERE thread_id = ? RETURNING *', threadId).map(row),
 
     guidance: scope => one('SELECT text FROM guidance WHERE scope = ?', scope)?.text || '',
     setGuidance: (scope, text, setBy, now = Date.now()) =>
@@ -158,7 +166,17 @@ export function openStore(file = ':memory:') {
       return run('INSERT OR IGNORE INTO seen (id, at) VALUES (?, ?)', id, now).changes === 1;
     },
 
-    cursor: threadId => one('SELECT ts FROM cursors WHERE thread_id = ?', threadId)?.ts || null,
-    setCursor: (threadId, ts) => run('INSERT INTO cursors (thread_id, ts) VALUES (?, ?) ON CONFLICT (thread_id) DO UPDATE SET ts = excluded.ts', threadId, ts),
+    /* The agent's thread id for a conversation, `<base>#<round>`. */
+    conversation: base => {
+      const r = one('SELECT round, cursor FROM conversations WHERE base = ?', base);
+      return { threadId: `${base}#${r?.round || 0}`, cursor: r?.cursor || null };
+    },
+    /* Start a fresh round: the agent forgets the old one, and the whole Slack thread is sent again. */
+    nextRound: base => {
+      run('INSERT INTO conversations (base, round, cursor) VALUES (?, 1, NULL) ON CONFLICT (base) DO UPDATE SET round = round + 1, cursor = NULL', base);
+      return `${base}#${one('SELECT round FROM conversations WHERE base = ?', base).round}`;
+    },
+    setCursor: (base, ts) =>
+      run('INSERT INTO conversations (base, round, cursor) VALUES (?, 0, ?) ON CONFLICT (base) DO UPDATE SET cursor = excluded.cursor', base, ts),
   };
 }

@@ -31,6 +31,12 @@ export function level(project, member) {
   return !project.private && member.role !== 'Guest' ? EDIT : 0;
 }
 
+/* Whether a project's work may be shown where the conversation is. Replies, cards and previews in
+   a channel are seen by everyone in it, not just the person who asked, so a private project's work
+   is shown only in a DM, or in a private channel linked to that project (`/sudo project KEY`).
+   `where`: { dm, private, project } (ctx.slack). */
+export const shownHere = (project, where = {}) => !project.private || !!where.dm || (!!where.private && where.project === project.key);
+
 const TTL = 60_000;
 
 /* Members and projects as the bot sees them, cached for a minute (they change rarely, and every
@@ -39,7 +45,8 @@ export function directory(api, { ttl = TTL, now = () => Date.now() } = {}) {
   let cache = null;
   async function load() {
     if (cache && now() - cache.at < ttl) return cache;
-    const [members, projects] = await Promise.all([api.all('/members', {}, 1000), api.all('/projects', {}, 1000)]);
+    // Archived projects too, so their tasks can still be looked up.
+    const [members, projects] = await Promise.all([api.all('/members', {}, 1000), api.all('/projects', { includeArchived: 'true' }, 1000)]);
     cache = { at: now(), members, projects };
     return cache;
   }
@@ -85,7 +92,10 @@ export function people({ slack, store, dir, now = () => Date.now() }) {
       const saved = store.person(slackUser);
       if (saved?.member_id && (saved.manual || now() - saved.checked_at < RECHECK)) {
         const member = await dir.member(saved.member_id);
-        if (member && member.status === 'active' && member.kind !== 'bot') return { member };
+        // A link made by hand holds only while the admin who made it still is one.
+        const linker = saved.manual ? await dir.member(saved.linked_by) : null;
+        const linkOk = !saved.manual || (linker && linker.status === 'active' && isAdmin(linker));
+        if (member && member.status === 'active' && member.kind !== 'bot' && linkOk) return { member };
         store.forgetPerson(slackUser);
       }
       const s = await slackEmail(slackUser);
@@ -96,12 +106,19 @@ export function people({ slack, store, dir, now = () => Date.now() }) {
       store.savePerson({ slackUser, memberId: member.id, email: s.email }, now());
       return { member };
     },
-    /* A tracker Owner/Admin links someone whose Slack email isn't their tracker email. */
+    /* A tracker Owner/Admin links someone whose Slack email isn't their tracker email. Never to an
+       Owner or Admin, never to themselves, and never to a member another Slack account already
+       maps to, so a link can't be used to take over someone's identity. Returns { member } or
+       { error } (no_member, privileged, self, taken). */
     async link(slackUser, email, by) {
       const member = await dir.byEmail(email);
-      if (!member) return null;
-      store.savePerson({ slackUser, memberId: member.id, email, manual: true, linkedBy: by }, now());
-      return member;
+      if (!member) return { error: 'no_member' };
+      if (isAdmin(member)) return { error: 'privileged' };
+      if (member.id === by.id || store.person(slackUser)?.member_id === by.id) return { error: 'self' };
+      const other = store.slackUserOf(member.id);
+      if (other && other !== slackUser) return { error: 'taken' };
+      store.savePerson({ slackUser, memberId: member.id, email, manual: true, linkedBy: by.id }, now());
+      return { member };
     },
     unlink: slackUser => store.forgetPerson(slackUser),
   };

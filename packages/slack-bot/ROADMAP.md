@@ -121,5 +121,6 @@ reminders off`) and limits ("never nudge the same task twice in 2 days").
   - Turn on LangSmith tracing (`LANGSMITH_TRACING=true`) to inspect runs.
 - **More than one instance.** Move the store and checkpoints to Postgres (LangGraph has a
   Postgres checkpointer) so the bot can run highly available.
+- **Pruning.** Drop checkpoints, cursors and confirmations of conversations idle for weeks.
 - **Context size.** Add LangChain's summarization middleware for long DM conversations and very
   long threads.

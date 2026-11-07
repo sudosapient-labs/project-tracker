@@ -83,29 +83,41 @@ export async function createSudoAgent({ config, store, model, tools = [], checkp
     ],
   });
 
-  const cfg = (threadId, ctx) => ({ configurable: { thread_id: threadId }, context: ctx, recursionLimit: 60 });
+  // A run that takes longer than this is cut off; the conversation then starts a fresh round.
+  const RUN_TIMEOUT = 180_000;
+  const cfg = (threadId, ctx) => ({ configurable: { thread_id: threadId }, context: ctx, recursionLimit: 60, signal: AbortSignal.timeout(RUN_TIMEOUT) });
+  const waitingIn = async threadId => {
+    const st = await agent.getState({ configurable: { thread_id: threadId } });
+    return (st.tasks || []).flatMap(t => t.interrupts || []).filter(i => i.value?.type === 'tool_approval');
+  };
 
   return {
-    /* A new request in a conversation. A change still waiting for Confirm in the same conversation
-       is cancelled first: the new message supersedes it. */
+    /* A new request in a conversation. The caller makes sure the conversation can take one (see
+       `ready`): nothing waiting for Confirm, and no tool call left without a result. */
     async run({ threadId, message, ctx }) {
-      const waiting = await this.waiting(threadId);
-      if (waiting.length)
-        await agent.invoke(new Command({ resume: decide(waiting, false, 'Superseded: they sent a new message before confirming.') }), cfg(threadId, ctx));
       const result = await agent.invoke({ messages: [{ role: 'user', content: message }] }, cfg(threadId, ctx));
       return outcome(result, ctx);
     },
-    /* The person pressed Confirm (approve) or Cancel on the waiting changes. */
-    async resume({ threadId, approve, ctx }) {
-      const waiting = await this.waiting(threadId);
-      if (!waiting.length) return null;
+    /* The person pressed Confirm (approve) or Cancel on a card showing the interrupts `ids`. Acts
+       only if exactly those are still waiting; otherwise the card is out of date ({ stale: true }). */
+    async resume({ threadId, ids, approve, ctx }) {
+      const waiting = await waitingIn(threadId);
+      const now = new Set(waiting.map(i => i.id));
+      if (!ids.length || ids.length !== now.size || !ids.every(id => now.has(id))) return { stale: true };
       const result = await agent.invoke(new Command({ resume: decide(waiting, approve, 'They pressed Cancel.') }), cfg(threadId, ctx));
       return outcome(result, ctx);
     },
     /* Interrupts the saved graph is paused on, if any. */
-    async waiting(threadId) {
+    waiting: waitingIn,
+    /* Whether a new message can go into this conversation: nothing waiting for Confirm, and every
+       tool call the model made has its result. (A run cut off mid-step, by a timeout or a restart,
+       can leave a call without one, which the model API refuses on every later request.) */
+    async ready(threadId) {
       const st = await agent.getState({ configurable: { thread_id: threadId } });
-      return (st.tasks || []).flatMap(t => t.interrupts || []).filter(i => i.value?.type === 'tool_approval');
+      if ((st.tasks || []).some(t => (t.interrupts || []).length) || (st.next || []).length) return false;
+      const messages = st.values?.messages || [];
+      const answered = new Set(messages.filter(m => m.getType?.() === 'tool').map(m => m.tool_call_id));
+      return messages.every(m => m.getType?.() !== 'ai' || (m.tool_calls || []).every(c => answered.has(c.id)));
     },
     graph: agent,
   };

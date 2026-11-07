@@ -5,9 +5,10 @@ description: Turn a request or a Slack discussion into well-formed tasks.
 
 Use when someone asks to file, log, create, track or "make issues from" something.
 
-1. Work out the project: the one the person names, else the channel's project, else the project
-   whose name or key matches the channel name. If it's still unclear, ask in one short question and
-   list the likely projects; don't guess between two.
+1. Work out the project: the one the person names, else the channel's linked project. Without
+   either, file straight away only when exactly one project's name plainly covers the request;
+   otherwise ask in one short question listing the likely projects, and file nothing until they
+   answer. Never pick between two plausible projects yourself.
 2. Check for duplicates: `search` the key words first. If an open task already covers it, say so
    and offer to link this thread to it (`link_thread`) instead of creating another.
 3. One task per distinct piece of work. A thread that mentions three bugs is three tasks. More than

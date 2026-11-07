@@ -55,12 +55,14 @@ export async function startApp(config, { log = console } = {}) {
     await later('shortcut', handlers.onMessageShortcut({ shortcut }));
   });
   app.view('create_task', async ({ view, body, ack }) => {
-    // The modal stays open with field errors, so this one is answered after the work (well within 3s).
-    const errors = await handlers.onCreateSubmit({ view, user: body.user.id }).catch(e => {
+    // The task is created before acking, so a failure can be shown in the modal; posting it to the
+    // channel waits until after, so the answer reaches Slack within its 3 seconds.
+    const r = await handlers.onCreateSubmit({ view, user: body.user.id }).catch(e => {
       log.error('create task failed', e);
-      return { response_action: 'errors', errors: { title: 'Something went wrong. Try again.' } };
+      return { errors: { response_action: 'errors', errors: { title: 'Something went wrong. Try again.' } } };
     });
-    await ack(errors || undefined);
+    await ack(r.errors || undefined);
+    if (r.after) await later('post created task', r.after());
   });
   app.action(/^(task_complete|task_assign_me|task_status|pending_confirm|pending_cancel)$/, async ({ action, body, ack, respond }) => {
     await ack();

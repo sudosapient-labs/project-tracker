@@ -76,7 +76,10 @@ export function fakeSlack({ threads = {}, channels = {} } = {}) {
       info: rec('users.info', ({ user }) => (SLACK_USERS[user] ? { user: { id: user, ...SLACK_USERS[user] } } : Promise.reject(new Error('user_not_found')))),
     },
     conversations: {
-      info: rec('conversations.info', ({ channel }) => ({ channel: { id: channel, name: 'general', is_private: false, ...channels[channel] } })),
+      // Like Slack: D… is a DM, G… a private channel, C… a public one, unless `channels` says otherwise.
+      info: rec('conversations.info', ({ channel }) => ({
+        channel: { id: channel, name: 'general', is_im: channel.startsWith('D'), is_private: /^[DG]/.test(channel), ...channels[channel] },
+      })),
       replies: rec('conversations.replies', ({ channel, ts }) => ({ messages: threads[`${channel}:${ts}`] || [] })),
     },
     chat: {
@@ -95,7 +98,10 @@ export function fakeSlack({ threads = {}, channels = {} } = {}) {
       })),
       unfurl: rec('chat.unfurl', () => ({ ok: true })),
     },
-    views: { open: rec('views.open', () => ({ ok: true })) },
+    views: {
+      open: rec('views.open', () => ({ ok: true, view: { id: 'VLOADING' } })),
+      update: rec('views.update', ({ view_id }) => ({ ok: true, view: { id: view_id } })),
+    },
   };
   return slack;
 }

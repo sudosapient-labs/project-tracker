@@ -15,7 +15,7 @@
         "command": "/sudo",
         "description": "Create and find tasks",
         "usage_hint": "new <title> | my | search <words> | project <KEY> | help",
-        "should_escape": false
+        "should_escape": true
       }
     ],
     "unfurl_domains": ["sudo-tracker-production.up.railway.app"]

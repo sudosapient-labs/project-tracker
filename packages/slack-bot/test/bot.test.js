@@ -11,6 +11,10 @@ const mention = (h, { user = 'UADA', channel = 'C1', ts = '100.000001', thread_t
   h.handlers.onMention({ event: { type: 'app_mention', user, channel, ts, thread_ts, text } }).then(() => h.handlers.idle());
 
 const lastUpdate = h => h.slack.of('chat.update').at(-1);
+/* The confirmation card's id (its buttons' value) in a message's blocks. */
+const cardId = blocks => blocks?.find(b => b.block_id === 'pending')?.elements[0].value;
+/* The agent's thread for a person's conversation in a Slack thread. */
+const convo = (h, channel, threadTs, user) => h.store.conversation(`${channel}:${threadTs}:${user}`).threadId;
 const allText = blocks => JSON.stringify(blocks || []);
 
 describe('mentions', () => {
@@ -76,7 +80,10 @@ describe('mentions', () => {
     const w = await tracker();
     const h = await harness(w, { turns: [[call('create_task', { project: 'WEB', title: 'x' })], []] });
     await mention(h, { user: 'UOUT' });
-    expect(h.slack.of('chat.postMessage')[0].text).toContain('out@elsewhere.com');
+    // Only they see it: their email isn't posted to the channel.
+    expect(h.slack.of('chat.postMessage')).toHaveLength(0);
+    expect(h.slack.of('chat.postEphemeral')[0]).toMatchObject({ user: 'UOUT', channel: 'C1' });
+    expect(h.slack.of('chat.postEphemeral')[0].text).toContain('out@elsewhere.com');
     expect((await w.api.get('/tasks')).data).toHaveLength(0);
   });
 
@@ -141,12 +148,12 @@ describe('confirmations', () => {
     const t = await w.api.post('/tasks', { project: 'WEB', title: 'Ship it' });
     const h = await harness(w, { turns: [[call('complete_task', { key: t.key })], []], ...extra });
     await mention(h, { user: 'UADA', ts: '200.000001' });
-    return { t, h, threadId: 'C1:200.000001' };
+    return { t, h, id: cardId(lastUpdate(h).blocks), threadId: convo(h, 'C1', '200.000001', 'UADA') };
   }
-  const press = (h, action_id, user, threadId) =>
+  const press = (h, action_id, user, id) =>
     h.handlers
       .onAction({
-        action: { action_id, value: threadId },
+        action: { action_id, value: id },
         body: { user: { id: user }, channel: { id: 'C1' } },
         respond: async m => h.slack.calls.push({ method: 'respond', args: m }),
       })
@@ -154,22 +161,22 @@ describe('confirmations', () => {
 
   it('holds changes to existing tasks until the person who asked confirms', async () => {
     const w = await tracker();
-    const { t, h, threadId } = await held(w);
+    const { t, h, id } = await held(w);
     expect((await w.api.get(`/tasks/${t.key}`)).status).not.toBe('done');
     const card = lastUpdate(h);
     expect(allText(card.blocks)).toContain(`Mark ${t.key} _Ship it_ done`);
     expect(card.blocks.find(b => b.block_id === 'pending').elements.map(e => e.action_id)).toEqual(['pending_confirm', 'pending_cancel']);
 
-    await press(h, 'pending_confirm', 'UBEA', threadId);
+    await press(h, 'pending_confirm', 'UBEA', id);
     expect(h.slack.of('respond').at(-1).text).toContain('Only <@UADA> can confirm this.');
     expect((await w.api.get(`/tasks/${t.key}`)).status).not.toBe('done');
 
-    await press(h, 'pending_confirm', 'UADA', threadId);
+    await press(h, 'pending_confirm', 'UADA', id);
     expect((await w.api.get(`/tasks/${t.key}`)).status).toBe('done');
     expect(allText(lastUpdate(h).blocks)).toContain('Confirmed by <@UADA>');
 
     // A second press has nothing left to confirm.
-    await press(h, 'pending_confirm', 'UADA', threadId);
+    await press(h, 'pending_confirm', 'UADA', id);
     expect(h.slack.of('respond').at(-1).text).toBe('That was already handled.');
   });
 
@@ -178,16 +185,15 @@ describe('confirmations', () => {
     const t = await w.api.post('/tasks', { project: 'OPS', title: 'Not yours to close' });
     const h = await harness(w, { turns: [[call('complete_task', { key: t.key })], []] });
     await mention(h, { user: 'UGUS', ts: '250.000001' });
-    expect(await h.agent.waiting('C1:250.000001')).toEqual([]);
-    expect(h.store.pending('C1:250.000001')).toBeNull();
-    expect(lastUpdate(h).blocks.some(b => b.block_id === 'pending')).toBe(false);
+    expect(await h.agent.waiting(convo(h, 'C1', '250.000001', 'UGUS'))).toEqual([]);
+    expect(cardId(lastUpdate(h).blocks)).toBeUndefined();
     expect((await w.api.get(`/tasks/${t.key}`)).status).not.toBe('done');
   });
 
   it('cancels, and the task stays as it was', async () => {
     const w = await tracker();
-    const { t, h, threadId } = await held(w);
-    await press(h, 'pending_cancel', 'UADA', threadId);
+    const { t, h, id, threadId } = await held(w);
+    await press(h, 'pending_cancel', 'UADA', id);
     expect((await w.api.get(`/tasks/${t.key}`)).status).not.toBe('done');
     expect(allText(lastUpdate(h).blocks)).toContain('Cancelled by <@UADA>');
     expect(await h.agent.waiting(threadId)).toEqual([]);
@@ -198,22 +204,117 @@ describe('confirmations', () => {
     const t = await w.api.post('/tasks', { project: 'WEB', title: 'Old' });
     const h = await harness(w, { turns: [[call('create_task', { project: 'WEB', title: 'New one' }), call('complete_task', { key: t.key })], []] });
     await mention(h, { ts: '300.000001' });
-    await h.handlers.onAction({ action: { action_id: 'pending_cancel', value: 'C1:300.000001' }, body: { user: { id: 'UADA' }, channel: { id: 'C1' } } });
-    await h.handlers.idle();
+    await press(h, 'pending_cancel', 'UADA', cardId(lastUpdate(h).blocks));
     const titles = (await w.api.get('/tasks', { project: 'WEB' })).data.map(x => `${x.title}:${x.status}`);
     expect(titles).toContain('New one:todo');
     expect(titles).not.toContain('Old:done');
   });
 
-  it('a new message in the thread supersedes the change waiting for Confirm', async () => {
+  it('a new message from the same person supersedes the waiting change, and its card says so', async () => {
     const w = await tracker();
     const t = await w.api.post('/tasks', { project: 'WEB', title: 'Keep open' });
-    const h = await harness(w, { turns: [[call('complete_task', { key: t.key })], [], []] });
+    const h = await harness(w, { turns: [[call('complete_task', { key: t.key })], []] });
     await mention(h, { ts: '400.000001' });
-    expect(await h.agent.waiting('C1:400.000001')).toHaveLength(1);
+    const oldCard = lastUpdate(h);
+    const oldId = cardId(oldCard.blocks);
     await mention(h, { ts: '400.000009', thread_ts: '400.000001', text: '<@UBOT> actually, never mind' });
-    expect(await h.agent.waiting('C1:400.000001')).toEqual([]);
+    await h.handlers.idle();
+    // The old card is marked superseded; the conversation went on in a fresh round.
+    const marked = h.slack.of('chat.update').find(u => u.ts === oldCard.ts && /newer message/.test(allText(u.blocks)));
+    expect(marked).toBeTruthy();
+    expect(convo(h, 'C1', '400.000001', 'UADA')).toMatch(/#1$/);
+    expect(await h.agent.waiting(convo(h, 'C1', '400.000001', 'UADA'))).toEqual([]);
+    await press(h, 'pending_confirm', 'UADA', oldId);
+    expect(h.slack.of('respond').at(-1).text).toBe('That was already handled.');
     expect((await w.api.get(`/tasks/${t.key}`)).status).not.toBe('done');
+  });
+
+  it('each person in a thread has their own conversation, and a card confirms only its own change', async () => {
+    const w = await tracker();
+    const a = await w.api.post('/tasks', { project: 'WEB', title: 'Ada closes this' });
+    const b = await w.api.post('/tasks', { project: 'WEB', title: 'Bea takes this' });
+    // One scripted model serves both conversations, in the order the turns happen.
+    const h = await harness(w, { turns: [[call('complete_task', { key: a.key })], [call('assign', { key: b.key, to: 'me' })], [], []] });
+    await mention(h, { user: 'UADA', ts: '450.000001' });
+    const adaCard = cardId(lastUpdate(h).blocks);
+    await mention(h, { user: 'UBEA', ts: '450.000002', thread_ts: '450.000001', text: '<@UBOT> assign the other one to me' });
+    await h.handlers.idle();
+    const beaCard = cardId(lastUpdate(h).blocks);
+    expect(convo(h, 'C1', '450.000001', 'UADA')).not.toBe(convo(h, 'C1', '450.000001', 'UBEA'));
+    expect(beaCard).not.toBe(adaCard);
+
+    await press(h, 'pending_confirm', 'UADA', adaCard);
+    expect((await w.api.get(`/tasks/${a.key}`)).status).toBe('done');
+    expect((await w.api.get(`/tasks/${b.key}`)).assignee).toBeNull();
+    await press(h, 'pending_confirm', 'UADA', beaCard);
+    expect(h.slack.of('respond').at(-1).text).toContain('Only <@UBEA> can confirm this.');
+    await press(h, 'pending_confirm', 'UBEA', beaCard);
+    expect((await w.api.get(`/tasks/${b.key}`)).assignee).toBe('mbea');
+  });
+
+  it('a card whose changes aren’t the ones waiting any more changes nothing', async () => {
+    const w = await tracker();
+    const { t, h, threadId } = await held(w);
+    const card = h.store.takeConfirmationsIn(threadId)[0];
+    const forged = h.store.saveConfirmation({ ...card, threadId, interrupts: ['not-the-one'], threadTs: card.thread_ts, messageTs: card.message_ts });
+    await press(h, 'pending_confirm', 'UADA', forged);
+    expect((await w.api.get(`/tasks/${t.key}`)).status).not.toBe('done');
+    expect(allText(lastUpdate(h).blocks)).toContain('Out of date');
+  });
+});
+
+describe('private projects in channels', () => {
+  it('in a public channel the bot won’t discuss a private project, even with someone on it; in a DM it will', async () => {
+    const w = await tracker();
+    const secret = await w.api.post('/tasks', { project: 'SEC', title: 'Rotate root keys' });
+    const turns = [[call('get_task', { key: secret.key }), call('list_projects', {})], []];
+    const results = [];
+    const watch = h => {
+      const orig = h.agent.graph.invoke.bind(h.agent.graph);
+      h.agent.graph.invoke = async (...a) => {
+        const r = await orig(...a);
+        results.push(...r.messages.filter(m => m.getType() === 'tool').map(m => `${m.name}: ${m.content}`));
+        return r;
+      };
+    };
+    const pub = await harness(w, { turns });
+    watch(pub);
+    await mention(pub, { user: 'UADA', channel: 'C1', ts: '460.1' });
+    let out = results.splice(0).join('\n');
+    expect(out).toContain("get_task: Not allowed: That's in a private project");
+    expect(out).not.toContain('Rotate root keys');
+    expect(out).not.toMatch(/list_projects: .*SEC/s);
+
+    const dm = await harness(w, { turns });
+    watch(dm);
+    await dm.handlers.onDirectMessage({ event: { channel_type: 'im', user: 'UADA', channel: 'D1', ts: '460.2', text: 'what is it?' } });
+    await dm.handlers.idle();
+    out = results.splice(0).join('\n');
+    expect(out).toContain('Rotate root keys');
+    expect(out).toMatch(/list_projects: .*SEC/s);
+  });
+
+  it('in a private channel linked to the project it will, and previews follow the same rule', async () => {
+    const w = await tracker();
+    const secret = await w.api.post('/tasks', { project: 'SEC', title: 'Rotate root keys' });
+    const slack = fakeSlack({ channels: { G1: { name: 'sec-team', is_private: true }, G2: { name: 'other', is_private: true } } });
+    const h = await harness(w, { slack, turns: [[call('get_task', { key: secret.key })], []] });
+    h.store.setChannelProject('G1', 'SEC', 'x');
+    const results = [];
+    const orig = h.agent.graph.invoke.bind(h.agent.graph);
+    h.agent.graph.invoke = async (...a) => {
+      const r = await orig(...a);
+      results.push(...r.messages.filter(m => m.getType() === 'tool').map(m => String(m.content)));
+      return r;
+    };
+    await mention(h, { user: 'UADA', channel: 'G1', ts: '470.1' });
+    expect(results.join('\n')).toContain('Rotate root keys');
+
+    await h.handlers.onLinkShared({ event: { user: 'UADA', channel: 'C1', message_ts: '470.2', links: [{ url: secret.url }] } });
+    await h.handlers.onLinkShared({ event: { user: 'UADA', channel: 'G2', message_ts: '470.3', links: [{ url: secret.url }] } });
+    expect(h.slack.of('chat.unfurl')).toHaveLength(0);
+    await h.handlers.onLinkShared({ event: { user: 'UADA', channel: 'G1', message_ts: '470.4', links: [{ url: secret.url }] } });
+    expect(h.slack.of('chat.unfurl')).toHaveLength(1);
   });
 });
 
@@ -280,7 +381,8 @@ describe('/sudo', () => {
     const h = await harness(w);
     h.store.setChannelProject('C1', 'WEB', 'x');
     await run(h, 'new Write the launch post', 'UBEA');
-    const { view } = h.slack.of('views.open')[0];
+    expect(h.slack.of('views.open')[0].view.blocks[0].text.text).toBe('_Loading…_');
+    const { view } = h.slack.of('views.update').at(-1);
     expect(view.blocks.find(b => b.block_id === 'title').element.initial_value).toBe('Write the launch post');
     expect(view.blocks.find(b => b.block_id === 'project').element.initial_option.value).toBe('WEB');
     expect(allText(view.blocks)).not.toContain('SEC');
@@ -295,15 +397,16 @@ describe('/sudo', () => {
         description: { v: { value: '' } },
       },
     };
-    expect(await h.handlers.onCreateSubmit({ view: { id: 'V1', private_metadata: view.private_metadata, state }, user: 'UBEA' })).toBeUndefined();
+    const done = await h.handlers.onCreateSubmit({ view: { id: 'V1', private_metadata: view.private_metadata, state }, user: 'UBEA' });
+    expect(done.errors).toBeUndefined();
+    await done.after();
     const [task] = (await w.api.get('/tasks')).data;
     expect(task).toMatchObject({ title: 'Write the launch post', due: '2026-11-20' });
     expect(h.slack.of('chat.postMessage').at(-1).text).toBe(`<@UBEA> created ${task.key}`);
     // Bea can't open SEC, so a forged submission naming it is refused.
     const forged = { values: { ...state.values, project: { v: { selected_option: { value: 'SEC' } } } } };
     expect(await h.handlers.onCreateSubmit({ view: { id: 'V2', private_metadata: view.private_metadata, state: forged }, user: 'UBEA' })).toEqual({
-      response_action: 'errors',
-      errors: { project: 'You can’t add tasks to that project.' },
+      errors: { response_action: 'errors', errors: { project: 'You can’t add tasks to that project.' } },
     });
   });
 
@@ -314,10 +417,42 @@ describe('/sudo', () => {
     expect(await run(h, 'guidance Always use the Bug label for bugs')).toBe('Saved the guidance for workspace.');
     expect(h.store.guidance('workspace')).toBe('Always use the Bug label for bugs');
     expect(await run(h, 'link <@UOUT> bea@example.com', 'UBEA')).toContain('Only tracker Owners and Admins');
-    expect(await run(h, 'link <@UOUT|out> bea@example.com')).toBe('Linked <@UOUT> to *Bea Member*.');
-    expect(
-      (await h.handlers.onCommand({ command: { text: 'link', user_id: 'UOUT', channel_id: 'C1' }, respond: async m => (h.last = m) }), h.last.text),
-    ).toContain('linked to *Bea Member*');
+  });
+
+  it('linking by hand can’t take over an identity', async () => {
+    const w = await tracker();
+    const h = await harness(w);
+    await run(h, 'my', 'UBEA'); // Bea is matched by her email
+    expect(await run(h, 'link <@UOUT|out> ada@example.com')).toContain('Owners and Admins are only matched by their own Slack email');
+    expect(await run(h, 'link <@UADA|ada> gus@example.com')).toBe('You can’t link your own Slack account by hand.');
+    expect(await run(h, 'link <@UOUT|out> bea@example.com')).toBe('That member is already matched to another Slack account. Unlink it first.');
+    expect(await run(h, 'link <@UOUT|out> gus@example.com')).toBe('Linked <@UOUT> to *Gus Guest*. They’ve been told.');
+    expect(h.slack.of('chat.postMessage').at(-1)).toMatchObject({ channel: 'UOUT' });
+    expect(await run(h, 'link', 'UOUT')).toContain('linked to *Gus Guest*');
+  });
+
+  it('a link made by an admin stops working when they’re no longer one', async () => {
+    const w = await tracker();
+    const h = await harness(w);
+    const setRole = async role => {
+      const { members } = (await w.ada.get('/api/bootstrap')).body.data;
+      const bea = members.find(m => m.id === 'mbea');
+      const r = await w.ada.sync([{ c: 'members', id: 'mbea', k: 'put', v: { ...bea, role } }]);
+      if (r.status !== 200) throw new Error(JSON.stringify(r.body));
+    };
+    await setRole('Admin');
+    expect(await run(h, 'link <@UOUT|out> gus@example.com', 'UBEA')).toContain('Linked <@UOUT> to *Gus Guest*');
+    expect(await run(h, 'link', 'UOUT')).toContain('linked to *Gus Guest*');
+    await setRole('Member');
+    expect(await run(h, 'link', 'UOUT')).toContain('out@elsewhere.com');
+  });
+
+  it('Guests can’t relink a channel, and Members need edit rights on the project', async () => {
+    const w = await tracker();
+    const h = await harness(w);
+    expect(await run(h, 'project web', 'UGUS')).toBe('Guests can’t change which project a channel is linked to.');
+    expect(h.store.channelProject('C1')).toBeNull();
+    expect(await run(h, 'project web', 'UBEA')).toContain('Linked this channel to *WEB');
   });
 });
 
@@ -337,7 +472,13 @@ describe('link previews', () => {
 
 describe('pieces', () => {
   it('turns Markdown into Slack mrkdwn and escapes control characters', () => {
-    expect(mrkdwn('## Done\n- **WEB-1** [link](https://x.test)\n`**code**`')).toBe('*Done*\n• *WEB-1* <https://x.test|link>\n`**code**`');
+    expect(mrkdwn('## Done\n- **WEB-1** [link](https://x.test)\n`**code**`', { hosts: ['x.test'] })).toBe(
+      '*Done*\n• *WEB-1* <https://x.test|link>\n`**code**`',
+    );
+    // What the model writes can't ping people or disguise a link to somewhere else.
+    expect(mrkdwn('<!channel> <@U1> see <https://evil.test|WEB-12> or [this](https://evil.test/x)', { hosts: ['x.test'] })).toBe(
+      '&lt;!channel&gt; &lt;@U1&gt; see WEB-12 (https://evil.test) or this (https://evil.test/x)',
+    );
     expect(esc('<@U1> & <!channel>')).toBe('&lt;@U1&gt; &amp; &lt;!channel&gt;');
   });
 
@@ -353,10 +494,10 @@ describe('pieces', () => {
     expect(level({ ...p, private: false }, { id: 'x', role: 'Guest' })).toBe(0);
   });
 
-  it('takes a pending confirmation only once', () => {
+  it('takes a confirmation only once', () => {
     const s = openStore();
-    s.savePending({ threadId: 't', requester: 'U', channel: 'C', threadTs: '1', data: { pending: [] } });
-    expect(s.takePending('t')).toMatchObject({ requester: 'U' });
-    expect(s.takePending('t')).toBeNull();
+    const id = s.saveConfirmation({ threadId: 't#0', interrupts: ['i1'], requester: 'U', channel: 'C', threadTs: '1', data: { pending: [] } });
+    expect(s.takeConfirmation(id)).toMatchObject({ requester: 'U', interrupts: ['i1'] });
+    expect(s.takeConfirmation(id)).toBeNull();
   });
 });

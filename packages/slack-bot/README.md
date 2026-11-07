@@ -12,21 +12,21 @@ default. Plans for what comes next: [ROADMAP.md](ROADMAP.md).
 
 ## What it does
 
-| In Slack                         | What happens                                                                                                                  |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `@Sudo Tracker file this for me` | Reads the thread, checks for duplicates, creates well-formed tasks in the channel's project, links the thread to them         |
-| `@Sudo Tracker mark WEB-12 done` | Holds the change and posts **Confirm / Cancel**; only the person who asked can decide                                         |
-| `@Sudo Tracker what's overdue?`  | Answers from the tracker, within what the person can see                                                                      |
-| DM the bot                       | The same agent, privately; flat DMs share one conversation per day, DM threads their own                                      |
-| Follow-up mention in a thread    | Continues the same conversation, with only the thread's new messages added                                                    |
-| Task cards under replies         | **Complete**, **Assign to me** and **Status**, acting as whoever clicks                                                       |
-| Message ⋯ → **Create task**      | A modal prefilled from the message (title, description, project, assignee, priority, due date)                                |
-| `/sudo new <title>`              | The same modal; `/sudo <title>` works too                                                                                     |
-| `/sudo my`, `/sudo search …`     | Your open tasks, or tasks matching words (only you see the answer)                                                            |
-| `/sudo project WEB`              | Links the channel to a project: tasks filed there default to it (`/sudo project none` unlinks)                                |
-| `/sudo guidance …`               | Instructions the agent follows, for the workspace or one channel (`/sudo guidance channel …`); tracker Owners/Admins set them |
-| `/sudo link`                     | Shows how your Slack account maps to the tracker; admins can link someone by hand                                             |
-| Pasting a task or project link   | A preview with status, assignee and due date, only if the person who pasted it can open it                                    |
+| In Slack                         | What happens                                                                                                                   |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `@Sudo Tracker file this for me` | Reads the thread, checks for duplicates, creates well-formed tasks in the channel's project, links the thread to them          |
+| `@Sudo Tracker mark WEB-12 done` | Holds the change and posts **Confirm / Cancel**; only the person who asked can decide, and the card acts only on what it shows |
+| `@Sudo Tracker what's overdue?`  | Answers from the tracker, within what the person can see                                                                       |
+| DM the bot                       | The same agent, privately; flat DMs share one conversation per day, DM threads their own                                       |
+| Follow-up mention in a thread    | Continues that person's conversation, with only the thread's new messages added (each person in a thread has their own)        |
+| Task cards under replies         | **Complete**, **Assign to me** and **Status**, acting as whoever clicks                                                        |
+| Message ⋯ → **Create task**      | A modal prefilled from the message (title, description, project, assignee, priority, due date)                                 |
+| `/sudo new <title>`              | The same modal; `/sudo <title>` works too                                                                                      |
+| `/sudo my`, `/sudo search …`     | Your open tasks, or tasks matching words (only you see the answer)                                                             |
+| `/sudo project WEB`              | Links the channel to a project: tasks filed there default to it (`/sudo project none` unlinks); Members who can edit it        |
+| `/sudo guidance …`               | Instructions the agent follows, for the workspace or one channel (`/sudo guidance channel …`); tracker Owners/Admins set them  |
+| `/sudo link`                     | Shows how your Slack account maps to the tracker; admins can link someone by hand (see below)                                  |
+| Pasting a task or project link   | A preview with status, assignee and due date, if the person who pasted it can open it and it may be shown in that channel      |
 
 ## Who it acts as
 
@@ -34,19 +34,51 @@ default. Plans for what comes next: [ROADMAP.md](ROADMAP.md).
   comments are by "Sudo Tracker", and Activity shows **Sudo Tracker via Slack (Ada Lovelace)**, so
   every change names who asked for it. Created tasks end with "Requested by Ada in Slack: <link to
   the thread>"; comments are signed "— Ada, via Slack".
-- **For the person who asked.** Each Slack user is mapped to a tracker member by their Slack email,
-  and when the emails differ an Owner or Admin can link them by hand with `/sudo link @person email`.
-  Every tool checks that member's access, even where the bot has more: they only see projects they
-  could open in the app, only edit where they could edit (Guests comment), and "me" means them.
-  People who can't be matched get an explanation, not an answer.
+- **For the person who asked.** Each Slack user is mapped to a tracker member by their Slack email.
+  Every tracker tool checks that member's access, even where the bot has more: they only see
+  projects they could open in the app, only edit where they could edit (Guests comment), and "me"
+  means them. Their identity comes from Slack, never from what a message claims. People who can't
+  be matched get an explanation only they can see.
+- **Linking by hand.** When someone's Slack email differs from their tracker email, an Owner or
+  Admin can run `/sudo link @person their-tracker-email`. It never links to an Owner or Admin, to
+  yourself, or to a member another Slack account already maps to, so it can't be used to take over
+  someone's identity. The person is told, and the link stops working if the admin who made it is
+  no longer one.
+- **Each person has their own conversation.** In a channel thread, every person who mentions the bot
+  has a separate conversation, so nobody inherits what it looked up for someone else; a DM has one
+  per day, and DM threads their own.
+- **Private projects stay out of shared channels.** Replies, task cards and link previews in a
+  channel are seen by everyone in it, not just the person who asked. So a private project's work is
+  only discussed in a DM with the bot, or in a private channel linked to that project
+  (`/sudo project KEY`). Elsewhere the bot says it can't discuss it there. `/sudo my` and
+  `/sudo search` answer only you, so they include everything you can open.
 - **The tracker still enforces the bot's own access.** Put the bot on the private projects it
   should serve. It can never see more than its own member can.
-- **Known gap:** `/api/v1` doesn't expose the per-person levels set in a project's share dialog, so
-  someone listed as "Can view" counts as an editor here. Closing this is on the roadmap.
+- **Knowledge sources over MCP** (Sudopedia) answer with their own access, not the requester's, so
+  they're refused to Guests, load only the tools you list, and should only hold knowledge every
+  Member may have.
 
-**Thread content is untrusted.** Slack messages and task text are given to the model as fenced
-data, never as instructions. Changes to existing tasks wait for Confirm by default, so an
-instruction hidden in a thread can't silently close or reassign work.
+**What waits for Confirm.** By default (`SLACK_BOT_CONFIRM=edits`), changes to tasks that already
+exist, assignments, completions and comments (they're signed with your name and notify people) wait
+for the person who asked to press **Confirm**. Each card acts only on the changes it shows; a new
+message from that person cancels it (the card says so), and it expires after a day. Changes the
+person isn't allowed to make are refused at once, without a card. Creating a task and linking a
+thread run straight away, as in Linear.
+
+**Thread content is untrusted.** Slack messages, task text and MCP results are given to the model
+as fenced data, never as instructions, and what the bot writes back can't ping `@channel` or
+people, or disguise where a link goes. An instruction planted in a thread can't change existing
+work without the asker's Confirm; it could still lead the bot to create a task, which is visible
+and easy to archive.
+
+**Known gaps.**
+
+- `/api/v1` doesn't expose the per-person levels set in a project's share dialog, so someone listed
+  as "Can view" counts as an editor here (the roadmap closes it with delegated access).
+- The mapping trusts Slack: a Slack workspace admin who changes someone's Slack email changes which
+  tracker member they're matched to.
+- Conversations and their checkpoints aren't pruned or summarised yet; very long threads will
+  eventually exceed the model's context.
 
 ## Set up
 
@@ -161,8 +193,11 @@ Slack (Socket Mode / HTTP)
   the provider can cache it. Add a file to add a skill.
 - **Confirmations** use LangChain's `humanInTheLoopMiddleware` in per-call mode. (Batched mode drops
   the other tool calls of a turn when one is rejected, which leaves calls without results.) A new
-  message in the thread before anyone presses a button cancels the waiting change.
-- **One run at a time per conversation**, in arrival order. Slack redeliveries are recognised and
+  message from the same person, or a run that broke off (a timeout, a restart), starts a fresh
+  round of that conversation rather than resuming it, so its history is never left with a tool call
+  that has no result.
+- **One run at a time per conversation**, in arrival order; a run stops after 3 minutes and each
+  tracker call after 20 seconds. Slack redeliveries are recognised and
   handled once. Creating a task uses an idempotency key, so a replayed tool call can't create it
   twice.
 

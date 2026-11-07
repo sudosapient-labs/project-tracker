@@ -43,15 +43,16 @@ export function slackContext(slack, { botUserId, botName }) {
     plain,
 
     async channel(id) {
-      if (!channels.has(id))
-        channels.set(
-          id,
-          slack.conversations
-            .info({ channel: id })
-            .then(r => ({ id, name: r.channel?.name || '', private: !!r.channel?.is_private, dm: !!r.channel?.is_im }))
-            .catch(() => ({ id, name: '', private: true, dm: id.startsWith('D') })),
-        );
-      return channels.get(id);
+      if (!channels.has(id)) {
+        const lookup = slack.conversations
+          .info({ channel: id })
+          .then(r => ({ id, name: r.channel?.name || '', private: !!r.channel?.is_private, dm: !!r.channel?.is_im }));
+        channels.set(id, lookup);
+        // A failed lookup isn't remembered: treat the channel as private (the cautious answer) this
+        // time, and ask again next time.
+        lookup.catch(() => channels.delete(id));
+      }
+      return channels.get(id).catch(() => ({ id, name: '', private: true, dm: /^D/.test(id) }));
     },
 
     async permalink(channel, ts) {

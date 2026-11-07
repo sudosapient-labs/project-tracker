@@ -9,20 +9,41 @@ export const esc = s =>
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-/* Markdown a model may still write, turned into Slack mrkdwn. Code spans and blocks are left alone. */
-export function mrkdwn(md) {
+/* Whether `url` is on one of `hosts` ("*.slack.com" covers subdomains). */
+function onHost(url, hosts) {
+  try {
+    const h = new URL(url).host;
+    return hosts.some(x => (x.startsWith('*.') ? h.endsWith(x.slice(1)) : h === x));
+  } catch {
+    return false;
+  }
+}
+
+/* The model's reply as Slack mrkdwn. Markdown it may still write is converted, and code is left
+   alone. What it writes can echo planted text, so nothing in it can ping people (<!channel>,
+   <@U…>) or hide where a link goes: Slack-style <…> sequences are escaped, except links to `hosts`
+   (the tracker, Slack), and other links are spelled out as "text (url)". */
+export function mrkdwn(md, { hosts = [] } = {}) {
+  const link = (url, text) =>
+    onHost(url, hosts) ? `<${url}|${esc(text).replace(/\|/g, '/')}>` : text && text !== url ? `${esc(text)} (${esc(url)})` : esc(url);
   return String(md || '')
     .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
-    .map((part, i) =>
-      i % 2
-        ? part
-        : part
-            .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<$2|$1>')
-            .replace(/\*\*([^*\n]+)\*\*/g, '*$1*')
-            .replace(/__([^_\n]+)__/g, '_$1_')
-            .replace(/^#{1,6}\s+(.+)$/gm, '*$1*')
-            .replace(/^(\s*)[-*]\s+/gm, '$1• '),
-    )
+    .map((part, i) => {
+      if (i % 2) return part.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const links = [];
+      const keep = s => `\uE000${links.push(s) - 1}\uE000`;
+      return part
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, text, url) => keep(link(url, text)))
+        .replace(/<(https?:\/\/[^|>\s]+)(?:\|([^>]*))?>/g, (_, url, text) => keep(link(url, text || url)))
+        .replace(/&(?!(amp|lt|gt);)/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\*\*([^*\n]+)\*\*/g, '*$1*')
+        .replace(/__([^_\n]+)__/g, '_$1_')
+        .replace(/^#{1,6}\s+(.+)$/gm, '*$1*')
+        .replace(/^(\s*)[-*]\s+/gm, '$1• ')
+        .replace(/\uE000(\d+)\uE000/g, (_, n) => links[n]);
+    })
     .join('');
 }
 
@@ -60,9 +81,14 @@ export function taskCard(t, { assignee, project, actions = true } = {}) {
   return blocks;
 }
 
+const short = (v, n) => {
+  const s = String(v ?? '');
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+};
+
 /* A change waiting for Confirm, in words. */
 export function describeAction({ name, args }, titles = {}) {
-  const k = args.key ? `${esc(args.key)}${titles[args.key] ? ` _${esc(titles[args.key])}_` : ''}` : '';
+  const k = args.key ? `${esc(short(args.key, 30))}${titles[args.key] ? ` _${esc(short(titles[args.key], 80))}_` : ''}` : '';
   switch (name) {
     case 'complete_task':
       return `Mark ${k} done`;
@@ -71,13 +97,19 @@ export function describeAction({ name, args }, titles = {}) {
     case 'update_task': {
       const changes = Object.entries(args)
         .filter(([f]) => f !== 'key')
-        .map(([f, v]) => (f === 'status' ? `status → ${statusName(v)}` : f === 'description' ? 'new description' : `${f} → ${v === '' ? 'none' : esc(v)}`));
+        .map(([f, v]) =>
+          f === 'status'
+            ? `status → ${statusName(v)}`
+            : f === 'description'
+              ? `description → “${esc(short(v, 400))}”`
+              : `${f} → ${v === '' ? 'none' : esc(short(v, 120))}`,
+        );
       return `Change ${k}: ${changes.join(', ')}`;
     }
     case 'create_task':
-      return `Create “${esc(args.title)}” in ${esc(args.project)}${args.assignee ? ` for ${esc(args.assignee)}` : ''}`;
+      return `Create “${esc(short(args.title, 120))}” in ${esc(args.project)}${args.assignee ? ` for ${esc(args.assignee)}` : ''}`;
     case 'comment':
-      return `Comment on ${k}: “${esc(String(args.text).slice(0, 200))}”`;
+      return `Comment on ${k}: “${esc(short(args.text, 400))}”`;
     case 'link_thread':
       return `Link this thread to ${k}`;
     default:
@@ -85,29 +117,55 @@ export function describeAction({ name, args }, titles = {}) {
   }
 }
 
-export function confirmBlocks(threadId, pending, requesterSlack, titles) {
+/* The changes as a list that fits a section (3000 characters): the first ones in full, then a count. */
+function changeList(pending, titles) {
+  const lines = [];
+  let used = 0;
+  for (const [i, p] of pending.entries()) {
+    const line = `• ${describeAction(p, titles)}`;
+    if (used + line.length > 2500) {
+      lines.push(`…and ${pending.length - i} more`);
+      break;
+    }
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return lines.join('\n');
+}
+
+/* A confirmation card. `id` is the card's own (store.saveConfirmation), so a press acts on exactly
+   these changes. */
+export function confirmBlocks(id, pending, requesterSlack, titles) {
   return [
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `<@${requesterSlack}>, confirm ${pending.length === 1 ? 'this change' : 'these changes'}:\n${pending.map(p => `• ${describeAction(p, titles)}`).join('\n')}`,
+        text: `<@${requesterSlack}>, confirm ${pending.length === 1 ? 'this change' : 'these changes'}:\n${changeList(pending, titles)}`,
       },
     },
     {
       type: 'actions',
       block_id: 'pending',
-      elements: [button('Confirm', 'pending_confirm', threadId, 'primary'), button('Cancel', 'pending_cancel', threadId)],
+      elements: [button('Confirm', 'pending_confirm', id, 'primary'), button('Cancel', 'pending_cancel', id)],
     },
   ];
 }
 
-export const confirmedBlocks = (pending, approve, by, titles) => [
-  {
-    type: 'section',
-    text: { type: 'mrkdwn', text: `${pending.map(p => `• ${describeAction(p, titles)}`).join('\n')}\n_${approve ? 'Confirmed' : 'Cancelled'} by <@${by}>._` },
-  },
-];
+/* A card once decided, superseded or expired: the changes, then what happened. */
+export const resolvedBlocks = (pending, note, titles) => [{ type: 'section', text: { type: 'mrkdwn', text: `${changeList(pending, titles)}\n_${note}_` } }];
+
+export const loadingModal = () => ({
+  type: 'modal',
+  title: { type: 'plain_text', text: 'Create task' },
+  blocks: [{ type: 'section', text: { type: 'mrkdwn', text: '_Loading…_' } }],
+});
+export const messageModal = (title, text) => ({
+  type: 'modal',
+  title: { type: 'plain_text', text: title },
+  close: { type: 'plain_text', text: 'Close' },
+  blocks: [{ type: 'section', text: { type: 'mrkdwn', text: esc(text).slice(0, 2900) } }],
+});
 
 const opt = (text, value) => ({ text: { type: 'plain_text', text: String(text).slice(0, 75) }, value });
 
