@@ -2,6 +2,5 @@
   ".": "0.3.0",
   "packages/client": "0.2.0",
   "packages/cli": "0.2.0",
-  "packages/mcp": "0.2.0",
-  "packages/slack-bot": "0.1.0"
+  "packages/mcp": "0.2.0"
 }
