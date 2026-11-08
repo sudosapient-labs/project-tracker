@@ -7,8 +7,10 @@ import { createClient } from '../../packages/client/index.js';
 import { createHttpHandler } from '../../packages/mcp/src/http.js';
 import { fail } from '../api/middleware.js';
 import { readKey } from '../api/keys.js';
+import { isAdminRole } from '../../src/core/access.js';
 
 const MIN = 60_000;
+export const HOSTED_RETRY = { retries: 2, maxDelay: 20_000, maxTotal: 20_000 };
 
 export function mcpRoutes({ request, limit }) {
   const r = new Hono();
@@ -43,8 +45,12 @@ export function mcpRoutes({ request, limit }) {
         return more.ok ? null : tooMany(more);
       },
       connect: ({ authorization, label }) => ({
-        api: createClient({ url: '', key: authorization.replace(/^Bearer\s+/i, ''), client: label, fetch: request }),
+        // Rate-limited calls are retried, but only for waits a remote assistant will sit through:
+        // its tool call times out otherwise, and the 429 it gets back says when to try again.
+        api: createClient({ url: '', key: authorization.replace(/^Bearer\s+/i, ''), client: label, fetch: request, retry: HOSTED_RETRY }),
         scope: a.key.scope,
+        // Admin tools are listed for Owners and Admins; /api/v1 checks the role again on each call.
+        admin: isAdminRole(a.member),
       }),
     });
     return handle(c.req.raw);

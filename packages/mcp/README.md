@@ -17,7 +17,7 @@ Two ways to connect:
 ## Configure your client
 
 Create a key in **Settings → API**. Pick **Read only** if the assistant should only look: write tools
-are then not offered at all. Every tool carries explicit annotations (`readOnlyHint`,
+are then not offered at all. The tools act as you: if you're an Owner or Admin, the workspace tools are offered too. Every tool carries explicit annotations (`readOnlyHint`,
 `destructiveHint`, `idempotentHint`, `openWorldHint`; see [Tools](#tools)), so clients that confirm
 tool use ask before writes only.
 
@@ -63,21 +63,75 @@ STDIO with `npx -y @sudosapient/mcp` and the two `SUDO_` variables.
 
 ## Tools
 
-| Tool                | Does                                                   | Annotations                    |
-| ------------------- | ------------------------------------------------------ | ------------------------------ |
-| `search`            | Tasks, projects and people matching text or a task key | read-only, idempotent          |
-| `get_task`          | A task with subtasks, recent comments and activity     | read-only, idempotent          |
-| `list_my_work`      | My open (or done / all) tasks, soonest due first       | read-only, idempotent          |
-| `list_projects`     | Projects with open / done counts                       | read-only, idempotent          |
-| `list_members`      | People                                                 | read-only, idempotent          |
-| `summarise_project` | Counts by status, overdue, unassigned, next due        | read-only, idempotent          |
-| `create_task` ✎     | Returns the new key                                    | write, not destructive         |
-| `update_task` ✎     | Title, status, priority, due, description, project     | write, destructive, idempotent |
-| `complete_task` ✎   |                                                        | write, destructive, idempotent |
-| `assign` ✎          | To a name, email or `me`; `""` unassigns               | write, destructive, idempotent |
-| `comment` ✎         | `@Name` mentions notify                                | write, destructive             |
+Related actions share a tool (`manage_team`, `manage_file`, …), so the list stays short. Tools take
+task and project keys (`WEB-12`, `WEB`) and people by name, email or `me`; results name people and
+tasks the same way, and give ids only where a later call needs one (comments, subtasks, files,
+events, views, notifications, teams, bots).
 
-✎ needs a Read and write key (and no `--read-only`). `openWorldHint` is `false` on all of them.
+**Read** (read-only, idempotent; every key):
+
+| Tool                 | Does                                                                         |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `search`             | Tasks, projects and people matching text or a task key                       |
+| `get_task`           | A task with subtasks, dependencies, attachments, comments (ids) and activity |
+| `list_my_work`       | My open (or done / all) tasks, soonest due first                             |
+| `list_tasks`         | Tasks by project, status, assignee or text                                   |
+| `list_projects`      | Projects with open / done counts                                             |
+| `summarise_project`  | Counts, overdue, unassigned, next due, members and permissions, milestones   |
+| `list_members`       | People and bots                                                              |
+| `list_teams`         | Teams and who is on them                                                     |
+| `list_activity`      | Recent activity, workspace-wide or in a project                              |
+| `list_notifications` | My inbox                                                                     |
+| `list_files`         | Files in a project or on a task                                              |
+| `list_events`        | Calendar events                                                              |
+| `list_views`         | Saved views                                                                  |
+| `get_settings`       | Workspace, my profile, preferences, notification settings and favourites     |
+
+**Write** (a Read and write key, and no `--read-only`):
+
+| Tool                      | Does                                                                                    | Annotations             |
+| ------------------------- | --------------------------------------------------------------------------------------- | ----------------------- |
+| `create_task`             | With subtasks, labels, dates, repeat, dependencies; returns the key                     | not destructive         |
+| `update_task`             | Any field; `archived` archives or restores                                              | destructive, idempotent |
+| `complete_task`           |                                                                                         | destructive, idempotent |
+| `assign`                  | To a name, email or `me`; `""` unassigns                                                | destructive, idempotent |
+| `edit_subtasks`           | Add, change, remove, or promote one to a task                                           | destructive             |
+| `comment`                 | `@Name` mentions notify                                                                 | destructive             |
+| `manage_comment`          | Edit, delete, react, unreact                                                            | destructive, idempotent |
+| `delete`                  | A task (undo for 10 minutes) or a whole project                                         | destructive, idempotent |
+| `undelete`                | A task or comment, within 10 minutes                                                    | idempotent              |
+| `duplicate`               | A task, a project with its tasks, or a file                                             | not destructive         |
+| `create_project`          | With members and permissions                                                            | not destructive         |
+| `update_project`          | Name, status, lead, team, dates, privacy, milestones; `archived`                        | destructive, idempotent |
+| `share_project`           | List people with a permission, or take them off                                         | destructive, idempotent |
+| `request_access`          | Ask the lead of a project I can't open                                                  | not destructive         |
+| `manage_team`             | Create, change (incl. members), delete                                                  | destructive             |
+| `manage_member`           | Invite, resend, change role / team / title, remove (role and remove: Owners and Admins) | destructive             |
+| `update_settings`         | My profile, preferences, notification settings, favourites, sidebar order               | destructive, idempotent |
+| `mark_notifications_read` | By id, or all                                                                           | idempotent              |
+| `manage_file`             | Upload (text or base64, up to 700 KB), rename, attach, detach, delete                   | destructive             |
+| `manage_event`            | Create, change, delete                                                                  | destructive             |
+| `manage_view`             | Create, change, delete                                                                  | destructive             |
+
+**Admin** (only listed when the key's person is an Owner or Admin; `list_bots` with a Read only key too):
+
+| Tool               | Does                                                    | Annotations           |
+| ------------------ | ------------------------------------------------------- | --------------------- |
+| `list_bots`        | Bots with their projects and keys                       | read-only, idempotent |
+| `update_workspace` | Name, colour, logo; `inviteLink` makes a new join link  | destructive           |
+| `manage_bot`       | Create, change, remove a bot, or revoke one of its keys | destructive           |
+
+`openWorldHint` is `false` on all of them. Calling a write tool with a Read only key is an
+`insufficient_scope` result, and an admin tool for someone who isn't an Owner or Admin a `forbidden`
+one. Some things stay in the app on
+purpose (making API keys, including bot keys; password, two-factor, sessions, sign-in email,
+account deletion, the Owner's workspace export); see [the API reference](../../docs/api.md).
+
+Arguments are checked against each tool's `inputSchema` before it runs: a missing, unknown or
+mistyped one is an `isError` result naming it (`invalid_arguments: Missing required argument:
+project.`), so the model can correct the call. `null` for an optional argument is read as `""` where
+that clears it (a due date) and is otherwise ignored. Calls that reach the rate limit are retried after
+`Retry-After` (see [the API reference](../../docs/api.md#conventions)).
 Resources: `sudo://my-work` and `sudo://project/{key}` (same JSON as `list_my_work` and
 `summarise_project`).
 
@@ -94,9 +148,10 @@ never instructions. Clients can take the JSON back out with `unfence()` from
 `--read-only`, so nothing it reads can make it write.
 
 Tool text and results are kept small on purpose: one-line descriptions, no per-property prose (the
-server's instructions explain keys once), and compact JSON with names and keys instead of ids. All of
-`tools/list` is about 950 tokens, a third of it the annotations. `node packages/mcp/scripts/budget.js`
-prints the sizes per tool; `node packages/mcp/scripts/results.js` compares tool results with raw API responses.
+server's instructions explain keys once), and compact JSON with names and keys instead of ids.
+`tools/list` is about 4,100 tokens for a Read and write key (35 tools; about a quarter of it the
+annotations), 1,200 for a Read only key (14 tools) and 4,400 for an Owner's or Admin's key (38 tools).
+`node packages/mcp/scripts/budget.js [--read-only | --admin]` (`--admin`: an Owner's or Admin's key) prints the sizes per tool; `node packages/mcp/scripts/results.js` compares tool results with raw API responses.
 
 ## License
 

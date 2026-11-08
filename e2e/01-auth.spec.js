@@ -5,7 +5,11 @@ test.describe.configure({ mode: 'serial' });
 
 test('the first person signs up, verifies their email and sets up the workspace', async ({ page }) => {
   const errors = watchErrors(page);
+  // As over plain http on another address (http://100.64.0.7:8787), where browsers don't offer
+  // crypto.randomUUID: the app must still load and mint ids (it was a blank page).
+  await page.addInitScript(() => delete Crypto.prototype.randomUUID);
   await page.goto('/');
+  expect(await page.evaluate(() => typeof crypto.randomUUID)).toBe('undefined');
   // No workspace yet: the app opens on sign up.
   await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
   await page.click('#signup-btn');

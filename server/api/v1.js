@@ -9,15 +9,17 @@ import { Hono } from 'hono';
 import { PR, RECUR_DAYS, ST } from '../../src/core/constants.js';
 import { textToHtml } from '../../src/core/rich-text.js';
 import { newId } from '../lib/crypto.js';
+import { PERMS, isAdminRole, projectLevel } from '../../src/core/access.js';
 import { canSee, memberFor } from '../sync/rules.js';
 import { bearer, fail, idempotent, scoped } from './middleware.js';
 import { openapi } from './openapi.js';
 import * as S from './schemas.js';
+import { registerMore } from './v1-more.js';
 
-class ApiFail extends Error {
-  constructor(status, message, code, field) {
+export class ApiFail extends Error {
+  constructor(status, message, code, field, retryAfter) {
     super(message);
-    Object.assign(this, { status, code, field });
+    Object.assign(this, { status, code, field, retryAfter });
   }
 }
 const notFound = (what, field) => new ApiFail(404, `No ${what} with that id or key, or you can’t open it.`, 'not_found', field);
@@ -37,7 +39,8 @@ const shortDate = v => new Date(v.slice(0, 10) + 'T00:00:00Z').toLocaleDateStrin
 const shiftDate = (v, days) => new Date(Date.parse(v.slice(0, 10) + 'T00:00:00Z') + days * 86_400_000).toISOString().slice(0, 10) + v.slice(10);
 
 /* ---------- public views of synced records ---------- */
-const views = config => ({
+const LEVEL = ['none', 'view', 'comment', 'edit', 'full'];
+const views = (config, me, favs, keyOf) => ({
   task: t => ({
     id: t.id,
     key: t.key,
@@ -53,7 +56,17 @@ const views = config => ({
     start: t.start ?? null,
     labels: t.labels || [],
     estimate: t.estimate ?? null,
-    subtasks: (t.subtasks || []).map(s => ({ id: s.id, title: s.title, done: !!s.done, assignee: s.assignee ?? null })),
+    subtasks: (t.subtasks || []).map(s => ({ id: s.id, title: s.title, done: !!s.done, assignee: s.assignee ?? null, due: s.due ?? null })),
+    dependsOn: t.deps || [],
+    recurrence: t.recur ?? null,
+    // Uploaded files by the address a key can fetch (as in /files), not the app's cookie-only one.
+    attachments: (t.attachments || []).map(a => ({
+      id: a.id,
+      name: a.name,
+      size: a.size || '',
+      url: a.url?.startsWith('/api/files/') ? `${config.appUrl}/api/v1/files/${a.id}/content` : null,
+    })),
+    favorite: favs().tasks.has(t.id),
     archived: !!t.archived,
     completedAt: t.completedAt ?? null,
     createdAt: t.created,
@@ -65,13 +78,20 @@ const views = config => ({
     url: `${config.appUrl}/#project/${p.key.toLowerCase()}`,
     name: p.name,
     description: p.desc || '',
-    status: p.status,
+    status: p.status || '',
     lead: p.lead ?? null,
     members: p.members || [],
+    permissions: Object.fromEntries(Object.entries(p.perms || {}).filter(([, v]) => PERMS.includes(v))),
     private: !!p.private,
     archived: !!p.archived,
     start: p.start ?? null,
     due: p.due ?? null,
+    icon: p.icon || '',
+    color: p.color || '',
+    team: p.team || '',
+    milestones: (p.milestones || []).map(m => ({ name: m.name, date: m.date ?? null })),
+    favorite: favs().projects.has(p.id),
+    access: LEVEL[projectLevel(p, me)],
     openTasks: counts?.get(p.id)?.open || 0,
     doneTasks: counts?.get(p.id)?.done || 0,
   }),
@@ -86,8 +106,59 @@ const views = config => ({
     status: m.status,
     kind: m.kind === 'bot' ? 'bot' : 'person',
   }),
-  comment: c => ({ id: c.id, task: c.task, author: c.by, text: c.text, createdAt: c.at }),
-  activity: a => ({ id: a.id, by: a.by, verb: a.verb, extra: a.extra || '', via: a.via ?? null, task: a.task ?? null, at: a.at }),
+  comment: c => ({
+    id: c.id,
+    task: c.task,
+    author: c.by,
+    text: c.text,
+    reactions: Object.fromEntries(Object.entries(c.re || {}).filter(([, who]) => who?.length)),
+    createdAt: c.at,
+  }),
+  activity: a => ({
+    id: a.id,
+    by: a.by,
+    verb: a.verb,
+    extra: a.extra || '',
+    via: a.via ?? null,
+    task: a.task ?? null,
+    taskKey: keyOf(a.task),
+    project: a.project ?? null,
+    at: a.at,
+  }),
+  team: (t, members) => ({
+    id: t.id,
+    name: t.name,
+    description: t.desc || '',
+    icon: t.icon || '',
+    color: t.c || '',
+    members: members.filter(m => m.team === t.id).map(m => m.id),
+  }),
+  file: f => ({
+    id: f.id,
+    project: f.project,
+    task: f.task ?? null,
+    taskKey: keyOf(f.task),
+    name: f.name,
+    type: f.type,
+    size: f.size || '',
+    uploadedBy: f.by ?? null,
+    uploadedAt: f.at,
+    url: f.url ? `${config.appUrl}/api/v1/files/${f.id}/content` : null,
+  }),
+  event: e => ({ id: e.id, title: e.title, date: e.date, time: e.time || '', project: e.project ?? null }),
+  view: v => ({ id: v.id, project: v.project, name: v.name, type: v.type, filters: (v.filters || []).map(f => ({ field: f.f, op: f.op, values: f.v })) }),
+  notification: n => ({
+    id: n.id,
+    type: n.type,
+    by: n.by ?? null,
+    task: n.task ?? null,
+    taskKey: keyOf(n.task),
+    project: n.project ?? null,
+    text: n.text || '',
+    snippet: n.snippet || '',
+    read: !!n.read,
+    at: n.at,
+  }),
 });
 
 /* ---------- pagination ---------- */
@@ -109,14 +180,31 @@ function decodeCursor(s) {
   throw new ApiFail(400, 'That cursor isn’t valid.', 'invalid_request', 'cursor');
 }
 
-export function v1Routes({ limit }) {
+export function v1Routes({ limit, uploads }) {
   /* ---------- lookups, all within what the key's person can see ---------- */
   const ctxOf = c => {
     const { db, repo, config } = c.var;
     const me = c.var.auth.member;
     const projects = repo.all('projects', 'ORDER BY created_at, rowid');
     const visible = projects.filter(p => canSee(p, me));
-    return { c, db, repo, config, me, projects, visible, V: views(config) };
+    let favs;
+    const favorites = () => (favs ||= repo.favorites(me.id));
+    const resetFavorites = () => (favs = null);
+    // A task's key from its id, for records that name a task (activity, notifications, files), so
+    // clients needn't look each one up. Only tasks this person can see; null otherwise.
+    const keys = new Map();
+    const visibleIds = new Set(visible.map(p => p.id));
+    const keyOf = id => {
+      if (!id) return null;
+      if (!keys.has(id)) {
+        const r = db.get("SELECT project_id, json_extract(data, '$.key') k FROM tasks WHERE id = ?", id);
+        keys.set(id, r && visibleIds.has(r.project_id) ? r.k : null);
+      }
+      return keys.get(id);
+    };
+    // A key acts as its person: an Owner's or Admin's key has their admin powers, as in the app.
+    const admin = isAdminRole(me);
+    return { c, db, repo, config, me, admin, projects, visible, favorites, resetFavorites, V: views(config, me, favorites, keyOf) };
   };
   const findProject = (x, ref, field = 'project') => {
     const up = ref.toUpperCase();
@@ -124,9 +212,9 @@ export function v1Routes({ limit }) {
     if (!p) throw notFound('project', field);
     return p;
   };
-  const findTask = (x, ref) => {
+  const findTask = (x, ref, field) => {
     const t = x.repo.get('tasks', ref) || x.repo.all('tasks', "WHERE json_extract(data, '$.key') = ?", ref.toUpperCase())[0];
-    if (!t || !x.visible.some(p => p.id === t.project)) throw notFound('task');
+    if (!t || !x.visible.some(p => p.id === t.project)) throw notFound('task', field);
     return t;
   };
   /* People as this person may see them (Guests don't see everyone's email). */
@@ -153,11 +241,20 @@ export function v1Routes({ limit }) {
         .map(r => [r.id, r]),
     );
 
+  /* Workspace administration (roles, removing people, workspace settings, bots, the invite link)
+     is for Owners and Admins: the key's person, with their role as it is now (read on every
+     request), so someone demoted loses it on their keys at once. */
+  const needAdmin = x => {
+    if (!isAdminRole(x.me)) throw new ApiFail(403, 'Only owners and admins can do this.', 'forbidden');
+  };
+
   /* ---------- writes ---------- */
   /* `fields`: the API's name for a record field an error names, e.g. which of description and
      descriptionHtml the request sent. */
   function write(x, ops, fields = { desc: 'description' }) {
-    const { results, failed } = x.c.var.engine.apply(x.c.var.auth, ops, null, { via: x.c.var.via, atomic: true });
+    const { results, failed, links } = x.c.var.engine.apply(x.c.var.auth, ops, null, { via: x.c.var.via, atomic: true });
+    // Invite links, for servers that expose them (development).
+    x.links = links;
     if (!failed) x.c.set('committed', true);
     if (failed) {
       const m = /^(\w+): (.*)$/.exec(failed.error);
@@ -171,13 +268,26 @@ export function v1Routes({ limit }) {
     const id = newId('a');
     return { c: 'activity', id, k: 'put', v: { id, by: x.me.id, verb, task: t.id, project: t.project, at: Date.now(), extra } };
   };
+  /* The key the next task in project `p` gets (the app's nextKey; the server keeps it, see
+     rules.js settleKey). */
+  const nextKey = (x, p) => {
+    const prefix = p.key + '-';
+    const top =
+      x.db.get(
+        "SELECT MAX(CAST(substr(json_extract(data, '$.key'), ?) AS INTEGER)) n FROM tasks WHERE json_extract(data, '$.key') LIKE ?",
+        prefix.length + 1,
+        prefix + '%',
+      )?.n || 0;
+    return prefix + (Math.max(p.seq || 200, top) + 1);
+  };
   const nextOrder = x => (x.db.get("SELECT MAX(json_extract(data, '$.order')) n FROM tasks")?.n || 0) + 1;
   /* The description as sent. The sync rules check and sanitise it, once (rules.js richDesc), like
      any description from the app. */
   const descOf = b => (b.descriptionHtml != null ? b.descriptionHtml : b.description != null ? textToHtml(b.description) : undefined);
   const descField = b => ({ desc: b.descriptionHtml != null ? 'descriptionHtml' : 'description' });
 
-  function newTask(x, f) {
+  /* `order` when the caller already knows it (a copy of many tasks finds the next one once). */
+  function newTask(x, f, order) {
     const now = Date.now();
     return {
       id: newId('t'),
@@ -196,10 +306,23 @@ export function v1Routes({ limit }) {
       estimate: f.estimate ?? null,
       created: now,
       updated: now,
-      order: nextOrder(x),
+      order: order ?? nextOrder(x),
       recur: f.recur ?? null,
       ...(f.status === 'done' ? { completedAt: now } : {}),
     };
+  }
+
+  /* Task references for `dependsOn`: tasks this person can see, in the same project (the app's
+     "Blocked by" picker offers only those), never the task itself. */
+  function depsOf(x, t, refs) {
+    const ids = [];
+    for (const r of refs) {
+      const d = findTask(x, r, 'dependsOn');
+      if (d.id === t.id) throw new ApiFail(400, 'dependsOn: a task can’t wait on itself.', 'invalid_request', 'dependsOn');
+      if (d.project !== t.project) throw new ApiFail(400, `dependsOn: ${d.key} is in another project.`, 'invalid_request', 'dependsOn');
+      if (!ids.includes(d.id)) ids.push(d.id);
+    }
+    return ids;
   }
 
   /* The same field-by-field changes and activity lines the app's applyPatch makes (actions.js). */
@@ -235,17 +358,45 @@ export function v1Routes({ limit }) {
     if (b.start !== undefined && set('start', b.start)) acts.push(['changed start date of', b.start ? `to ${shortDate(b.start)}` : '(cleared)']);
     if (b.labels !== undefined && set('labels', b.labels)) acts.push(['updated labels on', '']);
     if (b.estimate !== undefined && set('estimate', b.estimate)) acts.push(['estimated', b.estimate || 'none']);
+    if (b.recurrence !== undefined && set('recur', b.recurrence)) acts.push(['set repeat on', b.recurrence ? b.recurrence.toLowerCase() : 'off']);
+    // After a move, so they're checked against the project the task ends up in.
+    if (b.dependsOn !== undefined && set('deps', depsOf(x, after, b.dependsOn))) acts.push(['updated dependencies of', '']);
+    // Its place in a manual order (dragging in a list or on a board): no activity, as in the app.
+    if (b.order !== undefined) set('order', b.order);
     if (!Object.keys(patch).length) return t;
     patch.updated = Date.now();
     const ops = [{ c: 'tasks', id: t.id, k: 'patch', v: patch }, ...acts.map(([verb, extra]) => actOp(x, after, verb, extra))];
-    // Completing a repeating task schedules the next one, as in the app.
-    if (patch.status === 'done' && after.recur && after.due) {
+    // Completing a repeating task schedules the next one, as in the app, unless the one it scheduled
+    // before is still there; the original remembers it (`nextId`).
+    const next = t.nextId ? x.repo.get('tasks', t.nextId) : null;
+    if (patch.status === 'done' && after.recur && after.due && !next) {
       const due = shiftDate(after.due, RECUR_DAYS[after.recur] || 7);
       const n = newTask(x, { ...after, due, start: due, status: 'todo', subtasks: (after.subtasks || []).map(s => ({ ...s, done: false })) });
+      patch.nextId = n.id;
       ops.push({ c: 'tasks', id: n.id, k: 'put', v: n }, actOp(x, n, 'created'));
+    }
+    // Reopened: the next occurrence it scheduled goes again, unless someone has worked on it since.
+    if (t.status === 'done' && patch.status && patch.status !== 'done' && t.nextId) {
+      const untouched =
+        next &&
+        next.updated === next.created &&
+        next.status === 'todo' &&
+        !x.db.get("SELECT 1 FROM comments WHERE json_extract(data, '$.task') = ? LIMIT 1", next.id);
+      if (!next || untouched) patch.nextId = null;
+      if (untouched) ops.push({ c: 'tasks', id: next.id, k: 'del' });
     }
     return write(x, ops, descField(b))[0];
   }
+
+  const meView = x => {
+    const { key, user } = x.c.var.auth;
+    return {
+      ...x.V.member(x.me),
+      email: user.kind === 'bot' ? '' : user.email,
+      workspace: x.repo.workspace()?.name || '',
+      key: { id: key.id, name: key.name, scope: key.scope, expiresAt: key.expires_at },
+    };
+  };
 
   /* ---------- routes ---------- */
   const R = [];
@@ -257,15 +408,7 @@ export function v1Routes({ limit }) {
     tag: 'Me',
     summary: 'The person or bot this key acts as',
     ok: ok(S.Me),
-    run: x => {
-      const { key, user } = x.c.var.auth;
-      return {
-        ...x.V.member(x.me),
-        email: user.kind === 'bot' ? '' : user.email,
-        workspace: x.repo.workspace()?.name || '',
-        key: { id: key.id, name: key.name, scope: key.scope, expiresAt: key.expires_at },
-      };
-    },
+    run: x => meView(x),
   });
 
   route('delete', '/me/key', {
@@ -336,7 +479,14 @@ export function v1Routes({ limit }) {
     run: (x, { body: b }) => {
       const p = findProject(x, b.project);
       const assignee = b.assignee == null ? null : findMember(x, b.assignee, 'assignee').id;
-      const t = newTask(x, { ...b, project: p.id, assignee, desc: descOf(b) });
+      const subtasks = (b.subtasks || []).map(s => ({
+        id: newId('s'),
+        title: s.title,
+        done: !!s.done,
+        ...(s.assignee != null ? { assignee: findMember(x, s.assignee, 'subtasks').id } : {}),
+      }));
+      const t = newTask(x, { ...b, project: p.id, assignee, desc: descOf(b), subtasks, recur: b.recurrence ?? null });
+      t.deps = b.dependsOn ? depsOf(x, t, b.dependsOn) : [];
       const [saved] = write(x, [{ c: 'tasks', id: t.id, k: 'put', v: t }, actOp(x, t, 'created')], descField(b));
       return x.V.task(saved);
     },
@@ -504,6 +654,30 @@ export function v1Routes({ limit }) {
     },
   });
 
+  registerMore({
+    route,
+    ok,
+    ApiFail,
+    notFound,
+    findProject,
+    findTask,
+    findMember,
+    people,
+    counts,
+    write,
+    actOp,
+    needAdmin,
+    pageOf,
+    newTask,
+    nextKey,
+    meView,
+    encodeCursor,
+    decodeCursor,
+    limit,
+    uploads,
+    shortDate,
+  });
+
   /* ---------- wiring ---------- */
   const r = new Hono();
   // The spec is public, so tools can read it without a key.
@@ -515,7 +689,10 @@ export function v1Routes({ limit }) {
     if (res.success) return res.data;
     const i = res.error.issues[0];
     const field = String(i.path[0] ?? (i.code === 'unrecognized_keys' ? i.keys?.[0] : '') ?? '');
-    const msg = i.code === 'unrecognized_keys' ? `Unknown field: ${i.keys.join(', ')}.` : field ? `${field}: ${i.message}` : i.message;
+    // A field that wasn't sent at all: zod says "expected nonoptional, received undefined".
+    const absent = i.code === 'invalid_type' && i.path.length === 1 && (v == null || typeof v !== 'object' || v[field] === undefined);
+    const msg =
+      i.code === 'unrecognized_keys' ? `Unknown field: ${i.keys.join(', ')}.` : absent ? `${field} is required.` : field ? `${field}: ${i.message}` : i.message;
     throw new ApiFail(400, where === 'body' || !field ? msg : `${msg} (in the ${where})`, 'invalid_request', field || undefined);
   };
   for (const rt of R)
@@ -524,18 +701,27 @@ export function v1Routes({ limit }) {
         const input = {};
         if (rt.params) input.params = parse(rt.params, c.req.param(), 'path');
         if (rt.query) input.query = parse(rt.query, c.req.query(), 'query');
-        if (rt.body) {
+        if (rt.body && !rt.rawBody) {
           let raw;
           try {
-            raw = await c.req.json();
+            const text = await c.req.text();
+            // No body at all is an empty one, for routes whose fields are all optional.
+            raw = text.trim() ? JSON.parse(text) : {};
           } catch {
             throw new ApiFail(400, 'Request body must be JSON.', 'invalid_request');
           }
           input.body = parse(rt.body, raw, 'body');
         }
-        return c.json(rt.run(ctxOf(c), input), rt.ok.status);
+        const x = ctxOf(c);
+        if (rt.admin) needAdmin(x);
+        const out = await rt.run(x, input);
+        // File downloads (and anything else that isn't JSON) answer with their own Response.
+        return out instanceof Response ? out : c.json(out, rt.ok.status);
       } catch (e) {
-        if (e instanceof ApiFail) return fail(c, e.status, e.message, e.code, e.field);
+        if (e instanceof ApiFail) {
+          if (e.retryAfter) c.header('Retry-After', String(e.retryAfter));
+          return fail(c, e.status, e.message, e.code, e.field);
+        }
         c.var.log.error?.('[api]', c.req.method, c.req.path, e);
         return fail(c, 500, 'Something went wrong on our side. Try again in a moment.', 'server_error');
       }

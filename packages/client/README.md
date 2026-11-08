@@ -17,14 +17,23 @@ try {
   const me = await api.get('/me');
   const mine = await api.all('/tasks', { assignee: 'me', status: 'open' });
   await api.post('/tasks', { project: 'WEB', title: 'Fix login bug' });
+  await api.upload('/files', { task: 'WEB-212', name: 'trace.txt' }, new TextEncoder().encode('…'), 'text/plain');
 } catch (e) {
   if (e instanceof ApiError) console.error(e.status, e.code, e.message);
 }
 ```
 
-- `createClient({ url, key, client, fetch })`: `get`, `post`, `patch`, `request`, and `all` (every
-  page of a list endpoint). `client` labels your changes in Activity ("Ada via My script"). Errors
-  are `ApiError` with `status`, `code` and `field`.
+- `createClient({ url, key, client, fetch, retry, onRetry })`: `get`, `post`, `patch`, `put`, `del`,
+  `request`, `all` (every page of a list endpoint), `upload(path, query, bytes, type)` (raw bytes as
+  the body, for `POST /files`) and `download(path)` (`{ bytes, type, name }`). `client` labels your changes in Activity ("Ada via My
+  script"). Errors are `ApiError` with `status`, `code` and `field` (and `retryAfter`, in seconds, on
+  a `429`).
+- Rate limits are waited out: a `429` with `Retry-After` is sent again after that many seconds, up
+  to `retry.retries` times (default 3), as long as each wait is at most `retry.maxDelay` ms (default
+  60 000) and the waits for one request add up to at most `retry.maxTotal` ms (default 120 000);
+  otherwise the `429` is thrown straight away. A `Retry-After` of 0 still waits a second. The server refuses such a request before handling
+  it, so this is safe for writes too. `onRetry({ attempt, delay, method, path })` is called before
+  each wait; `retry: { retries: 0 }` turns it off.
 - `plainHttpRemote(url)`: true when the URL would send the key unencrypted to another machine.
 - `@sudosapient/client/config`: `loadConfig`, `saveConfig`, `clearConfig` and `configPath` for
   `$XDG_CONFIG_HOME/sudo-sapient/config.json`, the file `sudo-cli login` writes (readable only by

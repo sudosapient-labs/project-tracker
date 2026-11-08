@@ -3,7 +3,10 @@
    document (openapi.js) is generated from the same objects, so the two can't drift. Records are
    the public view of the synced ones (sync/schemas.js), with stable, documented field names. */
 import { z } from 'zod';
-import { PRIOS, ROLES, STATUSES } from '../../src/core/constants.js';
+import { PCOLORS, PICONS, PRIOS, PSTAT, REACTIONS, RECUR, ROLES, STATUSES, TIMEZONES } from '../../src/core/constants.js';
+import { PERMS } from '../../src/core/access.js';
+import { FILE_TYPES } from '../../src/core/file-types.js';
+import { DEFAULT_NOTIF_PREFS } from '../notify.js';
 
 export const registry = z.registry();
 const named = (id, schema, description) => {
@@ -66,7 +69,12 @@ export const Me = named(
     status: z.enum(['active', 'invited']),
     kind: Kind,
     workspace: z.string(),
-    key: z.object({ id: z.string(), name: z.string(), scope: z.enum(['read', 'write']), expiresAt: ms.nullable() }),
+    key: z.object({
+      id: z.string(),
+      name: z.string(),
+      scope: z.enum(['read', 'write']).describe('write: everything the person’s role allows; read: only reading'),
+      expiresAt: ms.nullable(),
+    }),
   }),
   'The person or bot the API key belongs to.',
 );
@@ -77,7 +85,11 @@ export const Revoked = named(
   'The key that made the request is revoked and no longer works.',
 );
 
-export const Subtask = z.object({ id: z.string(), title: z.string(), done: z.boolean(), assignee: z.string().nullable() });
+export const Subtask = named(
+  'Subtask',
+  z.object({ id: z.string(), title: z.string(), done: z.boolean(), assignee: z.string().nullable(), due: z.string().nullable() }),
+  'A checklist item of a task.',
+);
 
 export const Task = named(
   'Task',
@@ -97,6 +109,10 @@ export const Task = named(
     labels: z.array(z.string()),
     estimate: z.string().nullable(),
     subtasks: z.array(Subtask),
+    dependsOn: z.array(z.string()).describe('Ids of the tasks this one waits on'),
+    recurrence: z.enum(RECUR).nullable().describe('Repeats: completing it schedules the next one'),
+    attachments: z.array(z.object({ id: z.string(), name: z.string(), size: z.string(), url: z.string().nullable() })).describe('Files attached (see /files)'),
+    favorite: z.boolean().describe('Starred by the key’s person'),
     archived: z.boolean(),
     completedAt: ms.nullable(),
     createdAt: ms,
@@ -116,19 +132,37 @@ export const Project = named(
     status: z.string().describe('planning, active, risk, hold or complete'),
     lead: z.string().nullable().describe('Member id'),
     members: z.array(z.string()).describe('Member ids listed on the project'),
+    permissions: z
+      .record(z.string(), z.enum(PERMS))
+      .describe('Member id → permission set in the share dialog (listed people without one: Guests comment, others edit)'),
     private: z.boolean(),
     archived: z.boolean(),
     start: z.string().nullable(),
     due: z.string().nullable(),
+    icon: z.string(),
+    color: z.string(),
+    team: z.string().describe('Team id, or empty'),
+    milestones: z.array(z.object({ name: z.string(), date: z.string().nullable() })),
+    favorite: z.boolean(),
+    access: z
+      .enum(['view', 'comment', 'edit', 'full', 'none'])
+      .describe('What the key’s person may do here; "none": an Owner/Admin’s view of a project they’re not in (settings only)'),
     openTasks: z.number().int(),
     doneTasks: z.number().int(),
   }),
-  'A project the key can open.',
+  'A project the key can open (or, for an Owner or Admin, one whose settings they manage).',
 );
 
 export const Comment = named(
   'Comment',
-  z.object({ id: z.string(), task: z.string().describe('Task id'), author: z.string().describe('Member id'), text: z.string(), createdAt: ms }),
+  z.object({
+    id: z.string(),
+    task: z.string().describe('Task id'),
+    author: z.string().describe('Member id'),
+    text: z.string(),
+    reactions: z.record(z.string(), z.array(z.string())).describe('Emoji → member ids who reacted'),
+    createdAt: ms,
+  }),
   'A comment on a task.',
 );
 
@@ -141,6 +175,8 @@ export const Activity = named(
     extra: z.string(),
     via: z.string().nullable().describe('What made the change when it was not the app, e.g. "Claude" or "CLI"'),
     task: z.string().nullable(),
+    taskKey: z.string().nullable().describe('The task’s key (e.g. WEB-12), while it exists'),
+    project: z.string().nullable().describe('Project id; null for workspace-wide entries'),
     at: ms,
   }),
   'An entry in the activity log.',
@@ -202,12 +238,337 @@ const fields = {
   start: date.nullable(),
   labels: z.array(z.string().max(40)).max(20),
   estimate: z.string().max(20).nullable(),
+  recurrence: z.enum(RECUR).nullable().describe('Daily, Weekly, Every 2 weeks or Monthly; null for none'),
+  dependsOn: z.array(ref).max(100).describe('Task ids or keys this one waits on; replaces the list'),
 };
 export const TaskCreate = z
-  .strictObject({ project: ref.describe('Project id or key'), ...fields })
+  .strictObject({
+    project: ref.describe('Project id or key'),
+    ...fields,
+    subtasks: z.array(z.object({ title: z.string().trim().min(1).max(500), done: z.boolean().optional(), assignee: ref.nullable().optional() })).max(200),
+  })
   .partial()
   .required({ project: true, title: true });
-export const TaskUpdate = z.strictObject({ ...fields, project: ref.describe('Move to this project (id or key)') }).partial();
+export const TaskUpdate = z
+  .strictObject({
+    ...fields,
+    project: ref.describe('Move to this project (id or key)'),
+    order: z.number().finite().describe('Position in a manual sort (lower first), as dragging in a list or on a board sets'),
+  })
+  .partial();
 export const CommentCreate = z.strictObject({
   text: z.string().trim().min(1, 'Write a comment').max(10_000).describe('Plain text; @Name mentions notify people'),
+});
+
+/* ---------- more records ---------- */
+export const Team = named(
+  'Team',
+  z.object({ id: z.string(), name: z.string(), description: z.string(), icon: z.string(), color: z.string(), members: z.array(z.string()) }),
+  'A team: a group of people (members carry their team id).',
+);
+export const TeamList = named('TeamList', z.object({ data: z.array(Team) }), 'Every team.');
+
+export const Invited = named(
+  'Invited',
+  z.object({ member: Member, link: z.string().optional().describe('Only on servers that expose email links (development)') }),
+  'The person invited; they’re emailed a link to join.',
+);
+export const Ok = named('Ok', z.object({ ok: z.literal(true) }), 'Done.');
+export const Deleted = named(
+  'Deleted',
+  z.object({ deleted: z.literal(true), id: z.string(), restoreUntil: ms.optional().describe('Undo with …/undelete until then (tasks and comments)') }),
+  'Deleted.',
+);
+
+export const File = named(
+  'File',
+  z.object({
+    id: z.string(),
+    project: z.string(),
+    task: z.string().nullable().describe('Task id it’s attached to'),
+    taskKey: z.string().nullable(),
+    name: z.string(),
+    type: z.enum(FILE_TYPES),
+    size: z.string().describe('Readable size, e.g. "1.2 MB"'),
+    uploadedBy: z.string().nullable(),
+    uploadedAt: ms,
+    url: z.string().nullable().describe('Download it with GET /files/{id}/content'),
+  }),
+  'A file in a project.',
+);
+
+export const Event = named(
+  'Event',
+  z.object({
+    id: z.string(),
+    title: z.string(),
+    date: z.string().describe('YYYY-MM-DD'),
+    time: z.string().describe('HH:MM start, or empty for all day'),
+    project: z.string().nullable().describe('Project id; null for a workspace-wide event'),
+  }),
+  'A calendar event.',
+);
+
+const Filter = z.object({
+  field: z.enum(['status', 'assignee', 'priority', 'due', 'project', 'labels', 'created', 'updated']),
+  op: z.enum(['is', 'not']),
+  values: z.array(z.string().max(64)).max(200),
+});
+export const SavedView = named(
+  'SavedView',
+  z.object({ id: z.string(), project: z.string(), name: z.string(), type: z.enum(['list', 'board', 'table']), filters: z.array(Filter) }),
+  'A saved view: a named set of filters on a project’s tasks.',
+);
+
+export const Notification = named(
+  'Notification',
+  z.object({
+    id: z.string(),
+    type: z.string().describe('assign, mention, comment, update, due, …'),
+    by: z.string().nullable(),
+    task: z.string().nullable(),
+    taskKey: z.string().nullable().describe('The task’s key (e.g. WEB-12), while it exists'),
+    project: z.string().nullable(),
+    text: z.string(),
+    snippet: z.string(),
+    read: z.boolean(),
+    at: ms,
+  }),
+  'A notification in the inbox of the key’s person.',
+);
+
+export const Workspace = named(
+  'Workspace',
+  z.object({ name: z.string(), color: z.string(), brand: z.boolean().describe('Show the workspace logo in the sidebar') }),
+  'Workspace settings.',
+);
+
+const PREF_SCHEMA = {
+  theme: z.enum(['light', 'dark', 'system']),
+  accent: z.enum(['indigo', 'blue', 'violet', 'teal', 'rose', 'graphite']),
+  side: z.enum(['comfortable', 'compact']).describe('Sidebar density'),
+  density: z.enum(['comfortable', 'compact']).describe('Task rows and cards'),
+  motion: z.enum(['system', 'reduce']),
+  lang: z.enum(['English (US)', 'English (UK)', 'Deutsch', 'Español', 'Français', '日本語']),
+  spell: z.boolean().describe('Spellcheck in descriptions and comments'),
+  tz: z.enum(TIMEZONES.map(t => t.id)).describe('Time zone for due dates and reminders'),
+  timeFmt: z.enum(['12', '24']),
+  dateFmt: z.enum(['MMM d', 'd/M', 'M/d', 'yyyy-MM-dd']),
+  weekStart: z.union([z.literal(0), z.literal(1), z.literal(6)]).describe('0 Sunday, 1 Monday, 6 Saturday'),
+  home: z.string().max(40).describe('The page the app opens on'),
+  openTasks: z.string().max(40).describe('How tasks open (drawer or page)'),
+  defaultTab: z.string().max(40).describe('The tab a new project opens on'),
+  showDoneBoard: z.boolean().describe('Show the Done column on boards'),
+  confirmDel: z.boolean().describe('Ask before deleting a task'),
+};
+export const PREF_KEYS = Object.keys(PREF_SCHEMA);
+const NOTIF_SCHEMA = Object.fromEntries(Object.keys(DEFAULT_NOTIF_PREFS).map(k => [k, z.boolean()]));
+export const Preferences = named(
+  'Preferences',
+  z.object({
+    preferences: z.object(PREF_SCHEMA).partial().describe('Display preferences (Settings → Appearance, Language, Date and time)'),
+    notifications: z.object(NOTIF_SCHEMA).describe('Notification preferences (Settings → Notifications)'),
+  }),
+  'The key’s person’s preferences.',
+);
+export const Favorites = named(
+  'Favorites',
+  z.object({ projects: z.array(z.string()), tasks: z.array(z.string()), projectOrder: z.array(z.string()).describe('Sidebar order of project ids') }),
+  'What the key’s person starred, and their sidebar order.',
+);
+
+export const Bot = named(
+  'Bot',
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    role: z.enum(['Member', 'Guest']),
+    createdAt: ms,
+    projects: z.array(z.string()),
+    keys: z.array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        prefix: z.string(),
+        scope: z.enum(['read', 'write']),
+        createdAt: ms,
+        lastUsedAt: ms.nullable(),
+        expiresAt: ms.nullable(),
+        createdBy: z.string().nullable(),
+      }),
+    ),
+  }),
+  'A bot member and its keys (metadata only; key secrets are shown once, in Settings).',
+);
+export const BotList = named('BotList', z.object({ data: z.array(Bot) }), 'Every bot.');
+export const MarkedRead = named('MarkedRead', z.object({ updated: z.number().int().describe('How many were unread') }), 'Notifications marked read.');
+export const InviteLink = named('InviteLink', z.object({ link: z.string() }), 'A reusable link to join as a Member; making one turns the previous one off.');
+
+export const FilePage = page('FilePage', File, 'files');
+export const EventPage = page('EventPage', Event, 'events');
+export const SavedViewPage = page('SavedViewPage', SavedView, 'saved views');
+export const NotificationPage = page('NotificationPage', Notification, 'notifications');
+
+/* ---------- more inputs ---------- */
+export const IdParam = z.object({ id: ref.describe('Id') });
+export const SubtaskParams = z.object({ ref: ref.describe('Task id or key'), id: ref.describe('Subtask id') });
+export const ProjectMemberParams = z.object({ ref: ref.describe('Project id or key'), member: ref.describe('Member id, email, name or "me"') });
+export const ReactionParams = z.object({ id: ref.describe('Comment id'), emoji: z.enum(REACTIONS) });
+export const BotKeyParams = z.object({ id: ref.describe('Bot id'), keyId: ref.describe('Key id') });
+
+const who = ref.describe('Member id, email, name or "me"');
+const projectFields = {
+  name: z.string().trim().min(1, 'Give the project a name').max(120),
+  description: z.string().max(5000),
+  icon: z.enum(PICONS),
+  color: z.enum(Object.keys(PCOLORS)),
+  status: z.enum(Object.keys(PSTAT)).describe('planning, active, risk, hold or complete'),
+  lead: who.nullable(),
+  team: ref.nullable().describe('Team id; null for none'),
+  start: date.nullable(),
+  due: date.nullable(),
+  private: z.boolean().describe('Only listed people (and the lead) can open it'),
+  milestones: z
+    .array(z.object({ name: z.string().trim().min(1).max(200), date: date.nullable().optional() }))
+    .max(100)
+    .describe('Replaces the whole list'),
+};
+export const ProjectCreate = z
+  .strictObject({
+    ...projectFields,
+    key: z
+      .string()
+      .regex(/^[A-Za-z]{1,8}$/, 'A key is 1–8 letters, e.g. WEB')
+      .optional()
+      .describe('Prefix of its task keys (1–8 letters); made from the name when left out'),
+    members: z
+      .array(z.object({ member: who, permission: z.enum(PERMS).optional() }))
+      .max(1000)
+      .describe('People to list on it, besides you'),
+  })
+  .partial()
+  .required({ name: true });
+export const ProjectUpdate = z.strictObject(projectFields).partial();
+export const ProjectShare = z.strictObject({ permission: z.enum(PERMS).optional().describe('Default: Guests Can comment, others Can edit') });
+
+export const TeamCreate = z.strictObject({
+  name: z.string().trim().min(1, 'Give the team a name').max(60),
+  description: z.string().max(500).optional(),
+  icon: z.string().max(40).optional(),
+  color: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{6}$/, 'A colour is #RRGGBB')
+    .optional(),
+  members: z.array(ref).max(1000).optional().describe('Exactly who is on the team (ids, emails or names); replaces it'),
+});
+export const TeamUpdate = TeamCreate.partial();
+
+export const MemberInvite = z.strictObject({
+  email: z
+    .string()
+    .trim()
+    .max(254)
+    .regex(/^\S+@\S+\.\S+$/, 'Enter a valid email address'),
+  name: z.string().trim().min(1).max(80).optional().describe('Defaults to the part of the email before @'),
+  role: z.enum(['Admin', 'Member', 'Guest']).optional().describe('Default Member; only Owners and Admins invite Admins'),
+  team: ref.nullable().optional(),
+  title: z.string().max(80).optional(),
+});
+export const MemberUpdate = z
+  .strictObject({
+    name: z.string().trim().min(1).max(80),
+    title: z.string().max(80),
+    team: ref.nullable().describe('Team id; null for none'),
+    role: z.enum(ROLES).describe('Owners and Admins only'),
+  })
+  .partial();
+export const MeUpdate = z
+  .strictObject({
+    name: z.string().trim().min(1).max(80),
+    title: z.string().max(80),
+    team: ref.nullable(),
+    color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'A colour is #RRGGBB'),
+  })
+  .partial();
+export const PreferencesUpdate = z.strictObject({
+  preferences: z.strictObject(PREF_SCHEMA).partial().optional(),
+  notifications: z.strictObject(NOTIF_SCHEMA).partial().optional(),
+});
+export const ProjectOrder = z.strictObject({ projects: z.array(ref).max(5000).describe('Project ids or keys, top first') });
+
+export const BotCreate = z.strictObject({
+  name: z.string().trim().min(1, 'Name the bot, e.g. “Release Bot”').max(80),
+  role: z.enum(['Member', 'Guest']).optional(),
+  projects: z.array(ref).max(1000).optional().describe('Project ids or keys it is listed on'),
+});
+export const BotUpdate = BotCreate.partial();
+
+export const WorkspaceUpdate = z
+  .strictObject({
+    name: z.string().trim().min(1).max(80),
+    color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'A colour is #RRGGBB'),
+    brand: z.boolean(),
+  })
+  .partial();
+
+export const SubtaskCreate = z.strictObject({
+  title: z.string().trim().min(1, 'Give the subtask a name').max(500),
+  done: z.boolean().optional(),
+  assignee: who.nullable().optional(),
+  due: date.nullable().optional(),
+});
+export const SubtaskUpdate = SubtaskCreate.partial();
+
+export const CommentUpdate = CommentCreate;
+
+export const FileQuery = z.object({ project: ref.optional().describe('Project id or key'), task: ref.optional().describe('Task id or key'), limit, cursor });
+export const FileUploadQuery = z.object({
+  project: ref.optional().describe('Project id or key (or give task)'),
+  task: ref.optional().describe('Task id or key to attach it to'),
+  name: z.string().trim().min(1, 'Name the file, e.g. name=spec.pdf').max(255),
+});
+export const FileUpdate = z
+  .strictObject({ name: z.string().trim().min(1).max(255), task: ref.nullable().describe('Attach to this task (id or key); null detaches') })
+  .partial();
+export const DownloadQuery = z.object({ download: bool.describe('true: always as an attachment') });
+
+const time = z
+  .string()
+  .regex(/^(\d{2}:\d{2})?$/, 'Use HH:MM, or empty for all day')
+  .describe('HH:MM, or empty for all day');
+const day = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')
+  .refine(realDate, 'That date doesn’t exist');
+export const EventQuery = z.object({
+  project: ref.optional().describe('Project id or key'),
+  from: day.optional().describe('From this day (YYYY-MM-DD)'),
+  to: day.optional().describe('To this day'),
+  limit,
+  cursor,
+});
+export const EventCreate = z.strictObject({
+  title: z.string().trim().min(1, 'Give the event a title').max(200),
+  date: day,
+  time: time.optional(),
+  project: ref.nullable().optional().describe('Project id or key; null or left out for a workspace-wide event (admins only)'),
+});
+export const EventUpdate = EventCreate.partial();
+
+export const ViewQuery = z.object({ project: ref.optional(), limit, cursor });
+export const ViewCreate = z.strictObject({
+  project: ref.describe('Project id or key'),
+  name: z.string().trim().min(1, 'Name the view').max(80),
+  type: z.enum(['list', 'board', 'table']).optional(),
+  filters: z.array(Filter).max(50).optional(),
+});
+export const ViewUpdate = ViewCreate.omit({ project: true }).partial();
+
+export const NotificationQuery = z.object({ unread: bool.describe('true: only unread'), limit, cursor });
+export const NotificationUpdate = z.strictObject({ read: z.boolean() });
+
+export const ActivityQuery = z.object({
+  project: ref.optional().describe('Project id or key'),
+  limit,
+  cursor,
 });

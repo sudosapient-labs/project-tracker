@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/sudosapient-labs/project-tracker/compare/cli-v0.1.0...cli-v0.2.0) (2026-11-07)
+
+
+### Features
+
+* **cli:** commands for everything the API covers, and sudo-cli api for any endpoint ([4018f2c](https://github.com/sudosapient-labs/project-tracker/commit/4018f2c289035eb63675e7ad00b1fefa7daa5a25))
+
+
+### Bug Fixes
+
+* **client:** wait out rate limits using Retry-After ([5d9a675](https://github.com/sudosapient-labs/project-tracker/commit/5d9a67507e71be49308e317ed4b721fb26d6bfff))
+
 ## 0.1.0 (2026-11-07)
 
 

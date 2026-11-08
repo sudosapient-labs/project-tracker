@@ -2,14 +2,15 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { account, apiKey, bot, setup } from '../../../test/server/helpers.js';
 import { parseDue, run, sameOrigin } from '../src/cli.js';
+import { safeFileName } from '../src/commands.js';
 import { plainHttpRemote } from '@sudosapient/client';
 import { saveConfig } from '@sudosapient/client/config';
 
 /* Runs the CLI with captured output and its own config directory. */
-function cli(t, env = {}) {
+function cli(t, env = {}, extra = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sudo-cli-'));
   return async (...argv) => {
     let out = '',
@@ -27,6 +28,7 @@ function cli(t, env = {}) {
         },
       },
       fetch: t ? (url, init) => t.app.request(url, init) : undefined,
+      ...extra,
     });
     return { code, out, err, home };
   };
@@ -183,6 +185,48 @@ describe('against a workspace', () => {
   });
 });
 
+describe('rate limits', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('waits out the rate limit in a bulk run instead of failing part of it', async () => {
+    const t = setup({ DISABLE_RATE_LIMIT: 'false', API_RATE_LIMIT: '4' });
+    const ada = await account(t);
+    const project = { id: 'pweb', key: 'WEB', name: 'Website', icon: 'globe', color: 'indigo', status: 'active', team: '', lead: null, members: [], desc: '' };
+    const tasks = Array.from({ length: 6 }, (_, i) => ({
+      id: `t${i}`,
+      key: `WEB-${201 + i}`,
+      project: 'pweb',
+      title: `Task ${i}`,
+      status: 'todo',
+      priority: 'none',
+      labels: [],
+      subtasks: [],
+      attachments: [],
+      deps: [],
+      desc: '',
+      created: 1,
+      updated: 1,
+      order: i,
+    }));
+    await ada.c.sync([{ c: 'projects', id: 'pweb', k: 'put', v: { ...project, milestones: [] } }, ...tasks.map(v => ({ c: 'tasks', id: v.id, k: 'put', v }))]);
+    const token = await apiKey(ada.c);
+    // The limiter counts per minute of wall time: "waiting" moves the clock on instead.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const waited = [];
+    const sleep = async ms => {
+      waited.push(ms);
+      vi.setSystemTime(Date.now() + ms);
+    };
+    const c = cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: token }, { sleep });
+    const r = await c('done', ...tasks.map(x => x.key));
+    expect(r.code).toBe(0);
+    expect(r.out.trim().split('\n')).toHaveLength(6);
+    expect(r.err).toMatch(/^sudo-cli: rate limited; retrying in \d+ s…$/m);
+    expect(waited.length).toBeGreaterThan(0);
+    expect(t.db.get("SELECT COUNT(*) n FROM tasks WHERE json_extract(data, '$.status') = 'done'").n).toBe(6);
+  });
+});
+
 describe('version', () => {
   it('matches package.json (release-please bumps both)', async () => {
     const { VERSION } = await import('../src/cli.js');
@@ -280,5 +324,308 @@ describe('credentials', () => {
     await c('login', '--insecure', { stdin: `http://app.test/\n${keep}\n` });
     expect((await c('logout')).out).toContain('The key still works');
     expect((await ada.c.get('/api/keys')).body.map(k => k.name)).toEqual(['Other']);
+  });
+});
+
+/* Ada (Owner) and Bob (Member), the project WEB, and a CLI for each with a write key. `stdin` is
+   never a terminal here. */
+async function team() {
+  const t = setup();
+  const ada = await account(t);
+  await ada.c.sync([
+    {
+      c: 'members',
+      id: 'mbob',
+      k: 'put',
+      v: { id: 'mbob', name: 'Bob Lee', email: 'bob@example.com', role: 'Member', team: '', title: '', c: '#6B7280', status: 'invited', tz: '' },
+    },
+  ]);
+  const bob = await account(t, { name: 'Bob Lee', email: 'bob@example.com', invite: t.lastLink('bob@example.com').split('#invite/')[1] });
+  const project = {
+    id: 'pweb',
+    key: 'WEB',
+    name: 'Website',
+    icon: 'globe',
+    color: 'indigo',
+    status: 'active',
+    team: '',
+    lead: null,
+    members: [],
+    desc: '',
+    milestones: [],
+  };
+  await ada.c.sync([{ c: 'projects', id: 'pweb', k: 'put', v: project }]);
+  const as = token => cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: token });
+  return { t, ada: as(await apiKey(ada.c)), bob: as(await apiKey(bob.c)), adaId: ada.user.id };
+}
+const J = r => JSON.parse(r.out);
+
+describe('every noun', () => {
+  it('tasks: edit, subtasks, comments and reactions, archive, duplicate, delete and undelete', async () => {
+    const { t, ada } = await team();
+    await ada('new', 'Design', '-p', 'WEB');
+    await ada('new', 'Build', '-p', 'WEB');
+    const ed = await ada(
+      'tasks',
+      'edit',
+      'WEB-202',
+      '--title',
+      'Build it',
+      '-s',
+      'progress',
+      '--label',
+      'frontend',
+      '--label',
+      'bug,qa',
+      '--repeat',
+      'weekly',
+      '--due',
+      '2026-11-20',
+      '--depends',
+      'WEB-201',
+      '--estimate',
+      '3h',
+    );
+    expect(ed).toMatchObject({ code: 0, out: 'Updated WEB-202 Build it\n' });
+    expect(J(await ada('show', 'WEB-202', '--json'))).toMatchObject({
+      status: 'progress',
+      labels: ['frontend', 'bug', 'qa'],
+      recurrence: 'Weekly',
+      estimate: '3h',
+      due: '2026-11-20',
+    });
+    expect(J(await ada('tasks', 'edit', 'WEB-202', '--repeat', 'none', '--due', 'none', '--depends', 'none', '--json'))).toMatchObject({
+      recurrence: null,
+      due: null,
+      dependsOn: [],
+    });
+    expect(await ada('tasks', 'edit', 'WEB-202')).toMatchObject({ code: 2, err: expect.stringContaining('Nothing to change') });
+    expect((await ada('tasks', 'edit', 'WEB-202', '-s', 'finished')).code).toBe(2);
+
+    const added = await ada('subtask', 'add', 'WEB-202', 'Write', 'tests', '-a', 'Bob Lee');
+    const sid = /\((s[^)]+)\)/.exec(added.out)[1];
+    expect(added.out).toMatch(/^Added “Write tests” to WEB-202/);
+    expect((await ada('subtask', 'done', 'WEB-202', sid)).out).toBe('Done “Write tests” on WEB-202\n');
+    const shown = (await ada('show', 'WEB-202')).out;
+    expect(shown).toContain(`  [x] Write tests · Bob Lee  ${sid}`);
+    expect((await ada('subtask', 'promote', 'WEB-202', sid)).out).toMatch(/^Converted to WEB-203 Write tests/);
+
+    await ada('comment', 'WEB-202', 'First');
+    const cid = J(await ada('show', 'WEB-202', '--json')).comments[0].id;
+    expect((await ada('show', 'WEB-202')).out).toContain(cid);
+    expect((await ada('comment', 'edit', cid, 'First!')).out).toBe('Comment updated\n');
+    expect((await ada('react', cid, 'thumbsup')).out).toBe('Reacted 👍\n');
+    expect((await ada('show', 'WEB-202')).out).toContain('First!\n👍1');
+    expect((await ada('unreact', cid, '👍')).code).toBe(0);
+    expect((await ada('react', cid, 'clown')).code).toBe(2);
+    expect((await ada('comment', 'rm', cid)).out).toContain(`sudo-cli comment undelete ${cid}`);
+    expect((await ada('comment', 'undelete', cid)).out).toBe('Comment restored\n');
+
+    expect((await ada('tasks', 'archive', 'WEB-201')).out).toBe('Archived WEB-201 Design\n');
+    expect(J(await ada('tasks', '-p', 'WEB', '--all', '--json')).map(x => x.key)).not.toContain('WEB-201');
+    expect(J(await ada('tasks', 'list', '-p', 'WEB', '--all', '--archived', '--json')).map(x => x.key)).toContain('WEB-201');
+    expect((await ada('tasks', 'restore', 'WEB-201')).out).toBe('Restored WEB-201 Design\n');
+    expect((await ada('tasks', 'dup', 'WEB-201')).out).toMatch(/^Created WEB-204 Design \(copy\)/);
+    expect((await ada('tasks', 'fav', 'WEB-201')).out).toBe('Starred WEB-201 Design\n');
+    expect(J(await ada('favorites', '--json')).tasks).toHaveLength(1);
+    expect((await ada('favorites')).out).toContain('WEB-201 Design');
+
+    // Deleting a task doesn't ask (it can be undone for 10 minutes) and says how.
+    const rm = await ada('tasks', 'rm', 'WEB-204');
+    const id = /undelete (\S+)/.exec(rm.out)[1];
+    expect(rm.out).toMatch(/^Deleted WEB-204\. Undo within 10 minutes: sudo-cli tasks undelete t/);
+    expect((await ada('tasks', 'undelete', id)).out).toBe('Restored WEB-204 Design (copy)\n');
+    expect(t.db.all("SELECT json_extract(data, '$.via') v FROM activity").every(r => r.v === 'CLI')).toBe(true);
+  });
+
+  it('projects: new, show, edit, share, archive, duplicate, order; deleting asks first', async () => {
+    const { t, ada, bob, adaId } = await team();
+    const made = await bob(
+      'projects',
+      'new',
+      'Mobile',
+      'App',
+      '--prefix',
+      'MOB',
+      '-d',
+      'Apps',
+      '--milestone',
+      'Beta=2026-12-01',
+      '--members',
+      'ada@example.com',
+      '--perm',
+      'view',
+    );
+    expect(made.out).toMatch(/^Created MOB Mobile App\nhttp:\/\/app\.test\/#project\/mob/);
+    expect((await bob('projects', 'edit', 'MOB', '-s', 'risk', '--private')).out).toBe('Updated MOB      Mobile App\n');
+    const show = (await bob('projects', 'show', 'MOB')).out;
+    expect(show).toContain('risk · lead Bob Lee · private · you: full');
+    expect(show).toContain('People: Bob Lee (Full access), Ada Owner (Can view)');
+    expect(show).toContain('◆ Beta 2026-12-01');
+    expect((await bob('projects', 'share', 'MOB', 'ada@example.com', '--perm', 'edit')).out).toBe('Shared MOB with ada@example.com (Can edit)\n');
+    expect(J(await bob('projects', 'show', 'MOB', '--json')).permissions).toMatchObject({ [adaId]: 'Can edit' });
+    expect((await bob('projects', 'unshare', 'MOB', 'ada@example.com')).code).toBe(0);
+    expect((await bob('projects', 'share', 'MOB', 'ada', '--perm', 'owner')).code).toBe(2);
+    expect((await bob('projects', 'archive', 'MOB')).out).toMatch(/^Archived MOB/);
+    expect((await bob('projects')).out).not.toContain('MOB');
+    expect((await bob('projects', '--archived')).out).toContain('· archived');
+    expect((await bob('projects', 'restore', 'MOB')).code).toBe(0);
+    expect((await bob('projects', 'dup', 'MOB')).out).toMatch(/^Created MAC/);
+    expect((await bob('projects', 'order', 'WEB', 'MOB')).out).toBe('Sidebar order saved\n');
+    expect((await bob('projects', 'fav', 'WEB')).code).toBe(0);
+    expect((await ada('projects', 'request-access', 'MOB')).out).toContain('Asked for access');
+
+    // No terminal to ask at: --yes is required, and nothing is deleted without it.
+    const refused = await bob('projects', 'rm', 'MOB');
+    expect(refused).toMatchObject({ code: 2, err: expect.stringContaining('Pass --yes') });
+    expect(t.db.get("SELECT COUNT(*) n FROM projects WHERE json_extract(data, '$.key') = 'MOB'").n).toBe(1);
+    expect((await bob('projects', 'rm', 'MOB', '--yes')).out).toBe('Deleted MOB Mobile App\n');
+    expect(t.db.get("SELECT COUNT(*) n FROM projects WHERE json_extract(data, '$.key') = 'MOB'").n).toBe(0);
+  });
+
+  it('teams, people, me, prefs, inbox, activity, events, views and search', async () => {
+    const { ada, bob } = await team();
+    expect((await ada('teams', 'new', 'Platform', '--members', 'Bob Lee')).out).toMatch(/^Created team Platform/);
+    expect((await ada('teams')).out).toMatch(/^Platform\s+tm\S+\s+Bob Lee$/m);
+    expect((await ada('teams', 'edit', 'platform', '-d', 'APIs', '--members', 'me,Bob Lee')).out).toBe('Updated team Platform\n');
+    expect((await ada('teams', 'rm', 'Platform')).code).toBe(2);
+    expect((await ada('teams', 'rm', 'Platform', '-y')).out).toBe('Deleted team Platform\n');
+
+    const inv = await bob('people', 'invite', 'cara.diaz@example.com', '--title', 'Designer');
+    expect(inv.out).toMatch(/^Invited Cara Diaz <cara\.diaz@example\.com> as Member/);
+    expect(J(await bob('people', 'show', 'cara.diaz@example.com', '--json'))).toMatchObject({ status: 'invited', title: 'Designer' });
+    expect((await bob('people', 'resend', 'cara.diaz@example.com')).out).toBe('Sent cara.diaz@example.com a new invite\n');
+    expect((await bob('people')).out).toMatch(/Cara Diaz\s+cara\.diaz@example\.com\s+Member\s+Designer · invited/);
+    expect((await bob('me', 'edit', '--title', 'Engineer')).out).toBe('Updated your profile: Bob Lee · Engineer\n');
+    expect((await bob('me')).out).toContain('Bob Lee <bob@example.com> · Member');
+
+    expect((await bob('prefs', 'set', 'theme=dark', 'weekStart=0', 'spell=off')).out).toBe('Preferences saved\n');
+    expect(J(await bob('prefs', '--json'))).toMatchObject({ theme: 'dark', weekStart: 0, spell: false });
+    expect((await bob('prefs', 'set', 'theme')).code).toBe(2);
+    expect((await bob('notify-prefs', 'set', 'email_comment=on')).code).toBe(0);
+    expect((await bob('notify-prefs')).out).toMatch(/^email_comment\s+on$/m);
+
+    await ada('new', 'For Bob', '-p', 'WEB', '-a', 'bob@example.com');
+    const inbox = await bob('inbox', '--unread');
+    expect(inbox.out).toMatch(/^• .* Ada Owner assigned you/);
+    const nid = J(await bob('inbox', '--json'))[0].id;
+    expect((await bob('inbox', 'read', nid)).out).toBe('Marked read\n');
+    expect((await bob('inbox', '--unread')).out).toBe('Nothing unread.\n');
+    expect((await bob('inbox', 'read', '--all', '--json')).out).toContain('"updated": 0');
+    expect((await bob('activity', '-p', 'WEB')).out).toMatch(/WEB\s+Ada Owner via CLI created/);
+
+    expect((await bob('events', 'new', 'Launch', '--date', '2026-12-01', '--time', '09:30', '-p', 'WEB')).out).toMatch(/^Added Launch on 2026-12-01 at 09:30/);
+    expect((await bob('events', 'new', 'All hands', '--date', '2026-12-02')).code).toBe(1);
+    const eid = J(await bob('events', '--json'))[0].id;
+    expect((await bob('events', 'edit', eid, '--time', 'none')).out).toBe('Updated Launch (2026-12-01)\n');
+    expect((await bob('events', '--from', '2026-12-01', '--to', '2026-12-31')).out).toMatch(/^2026-12-01 all day Launch/);
+    expect((await bob('events', 'rm', eid)).code).toBe(0);
+
+    expect((await bob('views', 'new', 'Urgent', '-p', 'WEB', '--type', 'board', '--filter', 'priority=urgent,high', '--filter', 'assignee!=mbob')).out).toMatch(
+      /^Saved view Urgent/,
+    );
+    expect((await bob('views')).out).toMatch(/^Urgent\s+board\s+priority=urgent,high assignee!=mbob/);
+    const vid = J(await bob('views', '--json'))[0].id;
+    expect((await bob('views', 'edit', vid, '--filter', 'none')).code).toBe(0);
+    expect((await bob('views', 'new', 'Bad', '-p', 'WEB', '--filter', 'colour=red')).code).toBe(2);
+    expect((await bob('views', 'rm', vid)).code).toBe(0);
+    expect((await bob('search', 'For', 'Bob')).out).toMatch(/^WEB-201/);
+    expect((await bob('teams', 'frobnicate')).code).toBe(2);
+  });
+
+  it('admin commands follow the key’s person: an Owner’s key may, a Member’s is refused', async () => {
+    const { ada, bob } = await team();
+    const w = await bob('workspace', 'edit', '--name', 'Renamed');
+    expect(w).toMatchObject({ code: 1, err: expect.stringContaining('Only owners and admins can do this') });
+    expect((await ada('workspace', 'edit', '--name', 'Renamed', '--brand', 'on')).out).toBe('Updated the workspace: Renamed\n');
+    expect((await bob('workspace')).out).toMatch(/^Renamed · #\w+ · logo in the sidebar/);
+    expect((await ada('workspace', 'invite-link')).out).toMatch(/#join\//);
+    expect((await bob('people', 'role', 'Ada Owner', 'Member')).code).toBe(1);
+    expect((await ada('people', 'role', 'Bob Lee', 'Admin')).out).toBe('Bob Lee is now Admin\n');
+    expect((await ada('people', 'role', 'Bob Lee', 'Boss')).code).toBe(2);
+    expect((await ada('people', 'role', 'Bob Lee', 'Member')).out).toBe('Bob Lee is now Member\n');
+
+    expect((await bob('bots')).err).toContain('Only owners and admins');
+    expect((await ada('bots', 'new', 'Release', 'Bot', '--projects', 'WEB')).out).toMatch(/^Created bot Release Bot/);
+    expect((await ada('bots', 'edit', 'release bot', '--role', 'Guest')).code).toBe(0);
+    expect((await ada('bots')).out).toMatch(/^Release Bot\s+Guest\s+1 projects · 0 keys/);
+    expect((await ada('bots', 'rm', 'Release Bot')).code).toBe(2);
+    expect((await ada('bots', 'rm', 'Release Bot', '--yes')).out).toBe('Removed bot Release Bot\n');
+
+    expect((await ada('people', 'rm', 'bob@example.com')).code).toBe(2);
+    expect((await ada('people', 'rm', 'bob@example.com', '--yes')).out).toBe('Removed Bob Lee\n');
+    expect((await bob('whoami')).code).toBe(1);
+  });
+
+  it('files: upload, download (never overwriting without --force), attach, copy, delete', async () => {
+    const { ada } = await team();
+    await ada('new', 'Spec', '-p', 'WEB');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sudo-cli-files-'));
+    const bytes = Buffer.from(Array.from({ length: 300_000 }, (_, i) => i % 251));
+    fs.writeFileSync(path.join(dir, 'spec.pdf'), bytes);
+    const up = await ada('files', 'upload', path.join(dir, 'spec.pdf'), '--task', 'WEB-201');
+    expect(up.out).toMatch(/^Uploaded spec\.pdf \(293 KB\) f/);
+    const f = J(await ada('files', '--task', 'WEB-201', '--json'))[0];
+    expect(f).toMatchObject({ name: 'spec.pdf', type: 'pdf' });
+
+    const out = path.join(dir, 'copy.pdf');
+    expect((await ada('files', 'download', f.id, '-o', out)).out).toBe(`Saved ${out} (300000 bytes)\n`);
+    expect(Buffer.compare(fs.readFileSync(out), bytes)).toBe(0);
+    expect(await ada('files', 'download', f.id, '-o', out)).toMatchObject({ code: 2, err: expect.stringContaining('already exists. Pass --force') });
+    fs.writeFileSync(out, 'changed');
+    expect((await ada('files', 'download', f.id, '-o', out, '--force')).code).toBe(0);
+    expect(Buffer.compare(fs.readFileSync(out), bytes)).toBe(0);
+
+    expect((await ada('files', 'rename', f.id, 'spec', 'v2.pdf')).out).toBe('Renamed to spec v2.pdf\n');
+    expect((await ada('files', 'detach', f.id)).out).toBe('Detached spec v2.pdf\n');
+    expect((await ada('files', 'attach', f.id, 'web-201')).out).toBe('Attached spec v2.pdf to WEB-201\n');
+    expect((await ada('files', 'dup', f.id)).out).toMatch(/^Copied to spec v2 copy\.pdf/);
+    expect((await ada('files', 'upload', path.join(dir, 'missing.txt'), '-p', 'WEB')).code).toBe(2);
+    expect((await ada('files', 'upload', path.join(dir, 'spec.pdf'))).code).toBe(2);
+    expect((await ada('files', 'rm', f.id)).code).toBe(2);
+    expect((await ada('files', 'rm', f.id, '--yes')).out).toBe('Deleted spec v2.pdf\n');
+    expect(J(await ada('files', '--json'))).toHaveLength(1);
+  });
+
+  it('downloads to the file’s own name, made safe, in the working directory', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sudo-cli-dl-'));
+    const fetch = async () =>
+      new Response(Buffer.from('payload'), {
+        status: 200,
+        headers: { 'content-type': 'text/plain', 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent('../../etc/\x1bpasswd')}` },
+      });
+    const io = {
+      env: { SUDO_URL: 'https://sudo.example.com', SUDO_API_KEY: 'ssk_x', NO_COLOR: '1', XDG_CONFIG_HOME: dir },
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+      fetch,
+      cwd: dir,
+    };
+    expect(await run(['files', 'download', 'f1'], io)).toBe(0);
+    expect(fs.readFileSync(path.join(dir, 'passwd'), 'utf8')).toBe('payload');
+    expect(safeFileName('..')).toBe('download');
+    expect(safeFileName('a\\b\\c.txt')).toBe('c.txt');
+    expect(safeFileName('')).toBe('download');
+  });
+
+  it('api: any endpoint, with fields or a JSON body', async () => {
+    const { ada } = await team();
+    expect(J(await ada('api', 'GET', '/me')).name).toBe('Ada Owner');
+    const made = J(await ada('api', 'post', '/tasks', '-f', 'project=WEB', '-f', 'title=Raw', '-F', 'labels=["bug"]'));
+    expect(made).toMatchObject({ key: 'WEB-201', labels: ['bug'] });
+    expect(J(await ada('api', 'PATCH', '/api/v1/tasks/WEB-201', '--data', '{"priority":"high"}')).priority).toBe('high');
+    expect(J(await ada('api', 'GET', '/tasks?project=WEB', '-f', 'status=todo')).data).toHaveLength(1);
+    expect(J(await ada('api', 'DELETE', '/tasks/WEB-201')).deleted).toBe(true);
+    expect((await ada('api', 'FETCH', '/me')).code).toBe(2);
+    expect((await ada('api', 'POST', '/tasks', '--data', '{nope')).code).toBe(2);
+    expect((await ada('api', 'GET', '/nope')).code).toBe(1);
+  });
+
+  it('documents every subcommand under help <noun>', async () => {
+    const c = cli();
+    expect((await c('help', 'tasks')).out).toContain('sudo-cli tasks edit <KEY>');
+    expect((await c('files', '--help')).out).toContain('files download <id>');
+    expect((await c('help')).out).toMatch(/^sudo-cli: Sudo Sapient from the terminal/);
+    expect((await c('--help')).out).toContain('api <METHOD> <path>');
   });
 });

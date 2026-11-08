@@ -28,14 +28,17 @@ export function renderDocs(spec, { rateLimit }) {
   const byTag = spec.tags.map(t => [t.name, ops.filter(o => o.op.tags[0] === t.name)]);
   const opHtml = ({ path, method, op }) => {
     const params = (op.parameters || []).filter(p => p.in !== 'header');
-    const body = op.requestBody?.content['application/json'].schema;
+    const body = op.requestBody?.content['application/json']?.schema;
+    const raw = op.requestBody?.content['application/octet-stream'];
     const res = Object.entries(op.responses).find(([s]) => s < 300);
+    const out = res[1].content['application/json']?.schema;
     return `<section class="op" id="${esc(op.operationId)}">
-      <h3><span class="m ${method}">${method.toUpperCase()}</span> <code>/api/v1${esc(path)}</code></h3><p>${esc(op.summary)}</p>
+      <h3><span class="m ${method}">${method.toUpperCase()}</span> <code>/api/v1${esc(path)}</code></h3><p>${esc(op.summary)}</p>${op.description ? `<p>${esc(op.description)}</p>` : ''}
       ${params.length ? `<table><tr><th>Parameter</th><th>In</th><th></th></tr>${params.map(p => `<tr><td><code>${esc(p.name)}</code>${p.required ? ' <b>required</b>' : ''}</td><td>${p.in} · <code>${esc(typeOf(p.schema))}</code></td><td>${esc(p.description)}</td></tr>`).join('')}</table>` : ''}
       ${body ? `<table><tr><th>Body field</th><th>Type</th><th></th></tr>${fieldRows(body)}</table>` : ''}
-      <p class="ret">${res[0]} → <a href="#schema-${esc(refName(res[1].content['application/json'].schema))}">${esc(refName(res[1].content['application/json'].schema))}</a></p>
-      <button class="try" data-method="${method.toUpperCase()}" data-path="${esc(path)}" ${body ? 'data-body' : ''}>Try it</button>
+      ${raw ? `<p>Body: ${esc(op.requestBody.description || 'the raw bytes')}</p>` : ''}
+      <p class="ret">${res[0]} → ${out ? `<a href="#schema-${esc(refName(out))}">${esc(refName(out))}</a>` : 'the file’s bytes'}</p>
+      ${raw ? '' : `<button class="try" data-method="${method.toUpperCase()}" data-path="${esc(path)}" ${body ? 'data-body' : ''}>Try it</button>`}
     </section>`;
   };
   const schemas = Object.entries(spec.components.schemas)
@@ -51,7 +54,7 @@ main{max-width:920px;margin:0 auto;padding:32px 16px 80px}h1{margin:0 0 4px}h2{m
 h3{margin:0;font-size:15px}code,pre,textarea,input{font-family:ui-monospace,Menlo,monospace;font-size:12.5px}a{color:var(--acc)}
 .op{border:1px solid var(--bd);border-radius:8px;padding:14px 16px;margin:12px 0}.op p{margin:6px 0;color:var(--mut)}
 .m{display:inline-block;min-width:54px;text-align:center;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:700;color:#fff;background:#3D8E5F}
-.m.post{background:var(--acc)}.m.patch{background:#C48A1E}.m.delete{background:#C54B78}
+.m.post{background:var(--acc)}.m.patch,.m.put{background:#C48A1E}.m.delete{background:#C54B78}
 table{border-collapse:collapse;width:100%;margin:8px 0;display:block;overflow-x:auto}td,th{text-align:left;padding:4px 8px;border-top:1px solid var(--bd);vertical-align:top}th{font-weight:600;color:var(--mut)}
 b{font-size:11px;color:#C54B78}.ret{font-size:13px}button,.btn{font:inherit;border:1px solid var(--bd);background:var(--sunk);color:var(--fg);border-radius:6px;padding:4px 10px;cursor:pointer}
 #console{position:sticky;top:0;background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:12px;margin:16px 0;z-index:1}
