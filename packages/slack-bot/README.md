@@ -134,10 +134,10 @@ Put a request after the options to run it once and exit.
 The bot has its own image: `packages/slack-bot/Dockerfile`, built from the repository root. On
 Railway it's a second service from this repo, with these settings:
 
-- **Dockerfile path** `packages/slack-bot/Dockerfile` (also set as the `RAILWAY_DOCKERFILE_PATH`
-  variable), **health check** `/health`;
-- **watch paths** `packages/slack-bot/**`, `packages/client/**`, `packages/mcp/src/**`,
-  `pnpm-lock.yaml`, `pnpm-workspace.yaml`, so only changes to the bot deploy it;
+- **Config file path** `/packages/slack-bot/railway.json` (Settings → Source). It sets the Dockerfile
+  path, the `/health` check and the watch paths (`packages/slack-bot/**`, `packages/client/**`,
+  `packages/mcp/src/**`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`), so only changes to the bot deploy it.
+  Without it, Railway applies the repository's root `railway.json` and builds the tracker instead;
 - a **volume** at `/data` (mappings, thread links, pending confirmations, conversations);
 - the variables below (`SUDO_URL` pointing at the same environment's tracker);
 - **one replica**: conversations and pending confirmations live in its SQLite files, and two
