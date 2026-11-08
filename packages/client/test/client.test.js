@@ -216,6 +216,13 @@ describe('latest', () => {
     expect(got.older).toBe(2);
   });
 
+  it('tells which way an older server runs even when its whole first page shares one time', async () => {
+    // Newest first; a, b, c logged in the same millisecond (c last), then older entries.
+    const same = id => ({ id, text: id, createdAt: 2000 });
+    const { api } = client([ok({ data: [same('c'), same('b')], nextCursor: 'o2' }), ok({ data: [same('a'), item(1)], nextCursor: null })]);
+    expect(texts(await api.latest('/tasks/WEB-1/activity', 3, at))).toEqual(['a', 'b', 'c']);
+  });
+
   it('stops on an empty page or a cursor it has seen, so a broken server can’t keep it looping', async () => {
     const empty = client([ok({ data: [item(1)], nextCursor: 'o1' }), ok({ data: [], nextCursor: 'o1' })]);
     expect(await empty.api.latest('/x', 5, at)).toEqual({ data: [item(1)], older: 0 });

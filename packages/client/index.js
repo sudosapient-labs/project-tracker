@@ -87,18 +87,23 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
       const data = page.data.slice(0, n).toReversed();
       return { data, older: Math.max(0, page.total - data.length) };
     }
-    const first = page.data;
-    // Which way the server runs, from the first page: oldest first unless it plainly isn't.
-    const desc = first.length > 1 && at(first[0]) > at(first.at(-1));
+    let kept = [];
+    let seen = 0;
+    // Which way the server runs: from the first item with a different time than the very first.
+    let start, desc;
+    const add = v => {
+      if (start === undefined) start = at(v);
+      else if (desc === undefined && at(v) !== start) desc = at(v) < start;
+      kept.push({ v, i: seen++ });
+    };
     const byTime = (a, b) => at(a.v) - at(b.v) || (desc ? b.i - a.i : a.i - b.i);
-    let kept = first.map((v, i) => ({ v, i }));
-    let seen = first.length;
+    page.data.forEach(add);
     const cursors = new Set();
     for (let cursor = page.nextCursor, pages = 1; cursor && !cursors.has(cursor) && pages < maxPages; pages++) {
       cursors.add(cursor);
       const next = await request('GET', path, { query: { limit: 100, cursor } });
       if (!next.data?.length) break;
-      for (const v of next.data) kept.push({ v, i: seen++ });
+      next.data.forEach(add);
       if (kept.length > 4 * n) kept = kept.sort(byTime).slice(-n);
       cursor = next.nextCursor;
     }
