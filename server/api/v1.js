@@ -179,6 +179,21 @@ function decodeCursor(s) {
   }
   throw new ApiFail(400, 'That cursor isn’t valid.', 'invalid_request', 'cursor');
 }
+/* sort=due pages resume after [created_at, id, due]; due is null for tasks without one, which
+   come last. */
+const encodeDueCursor = (at, id, due) => Buffer.from(JSON.stringify([at, id, due])).toString('base64url');
+function decodeDueCursor(s) {
+  try {
+    const k = JSON.parse(Buffer.from(s, 'base64url').toString());
+    if (Array.isArray(k) && k.length === 3 && Number.isFinite(k[0]) && typeof k[1] === 'string' && (k[2] === null || typeof k[2] === 'string'))
+      return { at: k[0], id: k[1], due: k[2] };
+  } catch {
+    /* fall through */
+  }
+  throw new ApiFail(400, 'That cursor isn’t valid.', 'invalid_request', 'cursor');
+}
+// A task's due date for sorting: '' counts as none.
+const DUE = "NULLIF(json_extract(data, '$.due'), '')";
 
 export function v1Routes({ limit, uploads }) {
   /* ---------- lookups, all within what the key's person can see ---------- */
@@ -428,7 +443,7 @@ export function v1Routes({ limit, uploads }) {
   route('get', '/tasks', {
     id: 'listTasks',
     tag: 'Tasks',
-    summary: 'List tasks, newest first',
+    summary: 'List tasks, newest first (or soonest due first with sort=due)',
     query: S.TaskQuery,
     ok: ok(S.TaskPage),
     run: (x, { query: q }) => {
@@ -457,16 +472,31 @@ export function v1Routes({ limit, uploads }) {
         args.push(since);
       }
       if (q.includeArchived !== 'true') where.push("COALESCE(json_extract(data, '$.archived'), 0) = 0");
-      if (q.cursor) {
+      const byDue = q.sort === 'due';
+      if (q.cursor && byDue) {
+        // After the cursor's task in (no due date last, due, created_at DESC, id DESC) order.
+        const k = decodeDueCursor(q.cursor);
+        const newer = '(created_at < ? OR (created_at = ? AND id < ?))';
+        if (k.due === null) where.push(`(${DUE} IS NULL AND ${newer})`);
+        else {
+          where.push(`(${DUE} IS NULL OR ${DUE} > ? OR (${DUE} = ? AND ${newer}))`);
+          args.push(k.due, k.due);
+        }
+        args.push(k.at, k.at, k.id);
+      } else if (q.cursor) {
         const k = decodeCursor(q.cursor);
         where.push('(created_at < ? OR (created_at = ? AND id < ?))');
         args.push(k.at, k.at, k.id);
       }
       const n = q.limit || 50;
-      const rows = x.db.all(`SELECT id, data, created_at FROM tasks WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ?`, ...args, n + 1);
+      const order = byDue ? `${DUE} IS NULL, ${DUE}, created_at DESC, id DESC` : 'created_at DESC, id DESC';
+      const rows = x.db.all(`SELECT id, data, created_at, ${DUE} AS due FROM tasks WHERE ${where.join(' AND ')} ORDER BY ${order} LIMIT ?`, ...args, n + 1);
       const more = rows.length > n;
       const page = rows.slice(0, n);
-      return { data: page.map(r => x.V.task(JSON.parse(r.data))), nextCursor: more ? encodeCursor(page.at(-1).created_at, page.at(-1).id) : null };
+      const last = page.at(-1);
+      const nextCursor = !more ? null : byDue ? encodeDueCursor(last.created_at, last.id, last.due) : encodeCursor(last.created_at, last.id);
+      // Echoed so a client can tell this server sorted by due (an older one ignores sort).
+      return { data: page.map(r => x.V.task(JSON.parse(r.data))), nextCursor, ...(byDue ? { sort: 'due' } : {}) };
     },
   });
 
