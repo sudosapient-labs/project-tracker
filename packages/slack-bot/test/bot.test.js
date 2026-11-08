@@ -376,6 +376,28 @@ describe('/sudo', () => {
     expect(h.store.channelProject('C1')).toBe('WEB');
   });
 
+  it('my lists the soonest due even with more open tasks than it reads', async () => {
+    const w = await tracker();
+    const first = await w.api.post('/tasks', { project: 'WEB', title: 'Oldest, due first', assignee: 'mbea', due: '2026-11-20' });
+    const later = await w.api.post('/tasks', { project: 'WEB', title: 'Later', assignee: 'mbea', due: '2027-06-01' });
+    w.t.db.run('UPDATE tasks SET created_at = 1 WHERE id = ?', first.id);
+    // 205 newer copies of Later, straight into the database (more than /sudo my reads).
+    for (let i = 0; i < 205; i++)
+      w.t.db.run(
+        `INSERT INTO tasks (id, project_id, data, created_at, updated_at)
+         SELECT ?1, project_id, json_set(data, '$.id', ?1, '$.key', ?2), ?3, ?3 FROM tasks WHERE id = ?4`,
+        `tcopy${i}`,
+        `WEB-${900 + i}`,
+        1000 + i,
+        later.id,
+      );
+    const h = await harness(w);
+    const my = await run(h, 'my', 'UBEA');
+    expect(my).toContain('Oldest, due first');
+    expect(my).toContain('*Your open tasks (200+)*');
+    expect(my).toContain('…and 180+ more');
+  });
+
   it('new opens the create modal, defaulting to the channel’s project, and the modal creates the task', async () => {
     const w = await tracker();
     const h = await harness(w);

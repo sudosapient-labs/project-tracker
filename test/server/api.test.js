@@ -431,11 +431,17 @@ describe('API conventions', () => {
       ['d', 'SEC', '2026-12-01'],
       ['e', 'WEB', '2027-03-01'],
       ['f', 'WEB', null],
+      ['g', 'WEB', '2027-01-01T09:00'],
+      ['h', 'WEB', '2027-03-01'],
     ];
+    const ids = {};
     for (const [i, [title, project, due]] of make.entries()) {
       const r = await api.post('/tasks', { project, title, ...(due ? { due } : {}) });
-      t.db.run('UPDATE tasks SET created_at = ? WHERE id = ?', 1_000_000 + i, r.body.id);
+      ids[title] = r.body.id;
+      // h is created in the same millisecond as e, so the two tie on everything but id.
+      t.db.run('UPDATE tasks SET created_at = ? WHERE id = ?', 1_000_000 + (title === 'h' ? 4 : i), r.body.id);
     }
+    const [eh1, eh2] = ids.e > ids.h ? ['e', 'h'] : ['h', 'e'];
     const walk = async (who, limit) => {
       const seen = [];
       let cursor = '';
@@ -448,10 +454,10 @@ describe('API conventions', () => {
       return seen;
     };
     // Soonest first; the same due date newest first; no due date last, newest first.
-    for (const n of [1, 2, 4, 50]) expect(await walk(api, n)).toEqual(['d', 'c', 'e', 'a', 'f', 'b']);
+    for (const n of [1, 2, 3, 50]) expect(await walk(api, n)).toEqual(['d', 'c', 'g', eh1, eh2, 'a', 'f', 'b']);
     // Bob can't open SEC, so its task isn't in his list on any page.
     const asBob = await as(t, bob);
-    expect(await walk(asBob, 1)).toEqual(['c', 'e', 'a', 'f', 'b']);
+    expect(await walk(asBob, 1)).toEqual(['c', 'g', eh1, eh2, 'a', 'f', 'b']);
     // Without sort the order and the answer are as before.
     expect((await api.get('/tasks')).body).toEqual({ data: expect.any(Array), nextCursor: null });
     // A cursor from one order isn't taken for the other.
@@ -578,6 +584,7 @@ describe('OpenAPI', () => {
     const checks = [
       ['/me', S.Me],
       ['/tasks', S.TaskPage],
+      ['/tasks?sort=due', S.TaskPage],
       [`/tasks/${task.key}`, S.Task],
       [`/tasks/${task.key}/comments`, S.CommentPage],
       [`/tasks/${task.key}/activity`, S.ActivityPage],

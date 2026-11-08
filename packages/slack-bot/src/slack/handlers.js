@@ -23,6 +23,8 @@ const WORKING = '_Working on it…_';
 const MAX_CARDS = 5;
 const CONFIRM_TTL = 24 * 3600_000;
 const TRACKER_TIMEOUT = 20_000;
+// `/sudo my` reads at most this many of the person's open tasks.
+const MY_CAP = 200;
 
 export function createHandlers({ config, store, agent, dir, people, slack, reader, fetch }) {
   /* A tracker client with the bot's key, labelled for Activity: "Sudo Tracker via Slack (Ada)".
@@ -324,12 +326,13 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
 
     if (op === 'my') {
       const ids = await visibleIds();
-      const tasks = (await api.all('/tasks', { assignee: me.id, status: 'open' }, 200))
-        .filter(t => ids.has(t.project))
-        .sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'));
+      // sort=due so the cap drops the latest due, not the oldest; sorted again here for older servers.
+      const read = await api.all('/tasks', { assignee: me.id, status: 'open', sort: 'due' }, MY_CAP);
+      const tasks = read.filter(t => ids.has(t.project)).sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'));
+      const plus = read.length >= MY_CAP ? '+' : '';
       return say(
         tasks.length
-          ? `*Your open tasks (${tasks.length})*\n${tasks.slice(0, 20).map(line).join('\n')}${tasks.length > 20 ? `\n…and ${tasks.length - 20} more` : ''}`
+          ? `*Your open tasks (${tasks.length}${plus})*\n${tasks.slice(0, 20).map(line).join('\n')}${tasks.length > 20 ? `\n…and ${tasks.length - 20}${plus} more` : ''}`
           : 'You have no open tasks. 🎉',
       );
     }
