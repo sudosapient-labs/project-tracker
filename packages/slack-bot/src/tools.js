@@ -13,11 +13,13 @@
      requester  the requester's tracker member
      slack      { channel, channelName, threadTs, permalink, dm, private, project }: where the
                 conversation is; private projects are shown only where shownHere() allows
-     touched    task keys created or changed in this run, for the task cards under the reply */
+     touched    task keys created or changed in this run, for the task cards under the reply
+     card       the card (a json-render spec) show_card set for the reply, if any */
 import { tool } from 'langchain';
 import * as z from 'zod';
 import { TOOLS as MCP, fence } from '@sudosapient/mcp/tools';
 import { COMMENT, EDIT, VIEW, level, shownHere } from './people.js';
+import { CARD_GUIDE, cardSpec, renderCard } from './slack/cards.js';
 
 const STATUS = ['backlog', 'todo', 'progress', 'review', 'done'];
 const PRIORITY = ['urgent', 'high', 'medium', 'low', 'none'];
@@ -258,6 +260,42 @@ export const TRACKER_TOOLS = [
         await ctx.api.post(`/tasks/${seg(task.key)}/comments`, { text: `Discussed in Slack: ${ctx.slack.permalink}\n\n— linked by ${ctx.requester.name}` });
       ctx.touched.push(task.key);
       return { linked: task.key };
+    },
+  ),
+
+  // Checked here with the same code that posts it, so problems go back to the model to fix. It
+  // only shows what the model already has from the tools above, in the same message as its reply.
+  make(
+    'show_card',
+    CARD_GUIDE,
+    // A list rather than json-render's map keyed by element: models fill in a typed list reliably,
+    // but often send a map with keys of their own choosing as a JSON string. toCard checks the rest.
+    z.object({
+      root: z.string().describe('Key of the Card element'),
+      elements: z
+        .array(
+          z.object({
+            key: z.string(),
+            type: z.string(),
+            props: z.record(z.string(), z.any()).optional(),
+            children: z.array(z.string()).optional().describe('Keys of child elements, in order'),
+          }),
+        )
+        .describe('Every element of the card, the root Card included'),
+    }),
+    async (ctx, { root, elements }) => {
+      let spec;
+      try {
+        spec = cardSpec(root, elements);
+        renderCard(spec);
+      } catch (e) {
+        // A CardSpecError lists what to fix; anything else is the libraries failing, and costs
+        // only the card, not the conversation.
+        const issues = Array.isArray(e?.issues) ? e.issues : [String(e?.message || e)];
+        return `The card wasn't shown. Fix these and call show_card again, or answer in plain text:\n${issues.map(i => `- ${i}`).join('\n')}`;
+      }
+      ctx.card = spec;
+      return 'The card will be shown under your reply. Reply with one line that introduces it, without repeating what it shows.';
     },
   ),
 ];

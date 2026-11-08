@@ -49,13 +49,14 @@ const textOf = m => {
     .join('');
 };
 
-/* What a run produced: the reply, the writes waiting for Confirm, and the tasks it touched. */
+/* What a run produced: the reply, the writes waiting for Confirm, the tasks it touched, and the card
+   (a json-render spec) to show under the reply, if the agent made one. */
 function outcome(result, ctx) {
   const pending = (result.__interrupt__ || [])
     .filter(i => i.value?.type === 'tool_approval')
     .map(i => ({ id: i.id, name: i.value.name, args: i.value.args, toolCallId: i.value.tool_call_id }));
   const last = [...(result.messages || [])].reverse().find(m => m.getType?.() === 'ai');
-  return { text: pending.length ? '' : textOf(last).trim(), pending, touched: [...new Set(ctx.touched)] };
+  return { text: pending.length ? '' : textOf(last).trim(), pending, touched: [...new Set(ctx.touched)], card: ctx.card || null };
 }
 
 export async function createSudoAgent({ config, store, model, tools = [], checkpointer }) {

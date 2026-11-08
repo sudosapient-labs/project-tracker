@@ -122,6 +122,24 @@ describe.concurrent('live: the agent behind Slack', { timeout: 240_000 }, () => 
     expect(r).not.toMatch(/offsite/i);
   });
 
+  it('answers “status of WEB” with a card: native chart or table, and nothing from a private project', async ({ expect }) => {
+    const w = await tracker();
+    const open = [
+      await w.api.post('/tasks', { project: 'WEB', title: 'Fix the checkout timeout', assignee: 'mbea', due: iso(addDays(today(), -2)), status: 'progress' }),
+      await w.api.post('/tasks', { project: 'WEB', title: 'Pricing page copy', status: 'todo' }),
+      await w.api.post('/tasks', { project: 'WEB', title: 'Cookie banner', status: 'backlog' }),
+    ];
+    await w.api.post('/tasks', { project: 'WEB', title: 'Newsletter form', status: 'done' });
+    await w.api.post('/tasks', { project: 'SEC', title: 'Rotate the leaked Stripe key' });
+    const h = await bot(w);
+    await mention(h, { user: 'UBEA', ts: '45.1', text: "what's the status of WEB?" });
+    const blocks = h.slack.of('chat.update').at(-1).blocks;
+    expect(blocks.some(b => ['data_visualization', 'data_table'].includes(b.type) || b.fields)).toBe(true);
+    expect(blocks.some(b => b.type === 'actions' || b.type === 'image')).toBe(false);
+    expect(JSON.stringify(blocks)).toContain(open[0].key);
+    expect(JSON.stringify(blocks)).not.toMatch(/stripe|leaked/i);
+  });
+
   it('says nothing about a private project the asker isn’t on, even though the bot is', async ({ expect }) => {
     const w = await tracker();
     const secret = await w.api.post('/tasks', { project: 'SEC', title: 'Rotate the leaked Stripe key' });

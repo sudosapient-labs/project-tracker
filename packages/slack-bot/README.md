@@ -17,6 +17,7 @@ default. Plans for what comes next: [ROADMAP.md](ROADMAP.md).
 | `@Sudo Tracker file this for me` | Reads the thread, checks for duplicates, creates well-formed tasks in the channel's project, links the thread to them          |
 | `@Sudo Tracker mark WEB-12 done` | Holds the change and posts **Confirm / Cancel**; only the person who asked can decide, and the card acts only on what it shows |
 | `@Sudo Tracker what's overdue?`  | Answers from the tracker, within what the person can see                                                                       |
+| `@Sudo Tracker status of WEB?`   | Lists, breakdowns and workload come as a card under the reply: Slack's native table and charts, key numbers, a header          |
 | DM the bot                       | The same agent, privately; flat DMs share one conversation per day, DM threads their own                                       |
 | Follow-up mention in a thread    | Continues that person's conversation, with only the thread's new messages added (each person in a thread has their own)        |
 | Task cards under replies         | **Complete**, **Assign to me** and **Status**, acting as whoever clicks                                                        |
@@ -181,7 +182,8 @@ Slack (Socket Mode / HTTP)
         └─ agent.js: LangChain createAgent (a LangGraph graph), one thread per Slack thread
               ├─ model: ChatAnthropic (Claude Opus 5.5, adaptive thinking) or any initChatModel provider
               ├─ tools.js: tracker tools over /api/v1, scoped to the requester
-              │     (reusing @sudosapient/mcp's tool code, so results match the MCP server's)
+              │     (reusing @sudosapient/mcp's tool code, so results match the MCP server's),
+              │     and show_card: a card for the reply (slack/cards.js)
               ├─ mcp.js: extra read-only tools from MCP servers (Sudopedia) via @langchain/mcp-adapters
               ├─ middleware: per-channel system prompt + guidance · human-in-the-loop (Confirm) ·
               │              model retries · a 25-tool-call budget per run
@@ -192,6 +194,22 @@ Slack (Socket Mode / HTTP)
   `description`, then instructions): filing issues, updating work, answering questions, and how
   to write for Slack. They're part of the system prompt, which stays the same between requests so
   the provider can cache it. Add a file to add a skill.
+- **Cards** ([`src/slack/cards.js`](src/slack/cards.js)). For lists of tasks, status breakdowns and
+  workload, the agent calls `show_card` with a [json-render](https://json-render.dev) spec. It
+  becomes a Chat SDK card (`@json-render/chat`'s `toCard`) and then Block Kit (`@chat-adapter/slack`'s
+  `cardToBlockKit`): a header, text, fields, Slack's native `data_table` and up to two
+  `data_visualization` charts (pie, bar, line, area). The tool checks the spec with the same code
+  that posts it, so problems (a third chart, a label over 20 characters) go back to the model to
+  fix. Short answers stay plain text.
+  - Neither library escapes anything, so the bot does: text gets the same treatment as replies (no
+    `<!channel>` or `<@…>`, links only to the tracker and Slack), and plain text (header, cells, chart
+    labels) can't form a mention or a link. The posted blocks are checked again before they go out.
+  - The catalog has no Actions, Button, LinkButton or Image, and no Card image. The only buttons are
+    the bot's own (task cards, Confirm/Cancel).
+  - A card only shows what the agent got from its tools, in the same message as its reply, so
+    `shownHere()` applies to it like everything else.
+  - If Slack refuses the blocks, the same card goes out as text (tables and charts in code blocks).
+    `sudo-tracker chat` prints that text version.
 - **Confirmations** use LangChain's `humanInTheLoopMiddleware` in per-call mode. (Batched mode drops
   the other tool calls of a turn when one is rejected, which leaves calls without results.) A new
   message from the same person, or a run that broke off (a timeout, a restart), starts a fresh
@@ -207,7 +225,8 @@ Slack (Socket Mode / HTTP)
 `pnpm test` from the repo root runs them with the other API tests: a real tracker on an in-memory
 database, a fake Slack Web API, and LangChain's scripted `FakeToolCallingModel`, so they cost
 nothing and need no keys. They cover mentions, the requester's access, Confirm/Cancel (including
-across a restart), cards, `/sudo`, the modal, previews, and MCP tools loaded from the tracker's
+across a restart), task cards, reply cards (spec → Block Kit, escaping, what a card can't have,
+Slack's limits, the plain-text fallback), `/sudo`, the modal, previews, and MCP tools loaded from the tracker's
 own `/api/mcp` over HTTP.
 
 `pnpm --filter @sudosapient/slack-bot test:live` runs the **live scenarios**
@@ -219,6 +238,7 @@ tracker. The cases cover:
 - one task per problem;
 - finding a duplicate instead of filing it;
 - "what's on my plate";
+- "status of WEB" as a card, without the private project;
 - private projects that must not leak;
 - instructions planted in a thread;
 - reschedules waiting for Confirm;
