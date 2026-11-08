@@ -64,55 +64,52 @@ const clear = v => (v === '' ? null : v);
 /* ---------- tools that make several changes ----------
    edit_subtasks, share_project, update_settings, mark_notifications_read, and update_task,
    update_project and update_workspace when asked for both a change and an archive or link: one API
-   request per change. The changes don't depend on each other, so a failed one doesn't stop the rest;
-   each is tried, and if any failed the result says which went through (with what they made: subtask
-   ids, a promoted task's key) and which failed and why, so the assistant retries only those and
-   nothing is made twice. Only a failure that would repeat for every later change stops the run
-   (stopsRun: offline, the key refused or read-only, a rate limit too long to wait out); the rest are
-   listed as not tried. A call that makes a single change fails as before, with the API's error. */
-const stopsRun = e => e.status === undefined || e.status === 0 || e.status === 401 || e.status === 429 || e.code === 'insufficient_scope';
+   request per change, in order. The first one that fails stops the run, and the result says what
+   went through (with what it made: subtask ids, a promoted task's key), which change failed and why,
+   and what wasn't tried; so the assistant repeats nothing, and nothing runs on after a failure that
+   may have broken its premise (a hand-over that removes someone after adding their replacement
+   failed). A call that asks for a single change fails as before, with the API's error. */
 
 /* `list`: [{ what, run }], `what` naming the change ({ add: 'Title' }, { remove: id }, …) and `run`
-   making it, resolving to anything worth reporting with it ({ id }, { key }) or nothing. */
+   making it, resolving to anything worth reporting with it ({ id }, { key }) or nothing. `run`
+   mustn't throw once its request went through, or a change that was made is reported as failed. */
 async function steps(list) {
   const done = [];
-  const failed = [];
-  const notTried = [];
-  for (const { what, run } of list) {
-    if (failed.length && stopsRun(failed.at(-1).e)) {
-      notTried.push(what);
-      continue;
-    }
+  for (const [i, { what, run }] of list.entries()) {
     try {
       done.push({ ...what, ...(await run()) });
     } catch (e) {
-      failed.push({ what, e });
+      return { done, failed: { what, e }, notTried: list.slice(i + 1).map(s => s.what), ok: false };
     }
   }
-  return { done, failed, notTried, ok: !failed.length };
+  return { done, ok: true };
 }
 
-/* The isError result for a run where something failed (protocol.js fences `result`). One change
-   that failed is just its error, as for any tool. Errors that aren't the API's stay generic, as
-   protocol.js does for any tool. */
+/* The isError result for a run that stopped at a failure (protocol.js fences `result`). Errors that
+   aren't the API's stay generic, as protocol.js does for any tool. Offline, a 5xx or a bug may come
+   after the server made the change, so that failure says it may have gone through. */
 export class Incomplete extends Error {
   constructor(result) {
-    const all = result.done.length + result.failed.length + result.notTried.length;
-    super(`${result.done.length} of ${all} changes went through. Don’t repeat those under done; retry only what’s under failed or notTried.`);
+    const all = result.done.length + 1 + result.notTried.length;
+    super(
+      `Stopped at a failed change; ${result.done.length} of ${all} went through. Don’t repeat what’s under done; fix or drop the one under failed, then send what’s under notTried.`,
+    );
     this.status = 207;
     this.code = 'incomplete';
     this.result = result;
   }
 }
-function incomplete({ done, failed, notTried }, extra = {}) {
-  if (done.length + failed.length + notTried.length === 1) throw failed[0].e;
+function incomplete({ done, failed: { what, e }, notTried }, extra = {}) {
+  // One change asked for: its error, as for any tool.
+  if (!done.length && !notTried.length) throw e;
+  const unsure = e.status === undefined || e.status === 0 || e.status >= 500;
   throw new Incomplete({
     done,
-    failed: failed.map(({ what, e }) =>
-      e.status === undefined
-        ? { ...what, code: 'internal_error', error: 'Internal error' }
-        : compact({ ...what, code: e.code, error: e.message, field: e.field }),
-    ),
+    failed: compact({
+      ...what,
+      ...(e.status === undefined ? { code: 'internal_error', error: 'Internal error' } : { code: e.code, error: e.message, field: e.field }),
+      mayHaveGoneThrough: unsure,
+    }),
     notTried,
     ...extra,
   });
@@ -480,19 +477,17 @@ export const TOOLS = {
       let t;
       const list = [];
       if (Object.keys(body).length) list.push({ what: { update: Object.keys(body) }, run: async () => void (t = await api.patch(`/tasks/${seg(key)}`, body)) });
+      // After a move to another project the task has a new key: `t` has it.
       if (archived !== undefined)
         list.push({
-          what: { [archived ? 'archive' : 'restore']: key },
+          what: { archived },
           async run() {
             const cur = t || (await api.get(`/tasks/${seg(key)}`));
             t = archived === cur.archived ? cur : await api.post(`/tasks/${seg(cur.key)}/${archived ? 'archive' : 'restore'}`);
           },
         });
       const r = await steps(list);
-      if (!r.ok) {
-        const who = t && (await after(names(api)));
-        incomplete(r, t && who ? { task: brief(t, who) } : {});
-      }
+      if (!r.ok) incomplete(r, t ? { task: brief(t, (await after(names(api))) || new Map()) } : {});
       t ||= await api.get(`/tasks/${seg(key)}`);
       return brief(t, (await after(names(api))) || new Map());
     },
@@ -532,7 +527,7 @@ export const TOOLS = {
       const base = `/tasks/${seg(key)}/subtasks`;
       const r = await steps([
         // A new subtask goes last, and the API answers with the task as that write left it.
-        ...add.map(title => ({ what: { add: title }, run: async () => ({ id: (await api.post(base, { title })).subtasks.at(-1)?.id }) })),
+        ...add.map(title => ({ what: { add: title }, run: async () => ({ id: (await api.post(base, { title }))?.subtasks?.at(-1)?.id }) })),
         ...update.map(({ id, due, assignee, ...u }) => ({
           what: { update: id },
           run: async () =>
@@ -543,7 +538,7 @@ export const TOOLS = {
             })),
         })),
         ...remove.map(id => ({ what: { remove: id }, run: async () => void (await api.del(`${base}/${seg(id)}`)) })),
-        ...(promote ? [{ what: { promote }, run: async () => ({ key: (await api.post(`${base}/${seg(promote)}/promote`)).key }) }] : []),
+        ...(promote ? [{ what: { promote }, run: async () => ({ key: (await api.post(`${base}/${seg(promote)}/promote`))?.key }) }] : []),
       ]);
       const promoted = r.done.find(d => d.promote)?.key;
       // Nothing asked for: just the subtasks, failing as any read does (an unknown key).
@@ -674,7 +669,7 @@ export const TOOLS = {
         list.push({ what: { update: Object.keys(body) }, run: async () => void (p = await api.patch(`/projects/${seg(project)}`, body)) });
       if (archived !== undefined)
         list.push({
-          what: { [archived ? 'archive' : 'restore']: project },
+          what: { archived },
           async run() {
             const cur = p || (await api.get(`/projects/${seg(project)}`));
             p = archived === cur.archived ? cur : await api.post(`/projects/${seg(cur.key)}/${archived ? 'archive' : 'restore'}`);
@@ -712,10 +707,7 @@ export const TOOLS = {
         private: p.private,
         members: p.members.map(id => compact({ name: n.get(id) || id, permission: p.permissions?.[id] })),
       });
-      if (!r.ok) {
-        const n = p && (await after(names(api)));
-        incomplete(r, p && n ? { now: view(p, n) } : {});
-      }
+      if (!r.ok) incomplete(r, p ? { now: view(p, (await after(names(api))) || new Map()) } : {});
       p ||= await api.get(`/projects/${seg(project)}`);
       return view(p, (await after(names(api))) || new Map());
     },
@@ -934,7 +926,8 @@ export const TOOLS = {
         ...(inviteLink ? [{ what: { inviteLink: true }, run: async () => void (link = (await api.post('/workspace/invite-link')).link) }] : []),
       ]);
       if (!r.ok) incomplete(r, compact({ workspace: ws, inviteLink: link }));
-      return compact({ ...(ws || (await api.get('/workspace'))), inviteLink: link });
+      // Nothing changed: read it, failing as any read does. A new link is never lost to a failed read.
+      return compact({ ...(ws || (link ? await after(api.get('/workspace')) : await api.get('/workspace'))), inviteLink: link });
     },
   },
   manage_bot: {

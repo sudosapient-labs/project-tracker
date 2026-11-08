@@ -102,13 +102,14 @@ Due dates: `today`, `tomorrow`, a weekday (`friday`, `fri`; today counts), `next
 message says why; with `--json` it's `{ error, code }` on stderr), `2` a usage error.
 
 **Several keys at once** (`done`, `tasks rm`, `tasks archive`, `restore`, `fav`, `unfav`,
-`inbox read`, `inbox unread`) make one request per key. A key that fails doesn't stop the others:
-each is tried, each success is printed, each failure is named on stderr with its reason, then a count
-(`2 of 3 done. Failed: WEB-999.`), and the exit code is `1`. So retry only the keys named as failed;
-the rest are done (deleted tasks print their undo ids either way). A failure that would hit every
-later key too (offline, a refused or read-only key, a rate limit too long to wait out) stops the run,
-and the keys after it are listed as not tried. With `--json`, stdout is the array of what went
-through and stderr is `{ error, code: "incomplete", failed: [{ ref, code, error }], notTried }`.
+`inbox read`, `inbox unread`) make one request per key, in order, and stop at the first one that
+fails. What went through is printed as it happens (deleted tasks with their undo ids); then stderr
+names the key that failed and why, and what wasn't tried (`Stopped at WEB-999; 1 of 3 done (WEB-201).
+Not tried: WEB-203.`), and the exit code is `1`. So fix or drop the failed key and run the command
+again with the keys that weren't tried; nothing gets done twice. If the connection dropped or the
+server failed, that key may have gone through, and the message says to check it first. With `--json`,
+stdout is the array of what went through and stderr is
+`{ error, code: "incomplete", done, failed: { ref, code, error }, notTried }`.
 
 Your keys share one rate limit (120 requests a minute by default). When a bulk run reaches it,
 `sudo-cli` waits until the server says it may go on (`rate limited; retrying in 53 s…` on stderr) and

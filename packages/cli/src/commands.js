@@ -1120,56 +1120,57 @@ export function nounHelp(noun) {
 }
 
 /* ---------- several keys or ids in one command ---------- */
-/* A failure that every later request would hit too: the CLI is offline, the key was refused or is
-   read-only, or the rate limit is longer than the client will wait. Anything else (a key that
-   doesn't exist, a task you may not change) is about that one item. */
-export const stopsRun = e => !(e instanceof ApiError) || e.status === 0 || e.status === 401 || e.status === 429 || e.code === 'insufficient_scope';
-
-/* `done WEB-1 WEB-2 WEB-3`, `tasks rm …`, `inbox read …`: one request per key or id. They don't
-   depend on each other, so a failed one doesn't stop the rest; each is tried and each outcome is
-   reported, so you can retry exactly the ones that failed and nothing gets done twice. Only a
-   failure that would repeat for every later one (stopsRun) stops the run, and the rest are listed
-   as not tried. Successes print as they happen (stdout), each failure on stderr, then a count; the
-   exit code is 1 if any failed. With --json, stdout is the array of what succeeded (with undo ids
-   where there are any) and stderr one { error, code: "incomplete", failed, notTried } object.
-   A single key fails like any other command. Returns the exit code. */
+/* `done WEB-1 WEB-2 WEB-3`, `tasks rm …`, `inbox read …`: one request per key or id, in order. The
+   first one that fails stops the run, and the output says which went through (stdout, as they
+   happen; deleted tasks with their undo ids), which failed and why, and which weren't tried (stderr),
+   so nothing is done twice and nothing runs on after a mistake. Exit code 1. With --json, stdout is
+   the array of what went through and stderr one { error, code: "incomplete", done, failed, notTried }
+   object. A single key fails like any other command. Returns the exit code. */
 export async function several(x, refs, call, line) {
   if (refs.length === 1) {
     const r = await call(refs[0]);
     x.emit(r, () => x.print(line(r)));
     return 0;
   }
+  // Not logged in, or a plain-http URL: a usage error (exit 2) before anything is tried.
+  x.api();
   const done = [];
-  const failed = [];
-  const notTried = [];
-  for (const ref of refs) {
-    if (failed.length && stopsRun(failed.at(-1).e)) {
-      notTried.push(ref);
-      continue;
-    }
+  const results = [];
+  for (const [i, ref] of refs.entries()) {
+    let r;
     try {
-      const r = await call(ref);
-      done.push(r);
-      if (!x.o.json) x.print(line(r));
+      r = await call(ref);
     } catch (e) {
-      failed.push({ ref, e });
-      if (!x.o.json) x.warn(`${ref}: ${x.clean(e.message)}${e.status === 401 ? ' Run sudo-cli login.' : ''}`);
+      const notTried = refs.slice(i + 1);
+      // Offline, a server error or a bug may come after the change was made.
+      const unsure = !(e instanceof ApiError) || e.status === 0 || e.status >= 500;
+      const msg = `${x.clean(e.message)}${unsure ? ' It may have gone through: check before retrying it.' : ''}`;
+      const summary =
+        `Stopped at ${x.clean(ref)}; ${done.length} of ${refs.length} done${done.length ? ` (${done.map(x.clean).join(', ')})` : ''}.` +
+        (notTried.length ? ` Not tried: ${notTried.map(x.clean).join(', ')}.` : '');
+      if (x.o.json) {
+        x.json(results);
+        x.warnJson({
+          error: summary,
+          code: 'incomplete',
+          done,
+          failed: { ref, code: e.code || 'internal_error', error: msg },
+          notTried,
+        });
+      } else {
+        x.warn(`${x.clean(ref)}: ${msg}${e.status === 401 ? ' Run sudo-cli login.' : ''}`);
+        x.warn(summary);
+      }
+      // Anything but the API's refusal (a bug) is still raised, once what happened has been said.
+      if (!(e instanceof ApiError)) throw e;
+      return 1;
     }
+    done.push(ref);
+    results.push(r);
+    if (!x.o.json) x.print(line(r));
   }
-  if (x.o.json) x.json(done);
-  if (!failed.length) return 0;
-  const summary =
-    `${done.length} of ${refs.length} done. Failed: ${failed.map(f => f.ref).join(', ')}.` +
-    (notTried.length ? ` Not tried, as that error would repeat: ${notTried.join(', ')}.` : '');
-  if (x.o.json)
-    x.warnJson({
-      error: summary,
-      code: 'incomplete',
-      failed: failed.map(({ ref, e }) => ({ ref, code: e.code || 'internal_error', error: x.clean(e.message) })),
-      notTried,
-    });
-  else x.warn(`${summary} Everything else went through.`);
-  return 1;
+  if (x.o.json) x.json(results);
+  return 0;
 }
 
 /* ---------- helpers for handlers ---------- */
