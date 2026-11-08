@@ -76,6 +76,40 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
       await sleep(delay);
     }
   }
+  /* The newest `n` (1–100) of a task's comments or activity, oldest first, and how many older ones
+     were left out: { data, older }. A server from before `order` and `total` ignores them and sends
+     its usual order, so then every page is read, keeping only the newest `n` by `at(item)` (ties in
+     the order the server sent them, which way round it runs), for at most `maxPages` pages. */
+  async function latest(path, n, at, maxPages = 1000) {
+    n = Math.min(Math.max(Math.trunc(n) || 1, 1), 100);
+    const page = await request('GET', path, { query: { order: 'newest', limit: n } });
+    if (Number.isInteger(page.total)) {
+      const data = page.data.slice(0, n).toReversed();
+      return { data, older: Math.max(0, page.total - data.length) };
+    }
+    let kept = [];
+    let seen = 0;
+    // Which way the server runs: from the first item with a different time than the very first.
+    let start, desc;
+    const add = v => {
+      if (start === undefined) start = at(v);
+      else if (desc === undefined && at(v) !== start) desc = at(v) < start;
+      kept.push({ v, i: seen++ });
+    };
+    const byTime = (a, b) => at(a.v) - at(b.v) || (desc ? b.i - a.i : a.i - b.i);
+    page.data.forEach(add);
+    const cursors = new Set();
+    for (let cursor = page.nextCursor, pages = 1; cursor && !cursors.has(cursor) && pages < maxPages; pages++) {
+      cursors.add(cursor);
+      const next = await request('GET', path, { query: { limit: 100, cursor } });
+      if (!next.data?.length) break;
+      next.data.forEach(add);
+      if (kept.length > 4 * n) kept = kept.sort(byTime).slice(-n);
+      cursor = next.nextCursor;
+    }
+    kept.sort(byTime);
+    return { data: kept.slice(-n).map(k => k.v), older: Math.max(0, seen - n) };
+  }
   return {
     request,
     get: (path, query) => request('GET', path, { query }),
@@ -98,6 +132,7 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
       } while (cursor && out.length < max);
       return out.slice(0, max);
     },
+    latest,
   };
 }
 

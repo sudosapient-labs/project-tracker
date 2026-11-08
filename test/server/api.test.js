@@ -548,6 +548,73 @@ describe('API conventions', () => {
   });
 });
 
+describe('long discussions', () => {
+  const range = (from, to) => Array.from({ length: Math.abs(to - from) + 1 }, (_, i) => (from <= to ? from + i : from - i));
+  /* A WEB task with `n` comments ("Comment 1" oldest) and `n` activity entries ("step 1" oldest). */
+  async function busy(n) {
+    const w = await workspace();
+    const api = await as(w.t, w.ada);
+    const task = (await api.post('/tasks', { project: 'WEB', title: 'Busy' })).body;
+    const at = Date.now() - n * 60_000;
+    const r = await w.ada.sync(
+      Array.from({ length: n }, (_, i) => [
+        put('comments', { id: `cbusy${i + 1}`, task: task.id, by: w.adaId, at: at + i * 60_000, text: `Comment ${i + 1}`, re: {} }),
+        put('activity', { id: `abusy${i + 1}`, by: w.adaId, verb: 'renamed', task: task.id, project: 'pweb', at: at + i * 60_000, extra: `step ${i + 1}` }),
+      ]).flat(),
+    );
+    expect(r.body.results.every(x => x.ok)).toBe(true);
+    return { ...w, api, task };
+  }
+
+  it('comments: oldest first by default (as 0.2.0 clients expect), newest first on request, with the total', async () => {
+    const { api, task } = await busy(25);
+    const first = (await api.get(`/tasks/${task.key}/comments?limit=20`)).body;
+    expect(first.data.map(c => c.text)).toEqual(Array.from({ length: 20 }, (_, i) => `Comment ${i + 1}`));
+    expect(first).toMatchObject({ nextCursor: 'o20', total: 25 });
+
+    const newest = (await api.get(`/tasks/${task.key}/comments?order=newest&limit=20`)).body;
+    expect(newest.data.map(c => c.text)).toEqual(Array.from({ length: 20 }, (_, i) => `Comment ${25 - i}`));
+    expect(newest.total).toBe(25);
+    // The cursor carries on to older ones, and a comment added in between doesn't repeat one.
+    await api.post(`/tasks/${task.key}/comments`, { text: 'Comment 26' });
+    const rest = (await api.get(`/tasks/${task.key}/comments?order=newest&limit=20&cursor=${newest.nextCursor}`)).body;
+    expect(rest).toMatchObject({ nextCursor: null, total: 26 });
+    expect(rest.data.map(c => c.text)).toEqual(['Comment 5', 'Comment 4', 'Comment 3', 'Comment 2', 'Comment 1']);
+    const pages = (await api.get(`/tasks/${task.key}/comments?order=newest&limit=10&cursor=n16`)).body;
+    expect(pages).toMatchObject({ nextCursor: 'n6', total: 26 });
+    expect(pages.data.map(c => c.text)).toEqual(range(16, 7).map(i => `Comment ${i}`));
+    // Each order takes only its own cursors.
+    expect((await api.get(`/tasks/${task.key}/comments?cursor=n6`)).body).toMatchObject({ code: 'invalid_request', field: 'cursor' });
+    expect((await api.get(`/tasks/${task.key}/comments?order=newest&cursor=x6`)).body).toMatchObject({ code: 'invalid_request', field: 'cursor' });
+
+    expect((await api.get(`/tasks/${task.key}/comments?order=sideways`)).body).toMatchObject({ code: 'invalid_request', field: 'order' });
+  });
+
+  it('task activity: newest first by default, oldest first on request, with the total', async () => {
+    const { api, task } = await busy(15);
+    // Plus the "created" entry the API logged.
+    const newest = (await api.get(`/tasks/${task.key}/activity?limit=10`)).body;
+    expect(newest.data.map(a => a.extra)).toEqual(Array.from({ length: 10 }, (_, i) => `step ${15 - i}`));
+    expect(newest.total).toBe(16);
+    expect(newest.nextCursor).toBe('n6');
+    // The cursor earlier servers sent (skip the newest 10) still works.
+    const legacy = (await api.get(`/tasks/${task.key}/activity?limit=3&cursor=o10`)).body;
+    expect(legacy.data.map(a => a.extra)).toEqual(['step 5', 'step 4', 'step 3']);
+    const oldest = (await api.get(`/tasks/${task.key}/activity?order=oldest&limit=2`)).body;
+    expect(oldest.data.map(a => a.verb)).toEqual(['created', 'renamed']);
+    expect(oldest.total).toBe(16);
+  });
+
+  it('counts only the task asked for, and a task someone can’t see stays hidden', async () => {
+    const { t, gus, api, task } = await busy(3);
+    const other = (await api.post('/tasks', { project: 'WEB', title: 'Quiet' })).body;
+    expect((await api.get(`/tasks/${other.key}/comments?order=newest`)).body).toEqual({ data: [], nextCursor: null, total: 0 });
+    const g = await as(t, gus);
+    expect((await g.get(`/tasks/${task.key}/comments?order=newest`)).status).toBe(404);
+    expect((await g.get(`/tasks/${task.key}/activity?order=oldest`)).status).toBe(404);
+  });
+});
+
 describe('OpenAPI', () => {
   it('serves a 3.1 document built from the route table, and responses match its schemas', async () => {
     const { t, ada } = await workspace();
@@ -587,7 +654,7 @@ describe('OpenAPI', () => {
       ['/tasks?sort=due', S.TaskPage],
       [`/tasks/${task.key}`, S.Task],
       [`/tasks/${task.key}/comments`, S.CommentPage],
-      [`/tasks/${task.key}/activity`, S.ActivityPage],
+      [`/tasks/${task.key}/activity`, S.TaskActivityPage],
       ['/projects', S.ProjectPage],
       ['/projects/WEB', S.Project],
       ['/members', S.MemberPage],

@@ -144,6 +144,12 @@ describe('against a workspace', () => {
     expect(listed).not.toContain('\x1b');
     expect(listed).not.toContain('\x07');
     expect(JSON.parse((await c('show', 'WEB-203', '--json')).out).title).toContain('\x1b');
+    // The same goes for comments, which `show` reads through the client's newest-first helper.
+    await c('comment', 'WEB-203', 'Sneaky\x1b]52;c;cHduZWQ=\x07 note\x1b[2J');
+    const commented = (await c('show', 'WEB-203')).out;
+    expect(commented).toContain('Sneaky]52;c;cHduZWQ= note[2J');
+    expect(commented).not.toContain('\x1b');
+    expect(commented).not.toContain('\x07');
 
     const missing = await c('done', 'WEB-999', '--json');
     expect(missing.code).toBe(1);
@@ -357,7 +363,15 @@ async function team() {
   await ada.c.sync([{ c: 'projects', id: 'pweb', k: 'put', v: project }]);
   const as = token => cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: token });
   const adaToken = await apiKey(ada.c);
-  return { t, ada: as(adaToken), adaToken, bob: as(await apiKey(bob.c)), adaId: ada.user.id, adaReadOnly: as(await apiKey(ada.c, { scope: 'read' })) };
+  return {
+    t,
+    ada: as(adaToken),
+    adaToken,
+    bob: as(await apiKey(bob.c)),
+    adaId: ada.user.id,
+    adaSession: ada.c,
+    adaReadOnly: as(await apiKey(ada.c, { scope: 'read' })),
+  };
 }
 const J = r => JSON.parse(r.out);
 
@@ -437,6 +451,40 @@ describe('every noun', () => {
     expect(rm.out).toMatch(/^Deleted WEB-204\. Undo within 10 minutes: sudo-cli tasks undelete t/);
     expect((await ada('tasks', 'undelete', id)).out).toBe('Restored WEB-204 Design (copy)\n');
     expect(t.db.all("SELECT json_extract(data, '$.via') v FROM activity").every(r => r.v === 'CLI')).toBe(true);
+  });
+
+  it('show: the newest comments in time order, saying how many older ones it left out', async () => {
+    const { ada, adaId, adaSession } = await team();
+    await ada('new', 'Long', 'thread', '-p', 'WEB');
+    const task = J(await ada('show', 'WEB-201', '--json'));
+    const at = Date.now() - 60 * 60_000;
+    const comments = (from, to) =>
+      adaSession.sync(
+        Array.from({ length: to - from + 1 }, (_, i) => {
+          const n = from + i;
+          return {
+            c: 'comments',
+            id: `clong${n}`,
+            k: 'put',
+            v: { id: `clong${n}`, task: task.id, by: adaId, at: at + n * 60_000, text: `Comment ${n}`, re: {} },
+          };
+        }),
+      );
+    await comments(1, 50);
+    expect((await ada('show', 'WEB-201')).out).not.toContain('not shown');
+    expect(J(await ada('show', 'WEB-201', '--json')).olderComments).toBe(0);
+    await comments(51, 51);
+    expect((await ada('show', 'WEB-201')).out).toContain('1 older comment not shown\n');
+
+    await comments(52, 55);
+    const out = (await ada('show', 'WEB-201')).out;
+    expect(out).toContain('5 older comments not shown');
+    expect(out).toContain('Comment 55');
+    expect(out).not.toMatch(/Comment 5\n/);
+    expect(out.indexOf('Comment 6\n')).toBeLessThan(out.indexOf('Comment 55'));
+    const json = J(await ada('show', 'WEB-201', '--json'));
+    expect(json.comments.map(c => c.text)).toEqual(Array.from({ length: 50 }, (_, i) => `Comment ${i + 6}`));
+    expect(json.olderComments).toBe(5);
   });
 
   it('projects: new, show, edit, share, archive, duplicate, order; deleting asks first', async () => {

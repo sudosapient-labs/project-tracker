@@ -218,6 +218,32 @@ describe('MCP over Streamable HTTP (/api/mcp)', () => {
     expect((await call(mcp, 'list_members')).data.find(m => m.name === 'Release Bot')).toEqual({ name: 'Release Bot', role: 'Guest', bot: true });
   });
 
+  it('get_task shows the newest comments and activity in time order, and says how many older ones it left out', async () => {
+    const { t, ada, adaId } = await workspace();
+    const token = await apiKey(ada);
+    const task = (await keyClient(t.app, token).post('/tasks', { project: 'WEB', title: 'Long thread' })).body;
+    const at = Date.now() - 30 * 60_000;
+    await ada.sync(
+      Array.from({ length: 25 }, (_, i) => [
+        put('comments', { id: `clong${i + 1}`, task: task.id, by: adaId, at: at + i * 60_000, text: `Comment ${i + 1}`, re: {} }),
+        put('activity', { id: `along${i + 1}`, by: adaId, verb: 'renamed', task: task.id, project: 'pweb', at: at + i * 60_000, extra: `step ${i + 1}` }),
+      ]).flat(),
+    );
+    const mcp = await hosted(t, token);
+    const detail = (await call(mcp, 'get_task', { key: task.key })).data;
+    expect(detail.comments.map(c => c.text)).toEqual(Array.from({ length: 20 }, (_, i) => `Comment ${i + 6}`));
+    expect(detail.olderCommentsNotShown).toBe(5);
+    // Activity stays newest first; 26 entries with the API's "created".
+    expect(detail.activity.map(a => a.replace(/^\S+ \S+ /, ''))).toEqual(Array.from({ length: 10 }, (_, i) => `Ada Owner renamed step ${25 - i}`));
+    expect(detail.olderActivityNotShown).toBe(16);
+
+    // Nothing left out: no note.
+    const quiet = (await keyClient(t.app, token).post('/tasks', { project: 'WEB', title: 'Short' })).body;
+    const short = (await call(mcp, 'get_task', { key: quiet.key })).data;
+    expect(short).not.toHaveProperty('olderCommentsNotShown');
+    expect(short).not.toHaveProperty('olderActivityNotShown');
+  });
+
   it('offers only read tools to a read-only key, and refuses writes anyway', async () => {
     const { t, ada } = await workspace();
     const mcp = await hosted(t, await apiKey(ada, { scope: 'read' }));

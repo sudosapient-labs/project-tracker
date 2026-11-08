@@ -169,3 +169,66 @@ describe('methods', () => {
     expect(await missing.download('/files/x/content').catch(e => e)).toMatchObject({ status: 404, code: 'not_found' });
   });
 });
+
+describe('latest', () => {
+  const item = i => ({ id: `c${i}`, text: `Comment ${i}`, createdAt: 1000 + i });
+  const range = (from, to) => Array.from({ length: Math.abs(to - from) + 1 }, (_, i) => (from <= to ? from + i : from - i));
+  const texts = r => r.data.map(c => c.text);
+  const search = calls => calls.map(c => new URL(c.url).search);
+  const at = c => c.createdAt;
+
+  it('asks for the newest first and gives them back oldest first, with how many older were left out', async () => {
+    const { api, calls } = client([ok({ data: range(25, 6).map(item), nextCursor: 'n5', total: 25 })]);
+    const got = await api.latest('/tasks/WEB-1/comments', 20, at);
+    expect(texts(got)).toEqual(range(6, 25).map(i => `Comment ${i}`));
+    expect(got.older).toBe(5);
+    expect(search(calls)).toEqual(['?order=newest&limit=20']);
+  });
+
+  it('keeps to n even if a server sends more, and asks for 1 to 100', async () => {
+    const { api, calls } = client([ok({ data: range(9, 1).map(item), nextCursor: null, total: 9 })]);
+    const got = await api.latest('/x', 3, at);
+    expect(texts(got)).toEqual(['Comment 7', 'Comment 8', 'Comment 9']);
+    expect(got.older).toBe(6);
+    await api.latest('/x', 500, at);
+    await api.latest('/x', 0, at);
+    expect(search(calls).slice(1)).toEqual(['?order=newest&limit=100', '?order=newest&limit=1']);
+  });
+
+  it('with a server from before order=newest (oldest first, no total), reads on from its first page and keeps the newest', async () => {
+    const { api, calls } = client([
+      ok({ data: range(1, 20).map(item), nextCursor: 'o20' }),
+      ok({ data: range(21, 120).map(item), nextCursor: 'o120' }),
+      ok({ data: range(121, 130).map(item), nextCursor: null }),
+    ]);
+    const got = await api.latest('/tasks/WEB-1/comments', 20, at);
+    expect(texts(got)).toEqual(range(111, 130).map(i => `Comment ${i}`));
+    expect(got.older).toBe(110);
+    expect(search(calls)).toEqual(['?order=newest&limit=20', '?limit=100&cursor=o20', '?limit=100&cursor=o120']);
+  });
+
+  it('with an older server sending newest first, over several pages and with ties, comes out oldest first', async () => {
+    // Activity from an older server: newest first. 3 and 3b happened in the same millisecond, 3b later.
+    const tie = { id: 'c3b', text: 'Comment 3b', createdAt: 1003 };
+    const { api } = client([ok({ data: [item(5), item(4)], nextCursor: 'o2' }), ok({ data: [tie, item(3), item(2), item(1)], nextCursor: null })]);
+    const got = await api.latest('/tasks/WEB-1/activity', 4, at);
+    expect(texts(got)).toEqual(['Comment 3', 'Comment 3b', 'Comment 4', 'Comment 5']);
+    expect(got.older).toBe(2);
+  });
+
+  it('tells which way an older server runs even when its whole first page shares one time', async () => {
+    // Newest first; a, b, c logged in the same millisecond (c last), then older entries.
+    const same = id => ({ id, text: id, createdAt: 2000 });
+    const { api } = client([ok({ data: [same('c'), same('b')], nextCursor: 'o2' }), ok({ data: [same('a'), item(1)], nextCursor: null })]);
+    expect(texts(await api.latest('/tasks/WEB-1/activity', 3, at))).toEqual(['a', 'b', 'c']);
+  });
+
+  it('stops on an empty page or a cursor it has seen, so a broken server can’t keep it looping', async () => {
+    const empty = client([ok({ data: [item(1)], nextCursor: 'o1' }), ok({ data: [], nextCursor: 'o1' })]);
+    expect(await empty.api.latest('/x', 5, at)).toEqual({ data: [item(1)], older: 0 });
+    expect(empty.calls).toHaveLength(2);
+    const loop = client([ok({ data: [item(1)], nextCursor: 'same' }), ok({ data: [item(2)], nextCursor: 'same' })]);
+    expect(await loop.api.latest('/x', 5, at)).toEqual({ data: [item(1), item(2)], older: 0 });
+    expect(loop.calls).toHaveLength(2);
+  });
+});
