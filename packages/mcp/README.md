@@ -132,6 +132,19 @@ mistyped one is an `isError` result naming it (`invalid_arguments: Missing requi
 project.`), so the model can correct the call. `null` for an optional argument is read as `""` where
 that clears it (a due date) and is otherwise ignored. Calls that reach the rate limit are retried after
 `Retry-After` (see [the API reference](../../docs/api.md#conventions)).
+
+Tools that make several changes in one call (`edit_subtasks`, `share_project`, `update_settings`,
+`mark_notifications_read`, and `update_task`, `update_project` or `update_workspace` with both a change
+and `archived` or `inviteLink`) make one request per change, in order, and stop at the first one that
+fails, so nothing runs on after a failure that may have broken the plan (a hand-over whose add failed
+doesn't go on to remove anyone). The result is then an `isError` one starting `incomplete: Stopped at a
+failed change; 2 of 3 went through.`, with `done` (each change made, with what it made: a new subtask's
+`id`, a promoted task's `key`), `failed` (the change, the API's `code` and `error`, and
+`mayHaveGoneThrough` when the connection dropped or the server failed), `notTried`, and the state
+afterwards where there is one. So the assistant repeats nothing, and checks with the person before
+sending the rest. A call that asks for a single change fails with that change's error, as any tool
+does.
+
 Resources: `sudo://my-work` and `sudo://project/{key}` (same JSON as `list_my_work` and
 `summarise_project`).
 `list_my_work` is a list, soonest due first across all your matching tasks. Against a server from

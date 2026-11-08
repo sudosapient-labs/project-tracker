@@ -356,7 +356,8 @@ async function team() {
   };
   await ada.c.sync([{ c: 'projects', id: 'pweb', k: 'put', v: project }]);
   const as = token => cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: token });
-  return { t, ada: as(await apiKey(ada.c)), bob: as(await apiKey(bob.c)), adaId: ada.user.id };
+  const adaToken = await apiKey(ada.c);
+  return { t, ada: as(adaToken), adaToken, bob: as(await apiKey(bob.c)), adaId: ada.user.id, adaReadOnly: as(await apiKey(ada.c, { scope: 'read' })) };
 }
 const J = r => JSON.parse(r.out);
 
@@ -627,5 +628,101 @@ describe('every noun', () => {
     expect((await c('files', '--help')).out).toContain('files download <id>');
     expect((await c('help')).out).toMatch(/^sudo-cli: Sudo Sapient from the terminal/);
     expect((await c('--help')).out).toContain('api <METHOD> <path>');
+  });
+});
+
+/* Several keys in one command: one request each, in order. The first failure stops the run, and the
+   output says exactly what went through and what wasn't tried, so a retry doesn't redo any of it. */
+describe('several keys at once', () => {
+  const status = (t, key) => t.db.get("SELECT json_extract(data, '$.status') s FROM tasks WHERE json_extract(data, '$.key') = ?", key)?.s;
+  const NO_TASK = 'No task with that id or key, or you can’t open it.';
+
+  it('done: stops at a bad key, says what was done and what wasn’t tried, and exits 1', async () => {
+    const { t, ada } = await team();
+    for (const title of ['One', 'Two', 'Three']) await ada('new', title, '-p', 'WEB');
+    const r = await ada('done', 'WEB-201', 'WEB-999', 'WEB-203');
+    expect(r).toEqual(
+      expect.objectContaining({
+        code: 1,
+        out: 'Done WEB-201 One\n',
+        err: `sudo-cli: WEB-999: ${NO_TASK}\nsudo-cli: Stopped at WEB-999; 1 of 3 done (WEB-201). Not tried: WEB-203.\n`,
+      }),
+    );
+    expect([status(t, 'WEB-201'), status(t, 'WEB-202'), status(t, 'WEB-203')]).toEqual(['done', 'todo', 'todo']);
+
+    // --json: stdout is what went through, stderr one object saying the rest.
+    const j = await ada('done', 'WEB-202', 'WEB-998', 'WEB-203', '--json');
+    expect(j.code).toBe(1);
+    expect(J(j).map(x => x.key)).toEqual(['WEB-202']);
+    expect(JSON.parse(j.err)).toEqual({
+      error: 'Stopped at WEB-998; 1 of 3 done (WEB-202). Not tried: WEB-203.',
+      code: 'incomplete',
+      done: ['WEB-202'],
+      failed: { ref: 'WEB-998', code: 'not_found', error: NO_TASK },
+      notTried: ['WEB-203'],
+    });
+    // All good is unchanged: exit 0, nothing on stderr.
+    expect(await ada('done', 'WEB-201', 'WEB-203')).toMatchObject({ code: 0, out: 'Done WEB-201 One\nDone WEB-203 Three\n', err: '' });
+  });
+
+  it('tasks rm: prints the undo id of every task it deleted before the bad key', async () => {
+    const { t, ada } = await team();
+    for (const title of ['One', 'Two', 'Three']) await ada('new', title, '-p', 'WEB');
+    const r = await ada('tasks', 'rm', 'WEB-201', 'WEB-202', 'WEB-999', 'WEB-203');
+    expect(r.code).toBe(1);
+    const ids = [...r.out.matchAll(/^Deleted (WEB-\d+)\. Undo within 10 minutes: sudo-cli tasks undelete (\S+)$/gm)].map(m => [m[1], m[2]]);
+    expect(ids.map(([k]) => k)).toEqual(['WEB-201', 'WEB-202']);
+    expect(r.err).toContain('sudo-cli: Stopped at WEB-999; 2 of 4 done (WEB-201, WEB-202). Not tried: WEB-203.');
+    expect(status(t, 'WEB-203')).toBe('todo');
+    for (const [k, id] of ids) expect((await ada('tasks', 'undelete', id)).out).toMatch(new RegExp(`^Restored ${k} `));
+
+    const j = await ada('tasks', 'rm', 'WEB-201', 'WEB-998', '--json');
+    expect(J(j)).toEqual([expect.objectContaining({ key: 'WEB-201', id: expect.any(String) })]);
+    expect(JSON.parse(j.err)).toMatchObject({ done: ['WEB-201'], failed: { ref: 'WEB-998' } });
+  });
+
+  it('archive, restore, fav and inbox read: the same, through one helper', async () => {
+    const { t, ada } = await team();
+    for (const title of ['One', 'Two']) await ada('new', title, '-p', 'WEB');
+    const a = await ada('tasks', 'archive', 'WEB-201', 'WEB-999', 'WEB-202');
+    expect(a).toMatchObject({ code: 1, out: 'Archived WEB-201 One\n' });
+    expect(a.err).toContain('Stopped at WEB-999; 1 of 3 done (WEB-201). Not tried: WEB-202.');
+    expect(t.db.get("SELECT COUNT(*) n FROM tasks WHERE json_extract(data, '$.archived') = 1").n).toBe(1);
+    const re = await ada('tasks', 'restore', 'WEB-201', 'WEB-999');
+    expect(re).toMatchObject({ code: 1, out: 'Restored WEB-201 One\n', err: expect.stringContaining('Stopped at WEB-999; 1 of 2 done (WEB-201).') });
+    const fav = await ada('tasks', 'fav', 'WEB-999', 'WEB-201');
+    expect(fav).toMatchObject({ code: 1, out: '', err: expect.stringContaining('Stopped at WEB-999; 0 of 2 done. Not tried: WEB-201.') });
+    const r = await ada('inbox', 'read', 'n_missing_1', 'n_missing_2');
+    expect(r).toMatchObject({ code: 1, out: '', err: expect.stringContaining('Stopped at n_missing_1; 0 of 2 done. Not tried: n_missing_2.') });
+  });
+
+  it('a read-only key stops at the first key; not logged in is still a usage error', async () => {
+    const { t, ada, adaReadOnly } = await team();
+    for (const title of ['One', 'Two', 'Three']) await ada('new', title, '-p', 'WEB');
+    const r = await adaReadOnly('done', 'WEB-201', 'WEB-202', 'WEB-203');
+    expect(r).toMatchObject({ code: 1, out: '' });
+    expect(r.err).toMatch(/^sudo-cli: WEB-201: This API key is read-only\./);
+    expect(r.err).toContain('Stopped at WEB-201; 0 of 3 done. Not tried: WEB-202, WEB-203.');
+    expect(await cli(t)('tasks', 'rm', 'WEB-201', 'WEB-202')).toMatchObject({ code: 2, err: expect.stringContaining('Not logged in') });
+  });
+
+  it('says a key may have gone through when the connection dropped', async () => {
+    const { t, ada, adaToken } = await team();
+    for (const title of ['One', 'Two']) await ada('new', title, '-p', 'WEB');
+    // The connection drops on the second request: the server may or may not have done it.
+    let n = 0;
+    const flaky = cli(
+      t,
+      { SUDO_URL: 'http://localhost', SUDO_API_KEY: adaToken },
+      {
+        fetch: (url, init) => {
+          if (++n === 2) return Promise.reject(new TypeError('fetch failed'));
+          return t.app.request(url, init);
+        },
+      },
+    );
+    const r = await flaky('done', 'WEB-201', 'WEB-202');
+    expect(r).toMatchObject({ code: 1, out: 'Done WEB-201 One\n' });
+    expect(r.err).toContain('WEB-202: Couldn’t reach Sudo Sapient. Check the URL and your connection. It may have gone through: check before retrying it.');
   });
 });

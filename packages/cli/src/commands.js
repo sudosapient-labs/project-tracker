@@ -198,11 +198,12 @@ export const NOUNS = {
         usage: 'tasks rm <KEY>...                   delete (with comments); undo with tasks undelete <id> within 10 minutes',
         async run(x) {
           x.need(x.args.length, 'Which task? sudo-cli tasks rm WEB-12');
-          const out = [];
-          for (const k of x.args) out.push({ key: k.toUpperCase(), ...(await x.api().del(`/tasks/${seg(k)}`)) });
-          x.emit(out.length === 1 ? out[0] : out, () => {
-            for (const d of out) x.print(`Deleted ${x.bold(d.key)}. Undo within 10 minutes: sudo-cli tasks undelete ${d.id}`);
-          });
+          return several(
+            x,
+            x.args,
+            async k => ({ key: k.toUpperCase(), ...(await x.api().del(`/tasks/${seg(k)}`)) }),
+            d => `Deleted ${x.bold(d.key)}. Undo within 10 minutes: sudo-cli tasks undelete ${d.id}`,
+          );
         },
       },
       undelete: {
@@ -1118,12 +1119,65 @@ export function nounHelp(noun) {
     .join('\n')}\n\nAll take --json.${noun === 'subtask' || noun === 'tasks' ? ' Dates: today, tomorrow, friday, +3d, 2026-11-20 (none clears).' : ''}`;
 }
 
+/* ---------- several keys or ids in one command ---------- */
+/* `done WEB-1 WEB-2 WEB-3`, `tasks rm …`, `inbox read …`: one request per key or id, in order. The
+   first one that fails stops the run, and the output says which went through (stdout, as they
+   happen; deleted tasks with their undo ids), which failed and why, and which weren't tried (stderr),
+   so nothing is done twice and nothing runs on after a mistake. Exit code 1. With --json, stdout is
+   the array of what went through and stderr one { error, code: "incomplete", done, failed, notTried }
+   object. A single key fails like any other command. Returns the exit code. */
+export async function several(x, refs, call, line) {
+  if (refs.length === 1) {
+    const r = await call(refs[0]);
+    x.emit(r, () => x.print(line(r)));
+    return 0;
+  }
+  // Not logged in, or a plain-http URL: a usage error (exit 2) before anything is tried.
+  x.api();
+  const done = [];
+  const results = [];
+  for (const [i, ref] of refs.entries()) {
+    let r;
+    try {
+      r = await call(ref);
+    } catch (e) {
+      const notTried = refs.slice(i + 1);
+      // Offline, a server error or a bug may come after the change was made.
+      const unsure = !(e instanceof ApiError) || e.status === 0 || e.status >= 500;
+      // On one line, so a message can't print a line of its own that looks like ours.
+      const msg = `${x.clean(String(e.message)).replace(/\s*\n\s*/g, ' ')}${unsure ? ' It may have gone through: check before retrying it.' : ''}`;
+      const summary =
+        `Stopped at ${x.clean(ref)}; ${done.length} of ${refs.length} done${done.length ? ` (${done.map(x.clean).join(', ')})` : ''}.` +
+        (notTried.length ? ` Not tried: ${notTried.map(x.clean).join(', ')}.` : '');
+      if (x.o.json) {
+        x.json(results);
+        x.warnJson({
+          error: summary,
+          code: 'incomplete',
+          done,
+          failed: { ref, code: e.code || 'internal_error', error: msg },
+          notTried,
+        });
+      } else {
+        x.warn(`${x.clean(ref)}: ${msg}${e.status === 401 ? ' Run sudo-cli login.' : ''}`);
+        x.warn(summary);
+      }
+      // Anything but the API's refusal (a bug) is still raised, once what happened has been said.
+      if (!(e instanceof ApiError)) throw e;
+      return 1;
+    }
+    done.push(ref);
+    results.push(r);
+    if (!x.o.json) x.print(line(r));
+  }
+  if (x.o.json) x.json(results);
+  return 0;
+}
+
 /* ---------- helpers for handlers ---------- */
-async function each(x, call, line) {
+function each(x, call, line) {
   x.need(x.args.length, 'Which one? Give at least one key or id.');
-  const out = [];
-  for (const k of x.args) out.push(await call(k));
-  x.emit(out.length === 1 ? out[0] : out, () => out.forEach(r => x.print(line(r))));
+  return several(x, x.args, call, line);
 }
 async function one(x, call, line) {
   const r = await call(x.need(x.args[0], 'Which one? Give a key, e.g. WEB.'));

@@ -7,7 +7,7 @@ import readline from 'node:readline';
 import { parseArgs } from 'node:util';
 import { ApiError, createClient, plainHttpRemote, seg } from '@sudosapient/client';
 import { clearConfig, configPath, loadConfig, saveConfig } from '@sudosapient/client/config';
-import { ALIASES, NOUNS, PRIORITIES, STATUSES, nounHelp, rawApi, reaction } from './commands.js';
+import { ALIASES, NOUNS, PRIORITIES, STATUSES, nounHelp, rawApi, reaction, several } from './commands.js';
 
 // Kept equal to package.json by release-please (extra-files in release-please-config.json).
 export const VERSION = '0.2.0'; // x-release-please-version
@@ -241,6 +241,10 @@ export async function run(argv, io = {}) {
     api,
     print,
     json,
+    /* A line on stderr, and the same as one JSON object for --json. */
+    warn: s => err.write(`sudo-cli: ${s}\n`),
+    warnJson: v => err.write(JSON.stringify(clean(v)) + '\n'),
+    clean,
     bold,
     dim,
     pad,
@@ -350,11 +354,12 @@ export async function run(argv, io = {}) {
       case 'done': {
         need(args.length, 'Which task? sudo-cli done WEB-12');
         const a = api();
-        const done = [];
-        for (const k of args) done.push(await a.post(`/tasks/${seg(k)}/complete`));
-        if (o.json) json(done.length === 1 ? done[0] : done);
-        else for (const t of done) print(`Done ${bold(t.key)} ${t.title}`);
-        return 0;
+        return await several(
+          x,
+          args,
+          k => a.post(`/tasks/${seg(k)}/complete`),
+          t => `Done ${bold(t.key)} ${t.title}`,
+        );
       }
       case 'assign': {
         const [k, ...rest] = args;

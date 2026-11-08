@@ -1,7 +1,7 @@
 /* The MCP server core: JSON-RPC 2.0 messages in, responses out, independent of transport (stdio.js,
    http.js). Implements initialize, ping, tools and resources; nothing server-initiated, so it needs
    no sessions beyond remembering which client connected (for "Ada via Claude"). */
-import { FENCE_OPEN, RESOURCES, RESOURCE_TEMPLATES, checkArgs, fence, readResource, refusal, registry, toolsFor } from './tools.js';
+import { FENCE_OPEN, Incomplete, RESOURCES, RESOURCE_TEMPLATES, checkArgs, fence, readResource, refusal, registry, toolsFor } from './tools.js';
 
 export const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 // Kept equal to package.json by release-please (extra-files in release-please-config.json).
@@ -102,6 +102,8 @@ export function createMcp({ connect, readOnly = false }) {
           // server's message can quote what people wrote (a name, a title), so it's fenced like any
           // result; the tools' own argument errors aren't.
           if (e.code === 'invalid_arguments') return { content: [{ type: 'text', text: `${e.code}: ${e.message}` }], isError: true };
+          // Several changes, some made and some not (tools.js steps): what happened to each.
+          if (e instanceof Incomplete) return { content: [{ type: 'text', text: `${e.code}: ${e.message}\n${fence(e.result)}` }], isError: true };
           return { content: [{ type: 'text', text: `${e.code}:\n${fence({ error: e.message, ...(e.field ? { field: e.field } : {}) })}` }], isError: true };
         }
       }

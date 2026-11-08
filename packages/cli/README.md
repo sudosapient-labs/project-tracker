@@ -101,6 +101,16 @@ Due dates: `today`, `tomorrow`, a weekday (`friday`, `fri`; today counts), `next
 `2026-11-20`. Set `SUDO_PROJECT=WEB` to skip `-p`. Exit codes: `0` ok, `1` the API refused (the
 message says why; with `--json` it's `{ error, code }` on stderr), `2` a usage error.
 
+**Several keys at once** (`done`, `tasks rm`, `tasks archive`, `restore`, `fav`, `unfav`,
+`inbox read`, `inbox unread`) make one request per key, in order, and stop at the first one that
+fails. What went through is printed as it happens (deleted tasks with their undo ids); then stderr
+names the key that failed and why, and what wasn't tried (`Stopped at WEB-999; 1 of 3 done (WEB-201).
+Not tried: WEB-203.`), and the exit code is `1`. So fix or drop the failed key and run the command
+again with the keys that weren't tried; nothing gets done twice. If the connection dropped or the
+server failed, that key may have gone through, and the message says to check it first. With `--json`,
+stdout is the array of what went through and stderr is
+`{ error, code: "incomplete", done, failed: { ref, code, error }, notTried }`.
+
 Your keys share one rate limit (120 requests a minute by default). When a bulk run reaches it,
 `sudo-cli` waits until the server says it may go on (`rate limited; retrying in 53 s…` on stderr) and
 then carries on, up to 3 times per request.
