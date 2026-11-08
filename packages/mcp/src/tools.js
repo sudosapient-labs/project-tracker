@@ -61,6 +61,66 @@ const need = (args, ...ks) => {
 };
 const clear = v => (v === '' ? null : v);
 
+/* ---------- tools that make several changes ----------
+   edit_subtasks, share_project, update_settings, mark_notifications_read, and update_task,
+   update_project and update_workspace when asked for both a change and an archive or link: one API
+   request per change. The changes don't depend on each other, so a failed one doesn't stop the rest;
+   each is tried, and if any failed the result says which went through (with what they made: subtask
+   ids, a promoted task's key) and which failed and why, so the assistant retries only those and
+   nothing is made twice. Only a failure that would repeat for every later change stops the run
+   (stopsRun: offline, the key refused or read-only, a rate limit too long to wait out); the rest are
+   listed as not tried. A call that makes a single change fails as before, with the API's error. */
+const stopsRun = e => e.status === undefined || e.status === 0 || e.status === 401 || e.status === 429 || e.code === 'insufficient_scope';
+
+/* `list`: [{ what, run }], `what` naming the change ({ add: 'Title' }, { remove: id }, …) and `run`
+   making it, resolving to anything worth reporting with it ({ id }, { key }) or nothing. */
+async function steps(list) {
+  const done = [];
+  const failed = [];
+  const notTried = [];
+  for (const { what, run } of list) {
+    if (failed.length && stopsRun(failed.at(-1).e)) {
+      notTried.push(what);
+      continue;
+    }
+    try {
+      done.push({ ...what, ...(await run()) });
+    } catch (e) {
+      failed.push({ what, e });
+    }
+  }
+  return { done, failed, notTried, ok: !failed.length };
+}
+
+/* The isError result for a run where something failed (protocol.js fences `result`). One change
+   that failed is just its error, as for any tool. Errors that aren't the API's stay generic, as
+   protocol.js does for any tool. */
+export class Incomplete extends Error {
+  constructor(result) {
+    const all = result.done.length + result.failed.length + result.notTried.length;
+    super(`${result.done.length} of ${all} changes went through. Don’t repeat those under done; retry only what’s under failed or notTried.`);
+    this.status = 207;
+    this.code = 'incomplete';
+    this.result = result;
+  }
+}
+function incomplete({ done, failed, notTried }, extra = {}) {
+  if (done.length + failed.length + notTried.length === 1) throw failed[0].e;
+  throw new Incomplete({
+    done,
+    failed: failed.map(({ what, e }) =>
+      e.status === undefined
+        ? { ...what, code: 'internal_error', error: 'Internal error' }
+        : compact({ ...what, code: e.code, error: e.message, field: e.field }),
+    ),
+    notTried,
+    ...extra,
+  });
+}
+/* What things look like after a run, for the result; a read that fails then mustn't hide what the
+   run did, so it's left out instead. */
+const after = p => p.catch(() => null);
+
 const brief = (t, who) =>
   compact({
     key: t.key,
@@ -417,9 +477,24 @@ export const TOOLS = {
         ...(estimate !== undefined ? { estimate: clear(estimate) } : {}),
         ...(recurrence !== undefined ? { recurrence: recurrence === 'none' ? null : recurrence } : {}),
       };
-      let t = Object.keys(body).length ? await api.patch(`/tasks/${seg(key)}`, body) : await api.get(`/tasks/${seg(key)}`);
-      if (archived !== undefined && archived !== t.archived) t = await api.post(`/tasks/${seg(t.key)}/${archived ? 'archive' : 'restore'}`);
-      return brief(t, await names(api));
+      let t;
+      const list = [];
+      if (Object.keys(body).length) list.push({ what: { update: Object.keys(body) }, run: async () => void (t = await api.patch(`/tasks/${seg(key)}`, body)) });
+      if (archived !== undefined)
+        list.push({
+          what: { [archived ? 'archive' : 'restore']: key },
+          async run() {
+            const cur = t || (await api.get(`/tasks/${seg(key)}`));
+            t = archived === cur.archived ? cur : await api.post(`/tasks/${seg(cur.key)}/${archived ? 'archive' : 'restore'}`);
+          },
+        });
+      const r = await steps(list);
+      if (!r.ok) {
+        const who = t && (await after(names(api)));
+        incomplete(r, t && who ? { task: brief(t, who) } : {});
+      }
+      t ||= await api.get(`/tasks/${seg(key)}`);
+      return brief(t, (await after(names(api))) || new Map());
     },
   },
   complete_task: {
@@ -455,22 +530,32 @@ export const TOOLS = {
     ),
     async run(api, { key, add = [], update = [], remove = [], promote }) {
       const base = `/tasks/${seg(key)}/subtasks`;
-      let promoted;
-      for (const title of add) await api.post(base, { title });
-      for (const { id, due, assignee, ...u } of update)
-        await api.patch(`${base}/${seg(id)}`, {
-          ...u,
-          ...(due !== undefined ? { due: clear(due) } : {}),
-          ...(assignee !== undefined ? { assignee: clear(assignee) } : {}),
-        });
-      for (const id of remove) await api.del(`${base}/${seg(id)}`);
-      if (promote) promoted = (await api.post(`${base}/${seg(promote)}/promote`)).key;
-      const [t, who] = await Promise.all([api.get(`/tasks/${seg(key)}`), names(api)]);
-      return compact({
+      const r = await steps([
+        // A new subtask goes last, and the API answers with the task as that write left it.
+        ...add.map(title => ({ what: { add: title }, run: async () => ({ id: (await api.post(base, { title })).subtasks.at(-1)?.id }) })),
+        ...update.map(({ id, due, assignee, ...u }) => ({
+          what: { update: id },
+          run: async () =>
+            void (await api.patch(`${base}/${seg(id)}`, {
+              ...u,
+              ...(due !== undefined ? { due: clear(due) } : {}),
+              ...(assignee !== undefined ? { assignee: clear(assignee) } : {}),
+            })),
+        })),
+        ...remove.map(id => ({ what: { remove: id }, run: async () => void (await api.del(`${base}/${seg(id)}`)) })),
+        ...(promote ? [{ what: { promote }, run: async () => ({ key: (await api.post(`${base}/${seg(promote)}/promote`)).key }) }] : []),
+      ]);
+      const promoted = r.done.find(d => d.promote)?.key;
+      // Nothing asked for: just the subtasks, failing as any read does (an unknown key).
+      const read = r.done.length ? after : x => x;
+      const [t, who] = await Promise.all([read(api.get(`/tasks/${seg(key)}`)), read(names(api))]);
+      const now = t && {
         key: t.key,
-        subtasks: t.subtasks.map(s => compact({ id: s.id, title: s.title, done: s.done, assignee: who.get(s.assignee), due: s.due })),
-        promoted,
-      });
+        subtasks: t.subtasks.map(s => compact({ id: s.id, title: s.title, done: s.done, assignee: who?.get(s.assignee), due: s.due })),
+      };
+      if (!r.ok) incomplete(r, now ? { now } : {});
+      // Everything went through; if the task can't be read back now, say what was done instead.
+      return now ? compact({ ...now, promoted }) : { key, done: r.done };
     },
   },
   comment: {
@@ -583,9 +668,22 @@ export const TOOLS = {
         ...(start !== undefined ? { start: clear(start) } : {}),
         ...(due !== undefined ? { due: clear(due) } : {}),
       };
-      let p = Object.keys(body).length ? await api.patch(`/projects/${seg(project)}`, body) : await api.get(`/projects/${seg(project)}`);
-      if (archived !== undefined && archived !== p.archived) p = await api.post(`/projects/${seg(p.key)}/${archived ? 'archive' : 'restore'}`);
-      return compact({ key: p.key, name: p.name, status: p.status, private: p.private, archived: p.archived });
+      let p;
+      const list = [];
+      if (Object.keys(body).length)
+        list.push({ what: { update: Object.keys(body) }, run: async () => void (p = await api.patch(`/projects/${seg(project)}`, body)) });
+      if (archived !== undefined)
+        list.push({
+          what: { [archived ? 'archive' : 'restore']: project },
+          async run() {
+            const cur = p || (await api.get(`/projects/${seg(project)}`));
+            p = archived === cur.archived ? cur : await api.post(`/projects/${seg(cur.key)}/${archived ? 'archive' : 'restore'}`);
+          },
+        });
+      const view = p => compact({ key: p.key, name: p.name, status: p.status, private: p.private, archived: p.archived });
+      const r = await steps(list);
+      if (!r.ok) incomplete(r, p ? { project: view(p) } : {});
+      return view(p || (await api.get(`/projects/${seg(project)}`)));
     },
   },
   share_project: {
@@ -600,12 +698,26 @@ export const TOOLS = {
       ['project'],
     ),
     async run(api, { project, add = [], remove = [] }) {
+      const base = `/projects/${seg(project)}/members`;
       let p;
-      for (const { who, permission } of add) p = await api.put(`/projects/${seg(project)}/members/${seg(who)}`, permission ? { permission } : {});
-      for (const who of remove) p = await api.del(`/projects/${seg(project)}/members/${seg(who)}`);
+      const r = await steps([
+        ...add.map(({ who, permission }) => ({
+          what: compact({ add: who, permission }),
+          run: async () => void (p = await api.put(`${base}/${seg(who)}`, permission ? { permission } : {})),
+        })),
+        ...remove.map(who => ({ what: { remove: who }, run: async () => void (p = await api.del(`${base}/${seg(who)}`)) })),
+      ]);
+      const view = (p, n) => ({
+        key: p.key,
+        private: p.private,
+        members: p.members.map(id => compact({ name: n.get(id) || id, permission: p.permissions?.[id] })),
+      });
+      if (!r.ok) {
+        const n = p && (await after(names(api)));
+        incomplete(r, p && n ? { now: view(p, n) } : {});
+      }
       p ||= await api.get(`/projects/${seg(project)}`);
-      const n = await names(api);
-      return { key: p.key, private: p.private, members: p.members.map(id => compact({ name: n.get(id) || id, permission: p.permissions?.[id] })) };
+      return view(p, (await after(names(api))) || new Map());
     },
   },
   request_access: {
@@ -676,16 +788,6 @@ export const TOOLS = {
       projectOrder: arr(KEY, 'Sidebar order'),
     }),
     async run(api, { profile, preferences, notifications, star = [], unstar = [], projectOrder }) {
-      const done = [];
-      if (profile) {
-        const { team, ...p } = profile;
-        await api.patch('/me', { ...p, ...(team !== undefined ? { team: team ? await teamId(api, team) : null } : {}) });
-        done.push('profile');
-      }
-      if (preferences || notifications) {
-        await api.patch('/me/preferences', compact({ preferences, notifications }));
-        done.push(...(preferences ? ['preferences'] : []), ...(notifications ? ['notifications'] : []));
-      }
       // WEB-12 is a task and WEB a project; an id could be either, so it's tried as a project, then as a task.
       const fav = async (method, ref) => {
         if (/-\d+$/.test(ref)) return api[method](`/tasks/${seg(ref)}/favorite`);
@@ -696,11 +798,33 @@ export const TOOLS = {
           return api[method](`/tasks/${seg(ref)}/favorite`);
         }
       };
-      for (const r of star) await fav('put', r);
-      for (const r of unstar) await fav('del', r);
-      if (star.length || unstar.length) done.push('favorites');
-      if (projectOrder) (await api.put('/me/project-order', { projects: projectOrder }), done.push('projectOrder'));
-      return { updated: done };
+      const r = await steps([
+        ...(profile
+          ? [
+              {
+                what: { set: 'profile' },
+                async run() {
+                  const { team, ...p } = profile;
+                  await api.patch('/me', { ...p, ...(team !== undefined ? { team: team ? await teamId(api, team) : null } : {}) });
+                },
+              },
+            ]
+          : []),
+        ...(preferences || notifications
+          ? [
+              {
+                what: { set: [...(preferences ? ['preferences'] : []), ...(notifications ? ['notifications'] : [])].join(', ') },
+                run: async () => void (await api.patch('/me/preferences', compact({ preferences, notifications }))),
+              },
+            ]
+          : []),
+        ...star.map(ref => ({ what: { star: ref }, run: async () => void (await fav('put', ref)) })),
+        ...unstar.map(ref => ({ what: { unstar: ref }, run: async () => void (await fav('del', ref)) })),
+        ...(projectOrder ? [{ what: { set: 'projectOrder' }, run: async () => void (await api.put('/me/project-order', { projects: projectOrder })) }] : []),
+      ]);
+      if (!r.ok) incomplete(r);
+      const updated = [profile && 'profile', preferences && 'preferences', notifications && 'notifications', (star.length || unstar.length) && 'favorites'];
+      return { updated: [...updated, projectOrder && 'projectOrder'].filter(Boolean) };
     },
   },
   mark_notifications_read: {
@@ -710,7 +834,8 @@ export const TOOLS = {
     async run(api, { ids = [], all, unread }) {
       if (all && !unread) return api.post('/notifications/read-all');
       if (!ids.length) throw bad('Give ids, or all: true.');
-      for (const id of ids) await api.patch(`/notifications/${seg(id)}`, { read: !unread });
+      const r = await steps(ids.map(id => ({ what: { id }, run: async () => void (await api.patch(`/notifications/${seg(id)}`, { read: !unread })) })));
+      if (!r.ok) incomplete(r, { updated: r.done.length });
       return { updated: ids.length };
     },
   },
@@ -802,8 +927,14 @@ export const TOOLS = {
     description: 'Rename the workspace or change its colour; inviteLink makes a new join link (admins).',
     inputSchema: obj({ name: str(), color: str('#RRGGBB'), brand: BOOL, inviteLink: BOOL }),
     async run(api, { inviteLink, ...a }) {
-      const ws = Object.keys(a).length ? await api.patch('/workspace', a) : await api.get('/workspace');
-      return compact({ ...ws, inviteLink: inviteLink ? (await api.post('/workspace/invite-link')).link : null });
+      let ws;
+      let link = null;
+      const r = await steps([
+        ...(Object.keys(a).length ? [{ what: { update: Object.keys(a) }, run: async () => void (ws = await api.patch('/workspace', a)) }] : []),
+        ...(inviteLink ? [{ what: { inviteLink: true }, run: async () => void (link = (await api.post('/workspace/invite-link')).link) }] : []),
+      ]);
+      if (!r.ok) incomplete(r, compact({ workspace: ws, inviteLink: link }));
+      return compact({ ...(ws || (await api.get('/workspace'))), inviteLink: link });
     },
   },
   manage_bot: {

@@ -198,11 +198,12 @@ export const NOUNS = {
         usage: 'tasks rm <KEY>...                   delete (with comments); undo with tasks undelete <id> within 10 minutes',
         async run(x) {
           x.need(x.args.length, 'Which task? sudo-cli tasks rm WEB-12');
-          const out = [];
-          for (const k of x.args) out.push({ key: k.toUpperCase(), ...(await x.api().del(`/tasks/${seg(k)}`)) });
-          x.emit(out.length === 1 ? out[0] : out, () => {
-            for (const d of out) x.print(`Deleted ${x.bold(d.key)}. Undo within 10 minutes: sudo-cli tasks undelete ${d.id}`);
-          });
+          return several(
+            x,
+            x.args,
+            async k => ({ key: k.toUpperCase(), ...(await x.api().del(`/tasks/${seg(k)}`)) }),
+            d => `Deleted ${x.bold(d.key)}. Undo within 10 minutes: sudo-cli tasks undelete ${d.id}`,
+          );
         },
       },
       undelete: {
@@ -1118,12 +1119,63 @@ export function nounHelp(noun) {
     .join('\n')}\n\nAll take --json.${noun === 'subtask' || noun === 'tasks' ? ' Dates: today, tomorrow, friday, +3d, 2026-11-20 (none clears).' : ''}`;
 }
 
+/* ---------- several keys or ids in one command ---------- */
+/* A failure that every later request would hit too: the CLI is offline, the key was refused or is
+   read-only, or the rate limit is longer than the client will wait. Anything else (a key that
+   doesn't exist, a task you may not change) is about that one item. */
+export const stopsRun = e => !(e instanceof ApiError) || e.status === 0 || e.status === 401 || e.status === 429 || e.code === 'insufficient_scope';
+
+/* `done WEB-1 WEB-2 WEB-3`, `tasks rm …`, `inbox read …`: one request per key or id. They don't
+   depend on each other, so a failed one doesn't stop the rest; each is tried and each outcome is
+   reported, so you can retry exactly the ones that failed and nothing gets done twice. Only a
+   failure that would repeat for every later one (stopsRun) stops the run, and the rest are listed
+   as not tried. Successes print as they happen (stdout), each failure on stderr, then a count; the
+   exit code is 1 if any failed. With --json, stdout is the array of what succeeded (with undo ids
+   where there are any) and stderr one { error, code: "incomplete", failed, notTried } object.
+   A single key fails like any other command. Returns the exit code. */
+export async function several(x, refs, call, line) {
+  if (refs.length === 1) {
+    const r = await call(refs[0]);
+    x.emit(r, () => x.print(line(r)));
+    return 0;
+  }
+  const done = [];
+  const failed = [];
+  const notTried = [];
+  for (const ref of refs) {
+    if (failed.length && stopsRun(failed.at(-1).e)) {
+      notTried.push(ref);
+      continue;
+    }
+    try {
+      const r = await call(ref);
+      done.push(r);
+      if (!x.o.json) x.print(line(r));
+    } catch (e) {
+      failed.push({ ref, e });
+      if (!x.o.json) x.warn(`${ref}: ${x.clean(e.message)}${e.status === 401 ? ' Run sudo-cli login.' : ''}`);
+    }
+  }
+  if (x.o.json) x.json(done);
+  if (!failed.length) return 0;
+  const summary =
+    `${done.length} of ${refs.length} done. Failed: ${failed.map(f => f.ref).join(', ')}.` +
+    (notTried.length ? ` Not tried, as that error would repeat: ${notTried.join(', ')}.` : '');
+  if (x.o.json)
+    x.warnJson({
+      error: summary,
+      code: 'incomplete',
+      failed: failed.map(({ ref, e }) => ({ ref, code: e.code || 'internal_error', error: x.clean(e.message) })),
+      notTried,
+    });
+  else x.warn(`${summary} Everything else went through.`);
+  return 1;
+}
+
 /* ---------- helpers for handlers ---------- */
-async function each(x, call, line) {
+function each(x, call, line) {
   x.need(x.args.length, 'Which one? Give at least one key or id.');
-  const out = [];
-  for (const k of x.args) out.push(await call(k));
-  x.emit(out.length === 1 ? out[0] : out, () => out.forEach(r => x.print(line(r))));
+  return several(x, x.args, call, line);
 }
 async function one(x, call, line) {
   const r = await call(x.need(x.args[0], 'Which one? Give a key, e.g. WEB.'));

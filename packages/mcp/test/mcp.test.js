@@ -582,6 +582,107 @@ describe('everything else the app does', () => {
   });
 });
 
+/* A tool call that makes several changes: one request each. A failed one doesn't stop the rest,
+   and the result says exactly what went through, so the assistant doesn't redo any of it. */
+describe('several changes in one call', () => {
+  const incomplete = r => {
+    expect(r.isError, r.text).toBe(true);
+    expect(r.text).toMatch(/^incomplete: \d+ of \d+ changes went through\. Don’t repeat those under done;/);
+    return unfence(r.text);
+  };
+
+  it('edit_subtasks: a bad remove keeps the new subtasks’ ids in the result, so a retry doesn’t add them twice', async () => {
+    const { t, ada } = await workspace();
+    const mcp = await hosted(t, await apiKey(ada));
+    const task = (await call(mcp, 'create_task', { project: 'WEB', title: 'Build', subtasks: ['Spec'] })).data;
+    const r = await call(mcp, 'edit_subtasks', { key: task.key, add: ['Code', 'Test'], remove: ['s_missing'] });
+    expect(r.text).toMatch(/^incomplete: 2 of 3 changes went through\./);
+    const out = incomplete(r);
+    expect(out).toEqual({
+      done: [
+        { add: 'Code', id: expect.any(String) },
+        { add: 'Test', id: expect.any(String) },
+      ],
+      failed: [{ remove: 's_missing', code: 'not_found', error: 'No subtask with that id on this task.', field: 'id' }],
+      notTried: [],
+      now: {
+        key: task.key,
+        subtasks: [expect.objectContaining({ title: 'Spec' }), expect.objectContaining({ title: 'Code' }), expect.objectContaining({ title: 'Test' })],
+      },
+    });
+    expect(out.now.subtasks.slice(1).map(s => s.id)).toEqual(out.done.map(d => d.id));
+    const stored = JSON.parse(t.db.get("SELECT data FROM tasks WHERE json_extract(data, '$.key') = ?", task.key).data).subtasks;
+    expect(stored.map(s => s.title)).toEqual(['Spec', 'Code', 'Test']);
+
+    // The rest still run past a failure in the middle: the update after the bad remove is made.
+    const [spec] = out.now.subtasks;
+    const mid = incomplete(await call(mcp, 'edit_subtasks', { key: task.key, remove: ['s_gone'], update: [{ id: spec.id, done: true }] }));
+    expect(mid).toMatchObject({ done: [{ update: spec.id }], failed: [{ remove: 's_gone', code: 'not_found' }] });
+    expect(mid.now.subtasks[0]).toMatchObject({ title: 'Spec', done: true });
+
+    // One change that fails is its error, as before; so is an unknown task.
+    expect((await call(mcp, 'edit_subtasks', { key: task.key, remove: ['s_missing'] })).text).toMatch(/^not_found:\n/);
+    expect((await call(mcp, 'edit_subtasks', { key: 'WEB-999' })).text).toMatch(/^not_found:\n/);
+  });
+
+  it('share_project, mark_notifications_read, update_settings and update_task report each change too', async () => {
+    const { t, ada, gus } = await workspace();
+    const mcp = await hosted(t, await apiKey(ada));
+
+    const share = incomplete(
+      await call(mcp, 'share_project', { project: 'WEB', add: [{ who: 'nobody@example.com' }, { who: 'Gus Guest', permission: 'Can view' }] }),
+    );
+    expect(share).toMatchObject({
+      done: [{ add: 'Gus Guest', permission: 'Can view' }],
+      failed: [{ add: 'nobody@example.com', code: 'invalid_request' }],
+      now: { key: 'WEB', members: expect.arrayContaining([{ name: 'Gus Guest', permission: 'Can view' }]) },
+    });
+
+    const task = (await call(mcp, 'create_task', { project: 'OPS', title: 'Runbook', assignee: 'gus@example.com' })).data;
+    const gm = await hosted(t, await apiKey(gus), 'cursor');
+    const [n] = (await call(gm, 'list_notifications', { unread: true })).data;
+    const read = incomplete(await call(gm, 'mark_notifications_read', { ids: ['n_missing', n.id] }));
+    expect(read).toMatchObject({ done: [{ id: n.id }], failed: [{ id: 'n_missing', code: 'not_found' }], updated: 1 });
+    expect((await call(gm, 'list_notifications', { unread: true })).data).toEqual([]);
+
+    const settings = incomplete(await call(mcp, 'update_settings', { star: ['NOPE-1', 'WEB'], projectOrder: ['OPS', 'WEB'] }));
+    expect(settings).toMatchObject({ done: [{ star: 'WEB' }, { set: 'projectOrder' }], failed: [{ star: 'NOPE-1', code: 'not_found' }] });
+    expect((await call(mcp, 'get_settings')).data.favorites).toEqual(['WEB']);
+
+    // Moving to a project that doesn't exist fails; archiving it still happens, and says so.
+    const upd = incomplete(await call(mcp, 'update_task', { key: task.key, project: 'NOPE', archived: true }));
+    expect(upd).toMatchObject({ done: [{ archive: task.key }], failed: [{ update: ['project'] }], task: { key: task.key, archived: true } });
+  });
+
+  it('stops at a failure every later change would hit too, listing the rest as not tried', async () => {
+    let calls = 0;
+    // The key is revoked after the first change: the second one is refused and the third isn't sent.
+    const api = {
+      post: async () => {
+        if (++calls > 1) throw Object.assign(new Error('This API key was revoked.'), { status: 401, code: 'unauthorized' });
+        return { key: 'WEB-1', subtasks: [{ id: 's1', title: 'A' }] };
+      },
+      get: async () => {
+        throw Object.assign(new Error('This API key was revoked.'), { status: 401, code: 'unauthorized' });
+      },
+      all: async () => [],
+    };
+    const mcp = createMcp({ connect: () => ({ api, scope: 'write', admin: false }) });
+    const r = await mcp.handle(
+      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'edit_subtasks', arguments: { key: 'WEB-1', add: ['A', 'B', 'C'] } } },
+      {},
+    );
+    expect(r.result.isError).toBe(true);
+    expect(r.result.content[0].text).toMatch(/^incomplete: 1 of 3 changes went through\./);
+    expect(unfence(r.result.content[0].text)).toEqual({
+      done: [{ add: 'A', id: 's1' }],
+      failed: [{ add: 'B', code: 'unauthorized', error: 'This API key was revoked.' }],
+      notTried: [{ add: 'C' }],
+    });
+    expect(calls).toBe(2);
+  });
+});
+
 describe('tool arguments', () => {
   it('names a missing, unknown or mistyped argument before the tool runs', async () => {
     const { t, ada } = await workspace();

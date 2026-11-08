@@ -102,6 +102,8 @@ export function createMcp({ connect, readOnly = false }) {
           // server's message can quote what people wrote (a name, a title), so it's fenced like any
           // result; the tools' own argument errors aren't.
           if (e.code === 'invalid_arguments') return { content: [{ type: 'text', text: `${e.code}: ${e.message}` }], isError: true };
+          // Several changes, some made and some not (tools.js steps): what happened to each.
+          if (e.code === 'incomplete' && e.result) return { content: [{ type: 'text', text: `${e.code}: ${e.message}\n${fence(e.result)}` }], isError: true };
           return { content: [{ type: 'text', text: `${e.code}:\n${fence({ error: e.message, ...(e.field ? { field: e.field } : {}) })}` }], isError: true };
         }
       }
