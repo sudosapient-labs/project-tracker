@@ -452,14 +452,25 @@ describe('every noun', () => {
     await ada('new', 'Long', 'thread', '-p', 'WEB');
     const task = J(await ada('show', 'WEB-201', '--json'));
     const at = Date.now() - 60 * 60_000;
-    await adaSession.sync(
-      Array.from({ length: 55 }, (_, i) => ({
-        c: 'comments',
-        id: `clong${i + 1}`,
-        k: 'put',
-        v: { id: `clong${i + 1}`, task: task.id, by: adaId, at: at + i * 60_000, text: `Comment ${i + 1}`, re: {} },
-      })),
-    );
+    const comments = (from, to) =>
+      adaSession.sync(
+        Array.from({ length: to - from + 1 }, (_, i) => {
+          const n = from + i;
+          return {
+            c: 'comments',
+            id: `clong${n}`,
+            k: 'put',
+            v: { id: `clong${n}`, task: task.id, by: adaId, at: at + n * 60_000, text: `Comment ${n}`, re: {} },
+          };
+        }),
+      );
+    await comments(1, 50);
+    expect((await ada('show', 'WEB-201')).out).not.toContain('not shown');
+    expect(J(await ada('show', 'WEB-201', '--json')).olderComments).toBe(0);
+    await comments(51, 51);
+    expect((await ada('show', 'WEB-201')).out).toContain('1 older comment not shown\n');
+
+    await comments(52, 55);
     const out = (await ada('show', 'WEB-201')).out;
     expect(out).toContain('5 older comments not shown');
     expect(out).toContain('Comment 55');

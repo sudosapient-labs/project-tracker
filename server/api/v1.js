@@ -169,11 +169,20 @@ function pageOf(items, { limit = 50, cursor }) {
   const data = items.slice(from, from + limit);
   return { data, nextCursor: from + limit < items.length ? `o${from + limit}` : null };
 }
-/* A task's comments or activity, given oldest first: in the order asked for, with how many in all. */
-const orderedPage = (oldestFirst, query, dflt) => ({
-  ...pageOf((query.order || dflt) === 'newest' ? oldestFirst.toReversed() : oldestFirst, query),
-  total: oldestFirst.length,
-});
+/* A task's comments or activity, given oldest first: in the order asked for, with how many in all.
+   Newest first pages back from the newest: its cursor `n<i>` means "the ones before position i",
+   counted from the oldest, so ones added between pages don't push a page's last item onto the
+   next. `o<i>` (skip the newest i), as earlier servers sent for newest-first activity, still works. */
+function orderedPage(items, query, dflt) {
+  const total = items.length;
+  if ((query.order || dflt) !== 'newest') return { ...pageOf(items, query), total };
+  const { limit = 50, cursor } = query;
+  const m = cursor ? /^([no])(\d+)$/.exec(cursor) : null;
+  if (cursor && !m) throw new ApiFail(400, 'That cursor isn’t valid.', 'invalid_request', 'cursor');
+  const end = !m ? total : m[1] === 'n' ? Math.min(Number(m[2]), total) : Math.max(total - Number(m[2]), 0);
+  const from = Math.max(end - limit, 0);
+  return { data: items.slice(from, end).toReversed(), nextCursor: from > 0 ? `n${from}` : null, total };
+}
 const encodeCursor = (at, id) => Buffer.from(JSON.stringify([at, id])).toString('base64url');
 function decodeCursor(s) {
   try {

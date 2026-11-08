@@ -549,6 +549,7 @@ describe('API conventions', () => {
 });
 
 describe('long discussions', () => {
+  const range = (from, to) => Array.from({ length: Math.abs(to - from) + 1 }, (_, i) => (from <= to ? from + i : from - i));
   /* A WEB task with `n` comments ("Comment 1" oldest) and `n` activity entries ("step 1" oldest). */
   async function busy(n) {
     const w = await workspace();
@@ -574,10 +575,17 @@ describe('long discussions', () => {
     const newest = (await api.get(`/tasks/${task.key}/comments?order=newest&limit=20`)).body;
     expect(newest.data.map(c => c.text)).toEqual(Array.from({ length: 20 }, (_, i) => `Comment ${25 - i}`));
     expect(newest.total).toBe(25);
-    // The cursor carries on to older ones.
+    // The cursor carries on to older ones, and a comment added in between doesn't repeat one.
+    await api.post(`/tasks/${task.key}/comments`, { text: 'Comment 26' });
     const rest = (await api.get(`/tasks/${task.key}/comments?order=newest&limit=20&cursor=${newest.nextCursor}`)).body;
-    expect(rest).toMatchObject({ nextCursor: null, total: 25 });
+    expect(rest).toMatchObject({ nextCursor: null, total: 26 });
     expect(rest.data.map(c => c.text)).toEqual(['Comment 5', 'Comment 4', 'Comment 3', 'Comment 2', 'Comment 1']);
+    const pages = (await api.get(`/tasks/${task.key}/comments?order=newest&limit=10&cursor=n16`)).body;
+    expect(pages).toMatchObject({ nextCursor: 'n6', total: 26 });
+    expect(pages.data.map(c => c.text)).toEqual(range(16, 7).map(i => `Comment ${i}`));
+    // Each order takes only its own cursors.
+    expect((await api.get(`/tasks/${task.key}/comments?cursor=n6`)).body).toMatchObject({ code: 'invalid_request', field: 'cursor' });
+    expect((await api.get(`/tasks/${task.key}/comments?order=newest&cursor=x6`)).body).toMatchObject({ code: 'invalid_request', field: 'cursor' });
 
     expect((await api.get(`/tasks/${task.key}/comments?order=sideways`)).body).toMatchObject({ code: 'invalid_request', field: 'order' });
   });
@@ -588,6 +596,10 @@ describe('long discussions', () => {
     const newest = (await api.get(`/tasks/${task.key}/activity?limit=10`)).body;
     expect(newest.data.map(a => a.extra)).toEqual(Array.from({ length: 10 }, (_, i) => `step ${15 - i}`));
     expect(newest.total).toBe(16);
+    expect(newest.nextCursor).toBe('n6');
+    // The cursor earlier servers sent (skip the newest 10) still works.
+    const legacy = (await api.get(`/tasks/${task.key}/activity?limit=3&cursor=o10`)).body;
+    expect(legacy.data.map(a => a.extra)).toEqual(['step 5', 'step 4', 'step 3']);
     const oldest = (await api.get(`/tasks/${task.key}/activity?order=oldest&limit=2`)).body;
     expect(oldest.data.map(a => a.verb)).toEqual(['created', 'renamed']);
     expect(oldest.total).toBe(16);

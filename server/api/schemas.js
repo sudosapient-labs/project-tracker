@@ -238,7 +238,7 @@ export const TaskQuery = z.object({
 });
 export const PageQuery = z.object({ limit, cursor });
 const order = (dflt, what) =>
-  z.enum(['oldest', 'newest']).optional().describe(`${what} oldest or newest first (default ${dflt}). With newest, nextCursor carries on to older ones.`);
+  z.enum(['oldest', 'newest']).optional().describe(`${what} oldest or newest first (default ${dflt}). Either way, nextCursor carries on in that order.`);
 export const CommentQuery = PageQuery.extend({ order: order('oldest', 'Comments') });
 export const TaskActivityQuery = PageQuery.extend({ order: order('newest', 'Entries') });
 export const ProjectQuery = z.object({ includeArchived: bool, limit, cursor });

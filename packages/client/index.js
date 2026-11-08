@@ -76,26 +76,34 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
       await sleep(delay);
     }
   }
-  /* The newest `n` items of a task's comments or activity, oldest first, and how many older ones
-     were left out: { data, older }. A server from before `order` and `total` ignores them, so then
-     every page is read (up to `max`) and sorted by `at(item)` to find the newest. */
-  async function latest(path, n, at, max = 5000) {
+  /* The newest `n` (1–100) of a task's comments or activity, oldest first, and how many older ones
+     were left out: { data, older }. A server from before `order` and `total` ignores them and sends
+     its usual order, so then every page is read, keeping only the newest `n` by `at(item)` (ties in
+     the order the server sent them, which way round it runs), for at most `maxPages` pages. */
+  async function latest(path, n, at, maxPages = 1000) {
+    n = Math.min(Math.max(Math.trunc(n) || 1, 1), 100);
     const page = await request('GET', path, { query: { order: 'newest', limit: n } });
-    if (Number.isInteger(page.total)) return { data: page.data.toReversed(), older: Math.max(0, page.total - page.data.length) };
-    const every = await all(path, {}, max);
-    every.sort((a, b) => at(a) - at(b));
-    return { data: every.slice(-n), older: Math.max(0, every.length - n) };
-  }
-  /* Every page of a list endpoint, up to `max` items. */
-  async function all(path, query = {}, max = 500) {
-    const out = [];
-    let cursor;
-    do {
-      const page = await request('GET', path, { query: { ...query, limit: 100, cursor } });
-      out.push(...page.data);
-      cursor = page.nextCursor;
-    } while (cursor && out.length < max);
-    return out.slice(0, max);
+    if (Number.isInteger(page.total)) {
+      const data = page.data.slice(0, n).toReversed();
+      return { data, older: Math.max(0, page.total - data.length) };
+    }
+    const first = page.data;
+    // Which way the server runs, from the first page: oldest first unless it plainly isn't.
+    const desc = first.length > 1 && at(first[0]) > at(first.at(-1));
+    const byTime = (a, b) => at(a.v) - at(b.v) || (desc ? b.i - a.i : a.i - b.i);
+    let kept = first.map((v, i) => ({ v, i }));
+    let seen = first.length;
+    const cursors = new Set();
+    for (let cursor = page.nextCursor, pages = 1; cursor && !cursors.has(cursor) && pages < maxPages; pages++) {
+      cursors.add(cursor);
+      const next = await request('GET', path, { query: { limit: 100, cursor } });
+      if (!next.data?.length) break;
+      for (const v of next.data) kept.push({ v, i: seen++ });
+      if (kept.length > 4 * n) kept = kept.sort(byTime).slice(-n);
+      cursor = next.nextCursor;
+    }
+    kept.sort(byTime);
+    return { data: kept.slice(-n).map(k => k.v), older: Math.max(0, seen - n) };
   }
   return {
     request,
@@ -108,7 +116,17 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
     upload: (path, query, bytes, type, opts) => request('POST', path, { query, raw: { body: bytes, type }, ...opts }),
     /* GET bytes: { bytes, type, name }. */
     download: (path, query) => request('GET', path, { query, binary: true }),
-    all,
+    /* Every page of a list endpoint, up to `max` items. */
+    async all(path, query = {}, max = 500) {
+      const out = [];
+      let cursor;
+      do {
+        const page = await request('GET', path, { query: { ...query, limit: 100, cursor } });
+        out.push(...page.data);
+        cursor = page.nextCursor;
+      } while (cursor && out.length < max);
+      return out.slice(0, max);
+    },
     latest,
   };
 }
