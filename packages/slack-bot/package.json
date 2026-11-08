@@ -1,0 +1,33 @@
+{
+  "name": "@sudosapient/slack-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sudo Tracker: the Slack agent for Sudo Sapient. Create, find and update tasks by mentioning it, built on LangChain over the public API.",
+  "type": "module",
+  "bin": {
+    "sudo-tracker": "./bin/sudo-tracker.js"
+  },
+  "scripts": {
+    "start": "node bin/sudo-tracker.js",
+    "dev": "node --watch-path=src bin/sudo-tracker.js",
+    "test:live": "vitest run --config vitest.live.config.js",
+    "chat": "node bin/sudo-tracker.js chat"
+  },
+  "dependencies": {
+    "@langchain/anthropic": "1.6.0",
+    "@langchain/core": "1.3.0",
+    "@langchain/langgraph": "1.5.2",
+    "@langchain/langgraph-checkpoint": "1.2.1",
+    "@langchain/langgraph-checkpoint-sqlite": "1.1.0",
+    "@langchain/mcp-adapters": "2.0.1",
+    "@slack/bolt": "5.1.0",
+    "@sudosapient/client": "workspace:*",
+    "@sudosapient/mcp": "workspace:*",
+    "langchain": "1.5.19",
+    "zod": "^4.1.0"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "UNLICENSED"
+}

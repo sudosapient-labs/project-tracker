@@ -35,6 +35,14 @@
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": false,
       "extra-files": ["src/protocol.js"]
+    },
+    "packages/slack-bot": {
+      "release-type": "node",
+      "component": "slack-bot",
+      "include-component-in-tag": true,
+      "initial-version": "0.1.0",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": false
     }
   }
 }
