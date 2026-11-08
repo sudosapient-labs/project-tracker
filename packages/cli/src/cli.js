@@ -221,7 +221,17 @@ export async function run(argv, io = {}) {
       f =>
       async (...args) =>
         clean(await f(...args));
-    return { ...a, get: wrap(a.get), post: wrap(a.post), patch: wrap(a.patch), put: wrap(a.put), del: wrap(a.del), upload: wrap(a.upload), all: wrap(a.all) };
+    return {
+      ...a,
+      get: wrap(a.get),
+      post: wrap(a.post),
+      patch: wrap(a.patch),
+      put: wrap(a.put),
+      del: wrap(a.del),
+      upload: wrap(a.upload),
+      all: wrap(a.all),
+      latest: wrap(a.latest),
+    };
   };
   const json = v => print(JSON.stringify(v, null, 2));
   const who = async a => new Map((await a.all('/members')).map(m => [m.id, m.name]));

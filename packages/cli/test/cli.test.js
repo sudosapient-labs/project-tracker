@@ -144,6 +144,12 @@ describe('against a workspace', () => {
     expect(listed).not.toContain('\x1b');
     expect(listed).not.toContain('\x07');
     expect(JSON.parse((await c('show', 'WEB-203', '--json')).out).title).toContain('\x1b');
+    // The same goes for comments, which `show` reads through the client's newest-first helper.
+    await c('comment', 'WEB-203', 'Sneaky\x1b]52;c;cHduZWQ=\x07 note\x1b[2J');
+    const commented = (await c('show', 'WEB-203')).out;
+    expect(commented).toContain('Sneaky]52;c;cHduZWQ= note[2J');
+    expect(commented).not.toContain('\x1b');
+    expect(commented).not.toContain('\x07');
 
     const missing = await c('done', 'WEB-999', '--json');
     expect(missing.code).toBe(1);
