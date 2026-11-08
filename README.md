@@ -123,7 +123,6 @@ e2e/                    user journeys (Playwright); serve.js starts the throwawa
 docs/                   documentation and the README screenshot
 Dockerfile              production image (see docs/deployment.md)
 docker-entrypoint.sh    hands root-owned volume mounts to `node`, then drops to it
-railway.json            Railway build, health check and restart policy
 .github/                CI and release workflows, Dependabot, pull request template
 ```
 
