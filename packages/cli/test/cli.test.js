@@ -357,7 +357,15 @@ async function team() {
   await ada.c.sync([{ c: 'projects', id: 'pweb', k: 'put', v: project }]);
   const as = token => cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: token });
   const adaToken = await apiKey(ada.c);
-  return { t, ada: as(adaToken), adaToken, bob: as(await apiKey(bob.c)), adaId: ada.user.id, adaReadOnly: as(await apiKey(ada.c, { scope: 'read' })) };
+  return {
+    t,
+    ada: as(adaToken),
+    adaToken,
+    bob: as(await apiKey(bob.c)),
+    adaId: ada.user.id,
+    adaSession: ada.c,
+    adaReadOnly: as(await apiKey(ada.c, { scope: 'read' })),
+  };
 }
 const J = r => JSON.parse(r.out);
 
@@ -437,6 +445,29 @@ describe('every noun', () => {
     expect(rm.out).toMatch(/^Deleted WEB-204\. Undo within 10 minutes: sudo-cli tasks undelete t/);
     expect((await ada('tasks', 'undelete', id)).out).toBe('Restored WEB-204 Design (copy)\n');
     expect(t.db.all("SELECT json_extract(data, '$.via') v FROM activity").every(r => r.v === 'CLI')).toBe(true);
+  });
+
+  it('show: the newest comments in time order, saying how many older ones it left out', async () => {
+    const { ada, adaId, adaSession } = await team();
+    await ada('new', 'Long', 'thread', '-p', 'WEB');
+    const task = J(await ada('show', 'WEB-201', '--json'));
+    const at = Date.now() - 60 * 60_000;
+    await adaSession.sync(
+      Array.from({ length: 55 }, (_, i) => ({
+        c: 'comments',
+        id: `clong${i + 1}`,
+        k: 'put',
+        v: { id: `clong${i + 1}`, task: task.id, by: adaId, at: at + i * 60_000, text: `Comment ${i + 1}`, re: {} },
+      })),
+    );
+    const out = (await ada('show', 'WEB-201')).out;
+    expect(out).toContain('5 older comments not shown');
+    expect(out).toContain('Comment 55');
+    expect(out).not.toMatch(/Comment 5\n/);
+    expect(out.indexOf('Comment 6\n')).toBeLessThan(out.indexOf('Comment 55'));
+    const json = J(await ada('show', 'WEB-201', '--json'));
+    expect(json.comments.map(c => c.text)).toEqual(Array.from({ length: 50 }, (_, i) => `Comment ${i + 6}`));
+    expect(json.olderComments).toBe(5);
   });
 
   it('projects: new, show, edit, share, archive, duplicate, order; deleting asks first', async () => {

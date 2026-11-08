@@ -169,3 +169,36 @@ describe('methods', () => {
     expect(await missing.download('/files/x/content').catch(e => e)).toMatchObject({ status: 404, code: 'not_found' });
   });
 });
+
+describe('latest', () => {
+  const comment = i => ({ id: `c${i}`, text: `Comment ${i}`, createdAt: 1000 + i });
+  const range = (from, to) => Array.from({ length: Math.abs(to - from) + 1 }, (_, i) => (from <= to ? from + i : from - i));
+
+  it('asks for the newest first and gives them back oldest first, with how many older were left out', async () => {
+    const { api, calls } = client([ok({ data: range(25, 6).map(comment), nextCursor: 'o20', total: 25 })]);
+    const got = await api.latest('/tasks/WEB-1/comments', 20, c => c.createdAt);
+    expect(got.data.map(c => c.text)).toEqual(range(6, 25).map(i => `Comment ${i}`));
+    expect(got.older).toBe(5);
+    expect(calls).toHaveLength(1);
+    expect(new URL(calls[0].url).search).toBe('?order=newest&limit=20');
+  });
+
+  it('with a server from before order=newest, reads every page and keeps the newest', async () => {
+    // An older server ignores `order` and leaves out `total`: oldest first, page by page.
+    const { api, calls } = client([
+      ok({ data: range(1, 20).map(comment), nextCursor: 'o20' }),
+      ok({ data: range(1, 100).map(comment), nextCursor: 'o100' }),
+      ok({ data: range(101, 130).map(comment), nextCursor: null }),
+    ]);
+    const got = await api.latest('/tasks/WEB-1/comments', 20, c => c.createdAt);
+    expect(got.data.map(c => c.text)).toEqual(range(111, 130).map(i => `Comment ${i}`));
+    expect(got.older).toBe(110);
+    expect(calls.map(c => new URL(c.url).search)).toEqual(['?order=newest&limit=20', '?limit=100', '?limit=100&cursor=o100']);
+  });
+
+  it('sorts by time, so a list an older server sends newest first comes out right too', async () => {
+    const { api } = client([ok({ data: range(3, 1).map(comment), nextCursor: null })]);
+    const got = await api.latest('/tasks/WEB-1/activity', 10, a => a.createdAt);
+    expect(got).toEqual({ data: range(1, 3).map(comment), older: 0 });
+  });
+});

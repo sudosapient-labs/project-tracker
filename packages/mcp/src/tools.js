@@ -153,8 +153,9 @@ const byDue = (a, b) => (a.due || '9999').localeCompare(b.due || '9999');
 async function taskDetail(api, ref) {
   const [t, comments, activity, who] = await Promise.all([
     api.get(`/tasks/${seg(ref)}`),
-    api.get(`/tasks/${seg(ref)}/comments`, { limit: 20 }),
-    api.get(`/tasks/${seg(ref)}/activity`, { limit: 10 }),
+    // The newest of each, so a long discussion shows its latest turns rather than its first.
+    api.latest(`/tasks/${seg(ref)}/comments`, 20, c => c.createdAt),
+    api.latest(`/tasks/${seg(ref)}/activity`, 10, a => a.at),
     names(api),
   ]);
   const deps = await taskKeys(api, t.dependsOn || [], 20);
@@ -178,7 +179,12 @@ async function taskDetail(api, ref) {
         reactions: Object.fromEntries(Object.entries(c.reactions || {}).map(([e, ids]) => [e, ids.map(i => who.get(i) || '?')])),
       }),
     ),
-    activity: activity.data.map(a => `${when(a.at)} ${who.get(a.by) || '?'}${a.via ? ` via ${a.via}` : ''} ${a.verb}${a.extra ? ' ' + a.extra : ''}`),
+    olderCommentsNotShown: comments.older || null,
+    // Newest first, as before.
+    activity: activity.data
+      .toReversed()
+      .map(a => `${when(a.at)} ${who.get(a.by) || '?'}${a.via ? ` via ${a.via}` : ''} ${a.verb}${a.extra ? ' ' + a.extra : ''}`),
+    olderActivityNotShown: activity.older || null,
     url: t.url,
   });
 }
@@ -275,7 +281,7 @@ export const TOOLS = {
     },
   },
   get_task: {
-    description: 'Task with subtasks, comments (ids) and activity.' + UNTRUSTED,
+    description: 'Task with subtasks, latest comments (ids) and activity.' + UNTRUSTED,
     annotations: READ,
     inputSchema: obj({ key: KEY }, ['key']),
     run: (api, { key }) => taskDetail(api, key),

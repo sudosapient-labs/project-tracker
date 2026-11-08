@@ -76,6 +76,27 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
       await sleep(delay);
     }
   }
+  /* The newest `n` items of a task's comments or activity, oldest first, and how many older ones
+     were left out: { data, older }. A server from before `order` and `total` ignores them, so then
+     every page is read (up to `max`) and sorted by `at(item)` to find the newest. */
+  async function latest(path, n, at, max = 5000) {
+    const page = await request('GET', path, { query: { order: 'newest', limit: n } });
+    if (Number.isInteger(page.total)) return { data: page.data.toReversed(), older: Math.max(0, page.total - page.data.length) };
+    const every = await all(path, {}, max);
+    every.sort((a, b) => at(a) - at(b));
+    return { data: every.slice(-n), older: Math.max(0, every.length - n) };
+  }
+  /* Every page of a list endpoint, up to `max` items. */
+  async function all(path, query = {}, max = 500) {
+    const out = [];
+    let cursor;
+    do {
+      const page = await request('GET', path, { query: { ...query, limit: 100, cursor } });
+      out.push(...page.data);
+      cursor = page.nextCursor;
+    } while (cursor && out.length < max);
+    return out.slice(0, max);
+  }
   return {
     request,
     get: (path, query) => request('GET', path, { query }),
@@ -87,17 +108,8 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
     upload: (path, query, bytes, type, opts) => request('POST', path, { query, raw: { body: bytes, type }, ...opts }),
     /* GET bytes: { bytes, type, name }. */
     download: (path, query) => request('GET', path, { query, binary: true }),
-    /* Every page of a list endpoint, up to `max` items. */
-    async all(path, query = {}, max = 500) {
-      const out = [];
-      let cursor;
-      do {
-        const page = await request('GET', path, { query: { ...query, limit: 100, cursor } });
-        out.push(...page.data);
-        cursor = page.nextCursor;
-      } while (cursor && out.length < max);
-      return out.slice(0, max);
-    },
+    all,
+    latest,
   };
 }
 

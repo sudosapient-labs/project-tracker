@@ -98,8 +98,8 @@ by id, email, full name, a unique first name, or `me`. 🔑 Owners and Admins on
 |               | `POST /tasks/{ref}/complete`, `/archive`, `/restore`, `/duplicate`                      | Complete (a repeating task schedules the next), archive, restore, copy                           |
 |               | `PUT`, `DELETE /tasks/{ref}/favorite`                                                   | Star, unstar                                                                                     |
 |               | `POST /tasks/{ref}/subtasks`, `PATCH`, `DELETE /tasks/{ref}/subtasks/{id}`, `…/promote` | Add, change (title, done, assignee, due), remove, turn into a task                               |
-|               | `GET /tasks/{ref}/activity`                                                             | Newest first, with `via`                                                                         |
-| Comments      | `GET`, `POST /tasks/{ref}/comments`                                                     | Oldest first; comment (`@Name` mentions notify)                                                  |
+|               | `GET /tasks/{ref}/activity`                                                             | Newest first (`order=oldest` for oldest), with `via` and `total`                                 |
+| Comments      | `GET`, `POST /tasks/{ref}/comments`                                                     | Oldest first (`order=newest` for newest), with `total`; comment (`@Name` mentions notify)        |
 |               | `PATCH`, `DELETE /comments/{id}`, `POST /comments/{id}/undelete`                        | Edit your own; delete (yours, or anyone's 🔑); undo within 10 minutes                            |
 |               | `PUT`, `DELETE /comments/{id}/reactions/{emoji}`                                        | React, unreact (👍 🎉 ❤️ 👀 🚀 ✅)                                                               |
 | Projects      | `GET /projects`, `POST /projects`, `GET`, `PATCH`, `DELETE /projects/{ref}`             | List, create, read, change (lead, team, privacy, status, dates, milestones, …), delete           |

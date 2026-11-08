@@ -378,9 +378,10 @@ export async function run(argv, io = {}) {
       case 'show': {
         const k = need(args[0], 'Which task? sudo-cli show WEB-12');
         const a = api();
-        const [t, comments, names] = await Promise.all([a.get(`/tasks/${seg(k)}`), a.get(`/tasks/${seg(k)}/comments`), who(a)]);
+        // The newest 50 comments, oldest first, so a long discussion shows its latest turns.
+        const [t, comments, names] = await Promise.all([a.get(`/tasks/${seg(k)}`), a.latest(`/tasks/${seg(k)}/comments`, 50, c => c.createdAt), who(a)]);
         if (o.json) {
-          json({ ...t, comments: comments.data });
+          json({ ...t, comments: comments.data, olderComments: comments.older });
           return 0;
         }
         print(`${bold(t.key)} ${t.title}`);
@@ -390,6 +391,7 @@ export async function run(argv, io = {}) {
           print(
             `  [${s.done ? 'x' : ' '}] ${s.title}${s.assignee ? ` · ${names.get(s.assignee) || '?'}` : ''}${s.due ? ` · ${s.due.slice(0, 10)}` : ''}  ${dim(s.id)}`,
           );
+        if (comments.older) print('\n' + dim(`${comments.older} older comment${comments.older === 1 ? '' : 's'} not shown`));
         for (const c of comments.data)
           print(
             `\n${bold(names.get(c.author) || '?')} ${dim(new Date(c.createdAt).toLocaleString())}  ${dim(c.id)}\n${c.text}${Object.entries(c.reactions || {})

@@ -169,6 +169,11 @@ function pageOf(items, { limit = 50, cursor }) {
   const data = items.slice(from, from + limit);
   return { data, nextCursor: from + limit < items.length ? `o${from + limit}` : null };
 }
+/* A task's comments or activity, given oldest first: in the order asked for, with how many in all. */
+const orderedPage = (oldestFirst, query, dflt) => ({
+  ...pageOf((query.order || dflt) === 'newest' ? oldestFirst.toReversed() : oldestFirst, query),
+  total: oldestFirst.length,
+});
 const encodeCursor = (at, id) => Buffer.from(JSON.stringify([at, id])).toString('base64url');
 function decodeCursor(s) {
   try {
@@ -571,14 +576,14 @@ export function v1Routes({ limit, uploads }) {
   route('get', '/tasks/{ref}/comments', {
     id: 'listComments',
     tag: 'Comments',
-    summary: 'Comments on a task, oldest first',
+    summary: 'Comments on a task, oldest first (or newest first with order=newest)',
     params: S.RefParam,
-    query: S.PageQuery,
+    query: S.CommentQuery,
     ok: ok(S.CommentPage),
     run: (x, { params, query }) => {
       const t = findTask(x, params.ref);
       const all = x.repo.all('comments', "WHERE json_extract(data, '$.task') = ? ORDER BY created_at, rowid", t.id).map(x.V.comment);
-      return pageOf(all, query);
+      return orderedPage(all, query, 'oldest');
     },
   });
 
@@ -600,14 +605,14 @@ export function v1Routes({ limit, uploads }) {
   route('get', '/tasks/{ref}/activity', {
     id: 'listTaskActivity',
     tag: 'Tasks',
-    summary: 'A task’s activity, newest first',
+    summary: 'A task’s activity, newest first (or oldest first with order=oldest)',
     params: S.RefParam,
-    query: S.PageQuery,
-    ok: ok(S.ActivityPage),
+    query: S.TaskActivityQuery,
+    ok: ok(S.TaskActivityPage),
     run: (x, { params, query }) => {
       const t = findTask(x, params.ref);
-      const all = x.repo.all('activity', "WHERE json_extract(data, '$.task') = ? ORDER BY created_at DESC, rowid DESC", t.id).map(x.V.activity);
-      return pageOf(all, query);
+      const all = x.repo.all('activity', "WHERE json_extract(data, '$.task') = ? ORDER BY created_at, rowid", t.id).map(x.V.activity);
+      return orderedPage(all, query, 'newest');
     },
   });
 

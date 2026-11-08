@@ -182,10 +182,10 @@ export const Activity = named(
   'An entry in the activity log.',
 );
 
-const page = (id, item, what) =>
+const page = (id, item, what, extra = {}) =>
   named(
     id,
-    z.object({ data: z.array(item), nextCursor: z.string().nullable().describe('Pass as `cursor` to get the next page; null on the last') }),
+    z.object({ data: z.array(item), nextCursor: z.string().nullable().describe('Pass as `cursor` to get the next page; null on the last'), ...extra }),
     `A page of ${what}.`,
   );
 export const TaskPage = named(
@@ -197,10 +197,14 @@ export const TaskPage = named(
   }),
   'A page of tasks.',
 );
+/* A task's comments and activity also say how many there are in all, so a client showing only the
+   newest can say how many older ones it left out. */
+const total = z.number().int().min(0).describe('How many there are in all, across every page');
 export const ProjectPage = page('ProjectPage', Project, 'projects');
-export const CommentPage = page('CommentPage', Comment, 'comments');
+export const CommentPage = page('CommentPage', Comment, 'a task’s comments', { total });
 export const MemberPage = page('MemberPage', Member, 'people');
 export const ActivityPage = page('ActivityPage', Activity, 'activity');
+export const TaskActivityPage = page('TaskActivityPage', Activity, 'a task’s activity', { total });
 export const SearchResult = named(
   'SearchResult',
   z.object({ tasks: z.array(Task), projects: z.array(Project), members: z.array(Member) }),
@@ -233,6 +237,10 @@ export const TaskQuery = z.object({
   cursor,
 });
 export const PageQuery = z.object({ limit, cursor });
+const order = (dflt, what) =>
+  z.enum(['oldest', 'newest']).optional().describe(`${what} oldest or newest first (default ${dflt}). With newest, nextCursor carries on to older ones.`);
+export const CommentQuery = PageQuery.extend({ order: order('oldest', 'Comments') });
+export const TaskActivityQuery = PageQuery.extend({ order: order('newest', 'Entries') });
 export const ProjectQuery = z.object({ includeArchived: bool, limit, cursor });
 export const SearchQuery = z.object({
   q: z.string().trim().min(1, 'Enter something to search for').max(200),
