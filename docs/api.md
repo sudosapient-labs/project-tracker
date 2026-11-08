@@ -92,7 +92,7 @@ by id, email, full name, a unique first name, or `me`. 🔑 Owners and Admins on
 |               | `DELETE /me/key`                                                                        | Revoke the key making the request (any scope; it can't name another key)                         |
 |               | `GET`, `PATCH /me/preferences`                                                          | Display preferences (theme, time zone, date format, …) and notification preferences              |
 |               | `GET /me/favorites`, `PUT /me/project-order`                                            | Starred projects and tasks; sidebar order                                                        |
-| Tasks         | `GET /tasks`, `POST /tasks`                                                             | List (`project`, `status`, `assignee`, `q`, `updatedSince`, `includeArchived`); create           |
+| Tasks         | `GET /tasks`, `POST /tasks`                                                             | List (`project`, `status`, `assignee`, `q`, `updatedSince`, `includeArchived`, `sort`); create   |
 |               | `GET`, `PATCH`, `DELETE /tasks/{ref}`                                                   | Read; change only the fields sent (`project` moves it); delete with its comments                 |
 |               | `POST /tasks/{id}/undelete`                                                             | Undo a delete within 10 minutes (whoever deleted it): key, comments and reactions come back      |
 |               | `POST /tasks/{ref}/complete`, `/archive`, `/restore`, `/duplicate`                      | Complete (a repeating task schedules the next), archive, restore, copy                           |
@@ -138,6 +138,9 @@ list it fetched long ago; the app sends what it edited from, and the server merg
   Anything in a project the key can't open answers `404`, so nothing reveals what exists.
 - **Pagination:** lists return `{ data, nextCursor }`; pass `cursor=<nextCursor>` for the next page
   (`limit` 1–100, default 50). Cursors are opaque.
+- **Order:** `GET /tasks` is newest first. With `sort=due` it's soonest due first across every
+  matching task (no due date last, ties newest first), and the answer carries `"sort": "due"`; a
+  server without it ignores `sort` and leaves that out. Pass the same `sort` with each `cursor`.
 - **Idempotency:** send `Idempotency-Key: <uuid>` on a POST or PATCH and a retry with the same key
   and body gets the first response back (header `Idempotent-Replayed: true`) for 24 hours. The same
   key with a different body is refused (`422`).

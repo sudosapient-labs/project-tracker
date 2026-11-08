@@ -11,7 +11,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { afterEach, describe, expect, it } from 'vitest';
 import { account, apiKey, bot, keyClient, setup } from '../../../test/server/helpers.js';
 import { createClient } from '@sudosapient/client';
-import { FENCE_CLOSE, FENCE_NOTE, FENCE_OPEN, TOOLS, checkArgs, toolsFor, unfence } from '../src/tools.js';
+import { FENCE_CLOSE, FENCE_NOTE, FENCE_OPEN, MY_WORK_CAP, TOOLS, checkArgs, toolsFor, unfence } from '../src/tools.js';
 import { clientLabel, createMcp } from '../src/protocol.js';
 
 // What each connection is offered: reads (no admin ones), plus writes (no admin ones), plus the
@@ -131,6 +131,52 @@ describe('MCP over Streamable HTTP (/api/mcp)', () => {
     expect(res.resources.map(r => r.uri)).toEqual(['sudo://my-work']);
     const proj = await mcp.readResource({ uri: 'sudo://project/WEB' });
     expect(unfence(proj.contents[0].text)).toMatchObject({ key: 'WEB' });
+  });
+
+  it('list_my_work finds the soonest due among all my open tasks, not just the newest 30', async () => {
+    const { t, ada } = await workspace();
+    const owner = keyClient(t.app, await apiKey(ada));
+    const day = n => new Date(Date.UTC(2027, 0, 1 + n)).toISOString().slice(0, 10);
+    // 40 open tasks, oldest first. The oldest is due soonest; every fifth has no due date.
+    const mine = [];
+    for (let i = 1; i <= 40; i++) {
+      const due = i === 1 ? day(0) : i % 5 === 0 ? undefined : day(100 - i);
+      const r = await owner.post('/tasks', { project: 'WEB', title: `Task ${i}`, assignee: 'me', ...(due ? { due } : {}) });
+      t.db.run('UPDATE tasks SET created_at = ? WHERE id = ?', 1_000_000 + i, r.body.id);
+      mine.push({ key: r.body.key, due, i });
+    }
+    // Due sooner, but done or someone else's: never listed.
+    await owner.post('/tasks', { project: 'WEB', title: 'Done already', assignee: 'me', due: day(-5), status: 'done' });
+    await owner.post('/tasks', { project: 'OPS', title: 'Gus’s', assignee: 'mgus', due: day(-5) });
+
+    const want = [...mine].sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999') || b.i - a.i).map(x => x.key);
+    const mcp = await hosted(t, await apiKey(ada));
+    const listed = (await call(mcp, 'list_my_work')).data;
+    expect(listed).toHaveLength(30);
+    expect(listed[0]).toMatchObject({ key: mine[0].key, title: 'Task 1', due: day(0) });
+    expect(listed.map(x => x.key)).toEqual(want.slice(0, 30));
+    // The whole list ends with the tasks that have no due date, newest first.
+    expect((await call(mcp, 'list_my_work', { limit: 100 })).data.map(x => x.key)).toEqual(want);
+    const res = await mcp.readResource({ uri: 'sudo://my-work' });
+    expect(unfence(res.contents[0].text)[0].key).toBe(mine[0].key);
+  });
+
+  it('list_my_work sorts locally, and says when it couldn’t read them all, on a server without sort=due', async () => {
+    const task = (i, due) => ({ key: `WEB-${i}`, title: `Task ${i}`, status: 'todo', priority: 'none', assignee: 'me1', due: due ?? null });
+    // An older server: ignores sort, answers newest first, and doesn't echo `sort`.
+    const oldServer = tasks => ({
+      get: async (path, q) => ({ data: tasks.slice(0, q.limit), nextCursor: tasks.length > q.limit ? 'next' : null }),
+      all: async (path, q, max) => (path === '/members' ? [{ id: 'me1', name: 'Ada' }] : tasks.slice(0, max)),
+    });
+    const newestFirst = n => Array.from({ length: n }, (_, k) => task(n - k, n - k === 1 ? '2027-01-01' : '2027-06-01'));
+
+    const some = await TOOLS.list_my_work.run(oldServer(newestFirst(40)), {});
+    expect(some).toHaveLength(30);
+    expect(some[0]).toMatchObject({ key: 'WEB-1', due: '2027-01-01' });
+
+    const many = await TOOLS.list_my_work.run(oldServer(newestFirst(MY_WORK_CAP + 5)), { limit: 5 });
+    expect(many.tasks).toHaveLength(5);
+    expect(many.note).toMatch(new RegExp(`more than ${MY_WORK_CAP}`));
   });
 
   it('enforces the key’s person: Guests can’t see or change what the app wouldn’t let them', async () => {

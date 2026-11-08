@@ -420,6 +420,52 @@ describe('API conventions', () => {
     expect((await api.get(`/members?cursor=${m.nextCursor}`)).body.data).toHaveLength(1);
   });
 
+  it('sorts by due date across every page with sort=due, within what the person can see', async () => {
+    const { t, ada, bob } = await workspace();
+    const api = await as(t, ada);
+    // Oldest first: a, b, c, d, e, f (created_at set so ties break the same way every run).
+    const make = [
+      ['a', 'WEB', '2027-03-01'],
+      ['b', 'WEB', null],
+      ['c', 'WEB', '2027-01-01'],
+      ['d', 'SEC', '2026-12-01'],
+      ['e', 'WEB', '2027-03-01'],
+      ['f', 'WEB', null],
+      ['g', 'WEB', '2027-01-01T09:00'],
+      ['h', 'WEB', '2027-03-01'],
+    ];
+    const ids = {};
+    for (const [i, [title, project, due]] of make.entries()) {
+      const r = await api.post('/tasks', { project, title, ...(due ? { due } : {}) });
+      ids[title] = r.body.id;
+      // h is created in the same millisecond as e, so the two tie on everything but id.
+      t.db.run('UPDATE tasks SET created_at = ? WHERE id = ?', 1_000_000 + (title === 'h' ? 4 : i), r.body.id);
+    }
+    const [eh1, eh2] = ids.e > ids.h ? ['e', 'h'] : ['h', 'e'];
+    const walk = async (who, limit) => {
+      const seen = [];
+      let cursor = '';
+      do {
+        const p = (await who.get(`/tasks?sort=due&limit=${limit}${cursor ? `&cursor=${cursor}` : ''}`)).body;
+        expect(p.sort).toBe('due');
+        seen.push(...p.data.map(x => x.title));
+        cursor = p.nextCursor;
+      } while (cursor);
+      return seen;
+    };
+    // Soonest first; the same due date newest first; no due date last, newest first.
+    for (const n of [1, 2, 3, 50]) expect(await walk(api, n)).toEqual(['d', 'c', 'g', eh1, eh2, 'a', 'f', 'b']);
+    // Bob can't open SEC, so its task isn't in his list on any page.
+    const asBob = await as(t, bob);
+    expect(await walk(asBob, 1)).toEqual(['c', 'g', eh1, eh2, 'a', 'f', 'b']);
+    // Without sort the order and the answer are as before.
+    expect((await api.get('/tasks')).body).toEqual({ data: expect.any(Array), nextCursor: null });
+    // A cursor from one order isn't taken for the other.
+    const created = (await api.get('/tasks?limit=1')).body.nextCursor;
+    expect((await api.get(`/tasks?sort=due&cursor=${created}`)).body.field).toBe('cursor');
+    expect((await api.get('/tasks?sort=soon')).body.field).toBe('sort');
+  });
+
   it('replays a write sent again with the same Idempotency-Key', async () => {
     const { t, ada } = await workspace();
     const api = await as(t, ada);
@@ -538,6 +584,7 @@ describe('OpenAPI', () => {
     const checks = [
       ['/me', S.Me],
       ['/tasks', S.TaskPage],
+      ['/tasks?sort=due', S.TaskPage],
       [`/tasks/${task.key}`, S.Task],
       [`/tasks/${task.key}/comments`, S.CommentPage],
       [`/tasks/${task.key}/activity`, S.ActivityPage],

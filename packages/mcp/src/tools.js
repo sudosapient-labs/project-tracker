@@ -121,10 +121,26 @@ async function taskDetail(api, ref) {
   });
 }
 
+/* Soonest due first across every matching task, not just the newest page. The server sorts
+   (sort=due) and says so in the answer; a server from before sort=due ignores it and answers newest
+   first, so then read up to MY_WORK_CAP of them, sort here, and say if that wasn't all of them. */
+export const MY_WORK_CAP = 500;
 async function myWork(api, { status = 'open', limit = 30 } = {}) {
-  const who = await names(api);
-  const tasks = await api.all('/tasks', { assignee: 'me', status: status === 'all' ? undefined : status }, Math.min(Number(limit) || 30, 100));
-  return tasks.sort(byDue).map(t => brief(t, who));
+  const n = Math.min(Math.max(Number(limit) || 30, 1), 100);
+  const query = { assignee: 'me', status: status === 'all' ? undefined : status };
+  const [page, who] = await Promise.all([api.get('/tasks', { ...query, sort: 'due', limit: n }), names(api)]);
+  if (page.sort === 'due') return page.data.map(t => brief(t, who));
+  const tasks = await api.all('/tasks', query, MY_WORK_CAP + 1);
+  const soonest = tasks
+    .slice(0, MY_WORK_CAP)
+    .sort(byDue)
+    .slice(0, n)
+    .map(t => brief(t, who));
+  if (tasks.length <= MY_WORK_CAP) return soonest;
+  return {
+    tasks: soonest,
+    note: `You have more than ${MY_WORK_CAP} of these and this server can't sort them by due date, so these are the soonest due of your ${MY_WORK_CAP} newest; older ones may be due sooner.`,
+  };
 }
 
 async function projectSummary(api, ref) {

@@ -188,7 +188,15 @@ const page = (id, item, what) =>
     z.object({ data: z.array(item), nextCursor: z.string().nullable().describe('Pass as `cursor` to get the next page; null on the last') }),
     `A page of ${what}.`,
   );
-export const TaskPage = page('TaskPage', Task, 'tasks');
+export const TaskPage = named(
+  'TaskPage',
+  z.object({
+    data: z.array(Task),
+    nextCursor: z.string().nullable().describe('Pass as `cursor` (with the same `sort`) to get the next page; null on the last'),
+    sort: z.enum(['due']).optional().describe('Set when the request asked for `sort=due` and the list is in that order'),
+  }),
+  'A page of tasks.',
+);
 export const ProjectPage = page('ProjectPage', Project, 'projects');
 export const CommentPage = page('CommentPage', Comment, 'comments');
 export const MemberPage = page('MemberPage', Member, 'people');
@@ -217,6 +225,10 @@ export const TaskQuery = z.object({
   q: z.string().max(200).optional().describe('Text in the title, or an exact key'),
   updatedSince: z.string().max(40).optional().describe('Only tasks changed since this ISO date-time or Unix ms'),
   includeArchived: bool,
+  sort: z
+    .enum(['created', 'due'])
+    .optional()
+    .describe('created (default): newest first. due: soonest due first, tasks without a due date last, then newest first'),
   limit,
   cursor,
 });

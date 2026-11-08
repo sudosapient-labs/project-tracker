@@ -135,7 +135,8 @@ export const TRACKER_TOOLS = [
     async (ctx, { project, assignee, status = 'open', q, limit = 30 }) => {
       if (project) await projectFor(ctx, project);
       const [tasks, who, visible] = await Promise.all([
-        ctx.api.all('/tasks', { project, assignee: person(ctx, assignee), status: status === 'all' ? undefined : status, q }, 500),
+        // sort=due so the cap drops the latest due, not the oldest; sorted again here for older servers.
+        ctx.api.all('/tasks', { project, assignee: person(ctx, assignee), status: status === 'all' ? undefined : status, q, sort: 'due' }, 500),
         names(ctx),
         openHere(ctx),
       ]);

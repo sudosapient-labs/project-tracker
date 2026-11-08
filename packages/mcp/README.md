@@ -134,6 +134,9 @@ that clears it (a due date) and is otherwise ignored. Calls that reach the rate 
 `Retry-After` (see [the API reference](../../docs/api.md#conventions)).
 Resources: `sudo://my-work` and `sudo://project/{key}` (same JSON as `list_my_work` and
 `summarise_project`).
+`list_my_work` is a list, soonest due first across all your matching tasks. Against a server from
+before `sort=due` (0.3.0 and earlier) it sorts the newest 500 itself, and if you have more it answers
+`{ "tasks": [...], "note": "..." }` saying older ones may be due sooner.
 
 ## Untrusted content
 
