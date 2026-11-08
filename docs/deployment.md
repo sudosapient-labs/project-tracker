@@ -27,8 +27,11 @@ Migrations run on start, so the first start creates the database.
 
 ## Railway
 
-Railway deploys `prod` with the `Dockerfile`. `railway.json` sets the builder, the health check
-(`/api/health`) and the restart policy, so those need no dashboard settings.
+Railway deploys `prod` with the `Dockerfile`. The build and deploy settings live on the Railway
+service itself, not in a file in the repo: a root `railway.json` would apply to every service built
+from this repo, including the Slack bot, and Railway no longer lets a service point at a different
+one. Set on the service (Settings): builder Dockerfile, Dockerfile path `Dockerfile`, health check
+`/api/health` with a 120-second timeout, restart policy On failure with 5 retries.
 
 1. **Create the service** from the GitHub repository, branch `prod`. Railway uses the root
    `Dockerfile`.
