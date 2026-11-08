@@ -396,6 +396,11 @@ describe('/sudo', () => {
     expect(my).toContain('Oldest, due first');
     expect(my).toContain('*Your open tasks (200+)*');
     expect(my).toContain('…and 180+ more');
+    // Exactly 200 open tasks: no "+".
+    w.t.db.run("DELETE FROM tasks WHERE id IN ('tcopy0', 'tcopy1', 'tcopy2', 'tcopy3', 'tcopy4', 'tcopy5', 'tcopy6')");
+    const exact = await run(h, 'my', 'UBEA');
+    expect(exact).toContain('*Your open tasks (200)*');
+    expect(exact).toContain('…and 180 more');
   });
 
   it('new opens the create modal, defaulting to the channel’s project, and the modal creates the task', async () => {

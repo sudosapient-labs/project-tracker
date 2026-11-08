@@ -327,9 +327,13 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     if (op === 'my') {
       const ids = await visibleIds();
       // sort=due so the cap drops the latest due, not the oldest; sorted again here for older servers.
-      const read = await api.all('/tasks', { assignee: me.id, status: 'open', sort: 'due' }, MY_CAP);
-      const tasks = read.filter(t => ids.has(t.project)).sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'));
-      const plus = read.length >= MY_CAP ? '+' : '';
+      // One past the cap, to tell "exactly MY_CAP" from "more".
+      const read = await api.all('/tasks', { assignee: me.id, status: 'open', sort: 'due' }, MY_CAP + 1);
+      const tasks = read
+        .slice(0, MY_CAP)
+        .filter(t => ids.has(t.project))
+        .sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'));
+      const plus = read.length > MY_CAP ? '+' : '';
       return say(
         tasks.length
           ? `*Your open tasks (${tasks.length}${plus})*\n${tasks.slice(0, 20).map(line).join('\n')}${tasks.length > 20 ? `\n…and ${tasks.length - 20}${plus} more` : ''}`
