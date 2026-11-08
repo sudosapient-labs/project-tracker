@@ -589,7 +589,7 @@ describe('several changes in one call', () => {
   const incomplete = (r, done, of) => {
     expect(r.isError, r.text).toBe(true);
     expect(r.text.split('\n')[0]).toBe(
-      `incomplete: Stopped at a failed change; ${done} of ${of} went through. Don’t repeat what’s under done; fix or drop the one under failed, then send what’s under notTried.`,
+      `incomplete: Stopped at a failed change; ${done} of ${of} went through. Don’t repeat what’s under done. Check with the user before sending what’s under failed or notTried: a later change may have depended on the failed one.`,
     );
     return unfence(r.text);
   };
@@ -707,6 +707,32 @@ describe('several changes in one call', () => {
       failed: { archived: true, code: 'rate_limited', error: 'Too many requests.' },
       notTried: [],
       task: { key: 'API-12', title: 'Moved', status: 'todo' },
+    });
+  });
+
+  it('a failed restore is named as such, and assignees show as ids when names can’t be read', async () => {
+    const run = fake({
+      patch: async () => ({ key: 'WEB-5', title: 'Renamed', status: 'todo', assignee: 'm_ada', archived: true }),
+      post: async () => Promise.reject(fail(403, 'forbidden', 'No.')),
+      all: async () => Promise.reject(fail(0, 'offline', 'Couldn’t reach Sudo Sapient.')),
+    });
+    expect(incomplete(await run('update_task', { key: 'WEB-5', title: 'Renamed', archived: false }), 1, 2)).toEqual({
+      done: [{ update: ['title'] }],
+      failed: { archived: false, code: 'forbidden', error: 'No.' },
+      notTried: [],
+      task: { key: 'WEB-5', title: 'Renamed', status: 'todo', assignee: 'm_ada', archived: true },
+    });
+  });
+
+  it('edit_subtasks: when the first change and the read after it both fail, the report survives', async () => {
+    const run = fake({
+      post: async () => Promise.reject(fail(503, 'http_503', 'Request failed (503)')),
+      get: async () => Promise.reject(fail(503, 'http_503', 'Request failed (503)')),
+    });
+    expect(incomplete(await run('edit_subtasks', { key: 'WEB-1', add: ['A', 'B'] }), 0, 2)).toEqual({
+      done: [],
+      failed: { add: 'A', code: 'http_503', error: 'Request failed (503)', mayHaveGoneThrough: true },
+      notTried: [{ add: 'B' }],
     });
   });
 

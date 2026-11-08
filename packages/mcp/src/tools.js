@@ -92,7 +92,7 @@ export class Incomplete extends Error {
   constructor(result) {
     const all = result.done.length + 1 + result.notTried.length;
     super(
-      `Stopped at a failed change; ${result.done.length} of ${all} went through. Don’t repeat what’s under done; fix or drop the one under failed, then send what’s under notTried.`,
+      `Stopped at a failed change; ${result.done.length} of ${all} went through. Don’t repeat what’s under done. Check with the user before sending what’s under failed or notTried: a later change may have depended on the failed one.`,
     );
     this.status = 207;
     this.code = 'incomplete';
@@ -105,11 +105,14 @@ function incomplete({ done, failed: { what, e }, notTried }, extra = {}) {
   const unsure = e.status === undefined || e.status === 0 || e.status >= 500;
   throw new Incomplete({
     done,
-    failed: compact({
+    // `what` as is: { archived: false } is a change too.
+    failed: {
       ...what,
-      ...(e.status === undefined ? { code: 'internal_error', error: 'Internal error' } : { code: e.code, error: e.message, field: e.field }),
-      mayHaveGoneThrough: unsure,
-    }),
+      ...compact({
+        ...(e.status === undefined ? { code: 'internal_error', error: 'Internal error' } : { code: e.code, error: e.message, field: e.field }),
+        mayHaveGoneThrough: unsure,
+      }),
+    },
     notTried,
     ...extra,
   });
@@ -117,6 +120,8 @@ function incomplete({ done, failed: { what, e }, notTried }, extra = {}) {
 /* What things look like after a run, for the result; a read that fails then mustn't hide what the
    run did, so it's left out instead. */
 const after = p => p.catch(() => null);
+/* Instead of people's names when they can't be read then: their ids, so an assignee doesn't vanish. */
+const byId = { get: id => id };
 
 const brief = (t, who) =>
   compact({
@@ -487,9 +492,9 @@ export const TOOLS = {
           },
         });
       const r = await steps(list);
-      if (!r.ok) incomplete(r, t ? { task: brief(t, (await after(names(api))) || new Map()) } : {});
+      if (!r.ok) incomplete(r, t ? { task: brief(t, (await after(names(api))) || byId) } : {});
       t ||= await api.get(`/tasks/${seg(key)}`);
-      return brief(t, (await after(names(api))) || new Map());
+      return brief(t, (await after(names(api))) || byId);
     },
   },
   complete_task: {
@@ -541,12 +546,13 @@ export const TOOLS = {
         ...(promote ? [{ what: { promote }, run: async () => ({ key: (await api.post(`${base}/${seg(promote)}/promote`))?.key }) }] : []),
       ]);
       const promoted = r.done.find(d => d.promote)?.key;
-      // Nothing asked for: just the subtasks, failing as any read does (an unknown key).
-      const read = r.done.length ? after : x => x;
+      // Nothing asked for: just the subtasks, failing as any read does (an unknown key). Otherwise a
+      // failed read mustn't hide what the run did.
+      const read = r.ok && !r.done.length ? x => x : after;
       const [t, who] = await Promise.all([read(api.get(`/tasks/${seg(key)}`)), read(names(api))]);
       const now = t && {
         key: t.key,
-        subtasks: t.subtasks.map(s => compact({ id: s.id, title: s.title, done: s.done, assignee: who?.get(s.assignee), due: s.due })),
+        subtasks: t.subtasks.map(s => compact({ id: s.id, title: s.title, done: s.done, assignee: (who || byId).get(s.assignee), due: s.due })),
       };
       if (!r.ok) incomplete(r, now ? { now } : {});
       // Everything went through; if the task can't be read back now, say what was done instead.
@@ -707,9 +713,9 @@ export const TOOLS = {
         private: p.private,
         members: p.members.map(id => compact({ name: n.get(id) || id, permission: p.permissions?.[id] })),
       });
-      if (!r.ok) incomplete(r, p ? { now: view(p, (await after(names(api))) || new Map()) } : {});
+      if (!r.ok) incomplete(r, p ? { now: view(p, (await after(names(api))) || byId) } : {});
       p ||= await api.get(`/projects/${seg(project)}`);
-      return view(p, (await after(names(api))) || new Map());
+      return view(p, (await after(names(api))) || byId);
     },
   },
   request_access: {

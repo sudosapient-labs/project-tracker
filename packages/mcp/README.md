@@ -141,8 +141,10 @@ doesn't go on to remove anyone). The result is then an `isError` one starting `i
 failed change; 2 of 3 went through.`, with `done` (each change made, with what it made: a new subtask's
 `id`, a promoted task's `key`), `failed` (the change, the API's `code` and `error`, and
 `mayHaveGoneThrough` when the connection dropped or the server failed), `notTried`, and the state
-afterwards where there is one. So the assistant repeats nothing. A call that asks for a single change
-fails with that change's error, as any tool does.
+afterwards where there is one. So the assistant repeats nothing, and checks with the person before
+sending the rest. A call that asks for a single change fails with that change's error, as any tool
+does.
+
 Resources: `sudo://my-work` and `sudo://project/{key}` (same JSON as `list_my_work` and
 `summarise_project`).
 

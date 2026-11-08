@@ -1144,7 +1144,8 @@ export async function several(x, refs, call, line) {
       const notTried = refs.slice(i + 1);
       // Offline, a server error or a bug may come after the change was made.
       const unsure = !(e instanceof ApiError) || e.status === 0 || e.status >= 500;
-      const msg = `${x.clean(e.message)}${unsure ? ' It may have gone through: check before retrying it.' : ''}`;
+      // On one line, so a message can't print a line of its own that looks like ours.
+      const msg = `${x.clean(String(e.message)).replace(/\s*\n\s*/g, ' ')}${unsure ? ' It may have gone through: check before retrying it.' : ''}`;
       const summary =
         `Stopped at ${x.clean(ref)}; ${done.length} of ${refs.length} done${done.length ? ` (${done.map(x.clean).join(', ')})` : ''}.` +
         (notTried.length ? ` Not tried: ${notTried.map(x.clean).join(', ')}.` : '');
