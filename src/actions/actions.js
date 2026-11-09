@@ -2,7 +2,7 @@
    ACTIONS · INPUT HANDLERS · DRAG & DROP · KEYBOARD · INIT
    ===================================================================== */
 import { $, $$, addD, dOff, esc, fmtDateTime, fmtTime, instant, iso, parse, parseTime, shiftD, today, uid, withDay, withTime } from '../core/utils.js';
-import { PR, PSTAT, RECUR_DAYS, ST } from '../core/constants.js';
+import { PR, PSTAT, RECUR_DAYS, ST, tzCity } from '../core/constants.js';
 import { D, S, allTasks, canSee, commentsOf, logAct, me, mem, memName, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
 import { descMark, fileType, fsize, richHtml } from '../ui/helpers.js';
 import { plainDescText, textToHtml } from '../core/rich-text.js';
@@ -2031,6 +2031,14 @@ A.wsColor = el => {
   D().ws.c = el.dataset.v;
   save();
   render();
+};
+IN.wsTz = el => {
+  const tz = el.value || null;
+  busy('ws-tz', async () => {
+    if (!mutate(() => (D().ws.tz = tz))) return;
+    const errs = await commit();
+    toast(errs[0] || (tz ? `Workspace time zone set to ${tzCity(tz)}` : 'Workspace time zone unset'), errs.length ? { kind: 'err' } : {});
+  });
 };
 A.saveWorkspace = () => {
   const n = $('#ws-name').value.trim();

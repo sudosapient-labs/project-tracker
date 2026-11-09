@@ -1,7 +1,8 @@
 // @ts-check
 /* ---------- store ---------- */
 import { iso, isPast, setTimeZone, today, uid } from './utils.js';
-import { DEFAULT_TZ, PCOLORS, TEAMS_SEED, validTz } from './constants.js';
+import { PCOLORS, TEAMS_SEED, validTz } from './constants.js';
+import { zoneOf } from './clock.js';
 import { COMMENT, EDIT, canManageProject, projectLevel } from './access.js';
 
 /* Only display preferences are cached in the browser (so the theme applies before the first
@@ -15,7 +16,8 @@ export const DEFAULT_PREFS = {
   weekStart: 1,
   dateFmt: 'MMM d',
   lang: 'English (US)',
-  tz: DEFAULT_TZ,
+  // The person's saved time zone; null until they have one (see core/clock.js for whose clock).
+  tz: null,
   timeFmt: '12',
   motion: 'system',
   home: 'home',
@@ -25,7 +27,7 @@ export const DEFAULT_PREFS = {
 };
 /* The shape of the workspace graph the server's /api/bootstrap returns, with nothing in it. */
 export const emptyData = () => ({
-  ws: { name: '', c: '#5A67D8' },
+  ws: { name: '', c: '#5A67D8', tz: null },
   me: null,
   members: [],
   teams: [],
@@ -55,7 +57,7 @@ function cachedPrefs() {
   return {};
 }
 const cached = cachedPrefs();
-setTimeZone(cached.tz || DEFAULT_TZ);
+setTimeZone(zoneOf(cached));
 export const S = {
   data: emptyData(),
   prefs: Object.assign({}, DEFAULT_PREFS, cached),

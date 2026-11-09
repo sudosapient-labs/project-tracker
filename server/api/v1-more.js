@@ -7,7 +7,7 @@
    preferences) call the same server functions as the app's own routes.
 
    `h` carries v1.js's route table and helpers. */
-import { PCOLORS, PSTAT } from '../../src/core/constants.js';
+import { PCOLORS, PSTAT, validTz } from '../../src/core/constants.js';
 import { EDIT, canSeeProject, projectLevel } from '../../src/core/access.js';
 import { newId } from '../lib/crypto.js';
 import { RESTORE_MS } from '../sync/engine.js';
@@ -38,6 +38,7 @@ export function registerMore(h) {
     decodeCursor,
     shortDate,
     clockOf,
+    zoneView,
   } = h;
   // Today on the key's person's calendar, not UTC's.
   const today = x => dayOf(Date.now(), clockOf(x).tz);
@@ -847,11 +848,13 @@ export function registerMore(h) {
   });
 
   /* ---------- preferences, favourites, sidebar order ---------- */
+  // `preferences.tz` is the zone the person saved (when it is one); timeZone the one in use.
   const prefsOf = x => {
     const st = x.repo.userState(x.me.id);
     return {
-      preferences: Object.fromEntries(Object.entries(st.prefs).filter(([k]) => S.PREF_KEYS.includes(k))),
+      preferences: Object.fromEntries(Object.entries(st.prefs).filter(([k, v]) => S.PREF_KEYS.includes(k) && (k !== 'tz' || validTz(v)))),
       notifications: { ...DEFAULT_NOTIF_PREFS, ...st.notifPrefs },
+      ...zoneView(clockOf(x)),
     };
   };
   route('get', '/me/preferences', {
@@ -913,13 +916,13 @@ export function registerMore(h) {
   /* ---------- workspace ---------- */
   const wsView = x => {
     const ws = x.repo.workspace() || {};
-    return { name: ws.name || '', color: ws.c || '#5A67D8', brand: !!ws.brand };
+    return { name: ws.name || '', color: ws.c || '#5A67D8', brand: !!ws.brand, timeZone: validTz(ws.tz) };
   };
   route('get', '/workspace', { id: 'getWorkspace', tag: 'Workspace', summary: 'Workspace settings', ok: ok(S.Workspace), run: wsView });
   route('patch', '/workspace', {
     id: 'updateWorkspace',
     tag: 'Workspace',
-    summary: 'Rename the workspace or change its colour',
+    summary: 'Rename the workspace, or change its colour or time zone',
     admin: true,
     body: S.WorkspaceUpdate,
     ok: ok(S.Workspace),
@@ -928,6 +931,7 @@ export function registerMore(h) {
       if (b.name !== undefined) v.name = b.name;
       if (b.color !== undefined) v.c = b.color;
       if (b.brand !== undefined) v.brand = b.brand;
+      if (b.timeZone !== undefined) v.tz = b.timeZone;
       if (Object.keys(v).length) write(x, [{ c: 'ws', k: 'patch', v }]);
       return wsView(x);
     },

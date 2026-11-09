@@ -51,7 +51,8 @@ export let dateFormat = 'MMM d';
 export function setDateFormat(f) {
   dateFormat = f || 'MMM d';
 }
-export let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+/* Whose clock: set from core/clock.js (store.js on load, theme.js on every render). */
+export let timeZone = 'UTC';
 export function setTimeZone(tz) {
   if (tz) timeZone = tz;
 }

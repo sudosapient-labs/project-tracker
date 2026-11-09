@@ -4,7 +4,8 @@
    ===================================================================== */
 import { $, esc } from '../core/utils.js';
 import { setTimeZone } from '../core/utils.js';
-import { validTz } from '../core/constants.js';
+import { tzCity, validTz } from '../core/constants.js';
+import { browserTz, zoneOf } from '../core/clock.js';
 import { D, DEFAULT_PREFS, PREFS_KEY, S, allTasks, canSee, emptyData, me, proj } from '../core/store.js';
 import { ApiError, get, post } from '../core/api.js';
 import { toast } from '../ui/toast.js';
@@ -26,6 +27,7 @@ import {
   reloadWhenSaved,
   reloaded,
   sameUser,
+  saveState,
   settled,
   stopSync,
   takeKept,
@@ -43,8 +45,19 @@ function hydrate(b, kept) {
   S.prefs = { ...DEFAULT_PREFS, ...b.prefs, tz: validTz(b.prefs?.tz) };
   S.views = b.views || {};
   S.ui.collapsed = !!b.collapsed;
-  setTimeZone(S.prefs.tz);
   prime(S.data, kept);
+  if (!S.prefs.tz) adoptBrowserZone();
+  setTimeZone(zoneOf(S.prefs, S.data.ws));
+}
+/* No time zone saved for this person yet: save their browser's, so reminders, digests and anything
+   else the server writes for them is on the clock they see here (the server never guesses one from
+   the browser). Only when none is saved: a zone they chose is never replaced. */
+function adoptBrowserZone() {
+  const tz = browserTz();
+  if (!tz) return;
+  S.prefs.tz = tz;
+  saveState();
+  toast(`Time zone set to ${tzCity(tz)} from your browser. Change it in Settings → Date and time.`, { kind: 'info', ms: 8000 });
 }
 
 let reloading = null;

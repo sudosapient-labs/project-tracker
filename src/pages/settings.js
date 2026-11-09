@@ -3,7 +3,8 @@
    ===================================================================== */
 import { ago, dOff, esc, fmtDate } from '../core/utils.js';
 import { ic, wsLogo } from '../core/icons.js';
-import { TIMEZONES } from '../core/constants.js';
+import { timeZones, tzCity } from '../core/constants.js';
+import { isAdminRole } from '../core/access.js';
 import { D, S, keysRevokedByPasswordChange, me } from '../core/store.js';
 import { av, pIcon } from '../ui/helpers.js';
 import { permsTable, teamsGrid } from './members.js';
@@ -69,6 +70,20 @@ export const sel = (k, opts, v) =>
       return `<option value="${val}" ${String(v) === String(val) ? 'selected' : ''}>${n}</option>`;
     })
     .join('')}</select>`;
+/* A time zone picker: the common zones, then every other one. `v` is listed even if this browser
+   doesn't know it; `none` labels an empty first choice. */
+export function zoneSel(attrs, v, none = '') {
+  const all = timeZones();
+  const opt = z => `<option value="${esc(z.id)}" ${z.id === v ? 'selected' : ''}>${esc(z.name)}</option>`;
+  const unknown = v && !all.some(z => z.id === v) ? [{ id: v, name: tzCity(v) }] : [];
+  return `<select class="select" style="width:auto;min-width:180px;max-width:320px" ${attrs}>${none ? `<option value="" ${v ? '' : 'selected'}>${esc(none)}</option>` : ''}${unknown.map(opt).join('')}<optgroup label="Common">${all
+    .filter(z => z.common)
+    .map(opt)
+    .join('')}</optgroup><optgroup label="All time zones">${all
+    .filter(z => !z.common)
+    .map(opt)
+    .join('')}</optgroup></select>`;
+}
 export function pageSettings() {
   const sec = S.ui.params.sec || S.ui.settings || 'appearance';
   const title = SET_NAV.flatMap(g => g[1]).find(x => x[0] === sec) || ['appearance', 'Appearance'];
@@ -90,7 +105,14 @@ export function settingsBody(sec, title) {
       <form data-submit="saveWorkspace">
       <div class="sblock" style="margin-top:0"><div class="row" style="gap:14px;margin-bottom:18px">${wsLogo(d.ws, 52)}<div><div class="label" style="margin-bottom:6px">Workspace icon</div><div class="swatches">${['#2F2E2A', '#5A67D8', '#3B82C4', '#23918A', '#C54B78', '#C48A1E'].map(c => `<button type="button" class="sw ${d.ws.c === c ? 'on' : ''}" style="--c:${c};width:22px;height:22px" data-a="wsColor" data-v="${c}" aria-label="Color ${c}"></button>`).join('')}</div></div></div>
       <div class="col" style="gap:14px;max-width:440px"><div class="field"><label class="label" for="ws-name">Workspace name</label><input class="input" id="ws-name" value="${esc(d.ws.name)}"></div>
-      <div><button class="btn btn-primary" data-a="saveWorkspace" id="ws-save">Save changes</button></div></div></div></form>`
+      <div><button class="btn btn-primary" data-a="saveWorkspace" id="ws-save">Save changes</button></div></div></div></form>
+      <div class="sblock">${srow(
+        'Workspace time zone',
+        isAdminRole(me())
+          ? 'For people who haven’t set their own time zone, and for bots: their reminders, digests and due times use it.'
+          : 'For people who haven’t set their own time zone, and for bots. Owners and Admins can change it.',
+        zoneSel(`data-in="wsTz" aria-label="Workspace time zone" id="ws-tz" ${isAdminRole(me()) ? '' : 'disabled'}`, d.ws.tz || '', 'Not set (UTC)'),
+      )}</div>`
       );
     case 'appearance':
       return (
@@ -159,11 +181,7 @@ export function settingsBody(sec, title) {
         srow(
           'Time zone',
           'Used for due dates and reminders.',
-          sel(
-            'tz',
-            TIMEZONES.map(z => [z.id, z.name]),
-            P.tz,
-          ),
+          zoneSel('data-in="prefSel" data-k="tz" aria-label="tz"', P.tz || '', P.tz ? '' : `Workspace time zone (${tzCity(d.ws.tz || 'UTC')})`),
         ) +
         srow(
           'Time format',

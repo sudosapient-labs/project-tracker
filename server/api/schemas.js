@@ -3,7 +3,7 @@
    document (openapi.js) is generated from the same objects, so the two can't drift. Records are
    the public view of the synced ones (sync/schemas.js), with stable, documented field names. */
 import { z } from 'zod';
-import { PCOLORS, PICONS, PRIOS, PSTAT, REACTIONS, RECUR, ROLES, STATUSES, TIMEZONES } from '../../src/core/constants.js';
+import { PCOLORS, PICONS, PRIOS, PSTAT, REACTIONS, RECUR, ROLES, STATUSES, validTz } from '../../src/core/constants.js';
 import { PERMS } from '../../src/core/access.js';
 import { FILE_TYPES } from '../../src/core/file-types.js';
 import { DEFAULT_NOTIF_PREFS } from '../notify.js';
@@ -40,6 +40,21 @@ const date = z
   .describe(WHEN);
 const ms = z.number().int().describe('Unix time in milliseconds');
 const ref = z.string().min(1).max(254);
+// Any IANA time zone. Whose clock is used is decided by server/lib/clock.js.
+const tz = z
+  .string()
+  .max(64)
+  .refine(v => !!validTz(v), 'Use an IANA time zone, like Asia/Dubai or UTC');
+const zoneFields = {
+  timeZone: z
+    .string()
+    .describe(
+      'The IANA time zone this person’s starts, dues and reminders are read in: their own (Settings → Date and time), else the workspace’s, else UTC. Show their times in it.',
+    ),
+  timeZoneSource: z
+    .enum(['person', 'workspace', 'default'])
+    .describe('Where timeZone comes from: person (they set it), workspace (the workspace’s zone), default (UTC: neither is set)'),
+};
 
 /* ---------- records ---------- */
 export const ErrorBody = named(
@@ -67,6 +82,7 @@ export const Member = named(
     team: z.string().describe('Team id, or empty'),
     status: z.enum(['active', 'invited']),
     kind: Kind,
+    ...zoneFields,
   }),
   'A person or bot in the workspace.',
 );
@@ -82,6 +98,7 @@ export const Me = named(
     team: z.string(),
     status: z.enum(['active', 'invited']),
     kind: Kind,
+    ...zoneFields,
     workspace: z.string(),
     key: z.object({
       id: z.string(),
@@ -373,7 +390,12 @@ export const Notification = named(
 
 export const Workspace = named(
   'Workspace',
-  z.object({ name: z.string(), color: z.string(), brand: z.boolean().describe('Show the workspace logo in the sidebar') }),
+  z.object({
+    name: z.string(),
+    color: z.string(),
+    brand: z.boolean().describe('Show the workspace logo in the sidebar'),
+    timeZone: z.string().nullable().describe('IANA time zone for people who haven’t set their own (bots too); null: not set, so they get UTC'),
+  }),
   'Workspace settings.',
 );
 
@@ -385,7 +407,7 @@ const PREF_SCHEMA = {
   motion: z.enum(['system', 'reduce']),
   lang: z.enum(['English (US)', 'English (UK)', 'Deutsch', 'Español', 'Français', '日本語']),
   spell: z.boolean().describe('Spellcheck in descriptions and comments'),
-  tz: z.enum(TIMEZONES.map(t => t.id)).describe('Time zone for due dates and reminders'),
+  tz: tz.describe('Your own time zone (any IANA zone) for starts, dues and reminders; without one, the workspace’s is used'),
   timeFmt: z.enum(['12', '24']),
   dateFmt: z.enum(['MMM d', 'd/M', 'M/d', 'yyyy-MM-dd']),
   weekStart: z.union([z.literal(0), z.literal(1), z.literal(6)]).describe('0 Sunday, 1 Monday, 6 Saturday'),
@@ -400,8 +422,9 @@ const NOTIF_SCHEMA = Object.fromEntries(Object.keys(DEFAULT_NOTIF_PREFS).map(k =
 export const Preferences = named(
   'Preferences',
   z.object({
-    preferences: z.object(PREF_SCHEMA).partial().describe('Display preferences (Settings → Appearance, Language, Date and time)'),
+    preferences: z.object(PREF_SCHEMA).partial().describe('Display preferences (Settings → Appearance, Language, Date and time); tz only when you set one'),
     notifications: z.object(NOTIF_SCHEMA).describe('Notification preferences (Settings → Notifications)'),
+    ...zoneFields,
   }),
   'The key’s person’s preferences.',
 );
@@ -542,6 +565,7 @@ export const WorkspaceUpdate = z
     name: z.string().trim().min(1).max(80),
     color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'A colour is #RRGGBB'),
     brand: z.boolean(),
+    timeZone: tz.nullable().describe('IANA time zone for people who haven’t set their own; null unsets it'),
   })
   .partial();
 

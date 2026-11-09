@@ -800,7 +800,8 @@ export async function takeKept(user) {
 
 /* ---------- per-person UI state (prefs, view settings, sidebar) ---------- */
 const stateBody = () => ({ prefs: S.prefs, views: S.views, collapsed: !!S.ui.collapsed });
-function saveState() {
+/* Send the person's state now if it changed since it was last sent (save() does this after a pause). */
+export function saveState() {
   try {
     // Display preferences only: name and title are the person's, and the browser may be shared.
     const { name, title, ...cached } = S.prefs;

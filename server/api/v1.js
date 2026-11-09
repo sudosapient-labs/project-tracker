@@ -40,6 +40,8 @@ export const htmlToText = html =>
 /* The key's person's time zone and clock: activity reads a start or due as they'd see it in the app
    ("to Nov 9, 11:59 PM"), and repeats keep a task's time of day on their clock. */
 const clockOf = x => memberClock(x.repo, x.me.id);
+/* A member's effective time zone and where it comes from, as Member, Me and Preferences show it. */
+const zoneView = ({ tz, source }) => ({ timeZone: tz, timeZoneSource: source });
 const shortDate = (x, v) => {
   const { tz, time } = clockOf(x);
   return label(v, tz, { style: 'short', time });
@@ -47,7 +49,8 @@ const shortDate = (x, v) => {
 
 /* ---------- public views of synced records ---------- */
 const LEVEL = ['none', 'view', 'comment', 'edit', 'full'];
-const views = (config, me, favs, keyOf) => ({
+/* `clock`: a member's clock (server/lib/clock.js), for the effective time zone on Member. */
+const views = (config, me, favs, keyOf, clock) => ({
   task: t => ({
     id: t.id,
     key: t.key,
@@ -112,6 +115,7 @@ const views = (config, me, favs, keyOf) => ({
     team: m.team || '',
     status: m.status,
     kind: m.kind === 'bot' ? 'bot' : 'person',
+    ...zoneView(clock(m.id)),
   }),
   comment: c => ({
     id: c.id,
@@ -244,7 +248,19 @@ export function v1Routes({ limit, uploads }) {
     };
     // A key acts as its person: an Owner's or Admin's key has their admin powers, as in the app.
     const admin = isAdminRole(me);
-    return { c, db, repo, config, me, admin, projects, visible, favorites, resetFavorites, V: views(config, me, favorites, keyOf) };
+    return {
+      c,
+      db,
+      repo,
+      config,
+      me,
+      admin,
+      projects,
+      visible,
+      favorites,
+      resetFavorites,
+      V: views(config, me, favorites, keyOf, id => memberClock(repo, id)),
+    };
   };
   const findProject = (x, ref, field = 'project') => {
     const up = ref.toUpperCase();
@@ -722,6 +738,7 @@ export function v1Routes({ limit, uploads }) {
     uploads,
     shortDate,
     clockOf,
+    zoneView,
   });
 
   /* ---------- wiring ---------- */
