@@ -65,6 +65,25 @@ describe('whose clock is decided in one place', () => {
   });
 });
 
+/* What a valid zone is: validZone / modernZone in packages/client/dates.js (validTz / modernTz in the
+   app and server). A second check, a bare zone probe (new Intl.DateTimeFormat(…, { timeZone: v })),
+   or a second list of renamed zones, fails here. */
+const ZONE_CHECK_OK = new Set(['packages/client/dates.js']);
+const ZONE_CHECK = [
+  { what: 'a second check of a time zone (use validZone / validTz)', re: /new Intl\.DateTimeFormat\([^)]*\{\s*timeZone:\s*[\w.?]+\s*\}\s*\)/ },
+  { what: 'a second list of renamed zones (use modernZone / modernTz)', re: /['"]Asia\/Calcutta['"]\s*:/ },
+];
+
+describe('one definition of a valid zone', () => {
+  it('only packages/client/dates.js checks whether something is a time zone', () => {
+    expect(scan(DIRS, ZONE_CHECK, ZONE_CHECK_OK)).toEqual([]);
+  });
+  it('and it still does', () => {
+    const src = fs.readFileSync(path.join(ROOT, 'packages/client/dates.js'), 'utf8');
+    for (const r of ZONE_CHECK) expect(src).toMatch(r.re);
+  });
+});
+
 describe('dates go through packages/client/dates.js', () => {
   it('nothing reads a start or due by cutting or comparing strings', () => {
     const hits = [];

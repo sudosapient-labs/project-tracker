@@ -47,6 +47,9 @@ try {
   with `shiftDays`, and turn what people type (`'fri 5pm'`, `'2026-11-20 17:00'`) into one with
   `parseWhen` or `fromWallClock`. `checkWhen` is the API's input check. Don't take a timed value's day
   with `slice(0, 10)`: that's its UTC day.
+  `validZone` says whether something is a time zone (an IANA name such as `Asia/Dubai`, not an
+  offset), and `modernZone` also gives an old name under today's (`Asia/Calcutta` → `Asia/Kolkata`):
+  the same check the server makes.
 
 Endpoints, fields and errors are in the workspace's API reference (`/api/docs`) and in
 [docs/api.md](../../docs/api.md).

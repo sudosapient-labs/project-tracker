@@ -103,7 +103,9 @@ start (`when`) has the same two shapes: an all-day event is a day, a timed one t
 Stored values don't depend on anyone's clock; reading or writing them in words or as a day does.
 Which time zone that is, is decided in one place, in this order:
 
-1. **The person's** saved zone (Settings → Date and time; `prefs.tz`, any IANA zone).
+1. **The person's** saved zone (Settings → Date and time; `prefs.tz`, any IANA zone: what counts as
+   one is `validZone` / `modernZone` in `packages/client/dates.js`, `validTz` / `modernTz` in the app
+   and server).
 2. **The workspace's** (Settings → Workspace, Owners and Admins; `tz` on the workspace doc,
    `timeZone` in `GET /workspace`), for people who haven't set one, and for bots such as the Slack
    bot's account.

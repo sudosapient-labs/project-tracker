@@ -1,4 +1,5 @@
 // @ts-check
+import { modernZone, validZone } from '../../packages/client/dates.js';
 /* ---------- vocab ---------- */
 /* ---------- time zones ----------
    Any IANA time zone the JavaScript engine knows. Whose clock a start or due is read on is decided
@@ -16,48 +17,12 @@ const COMMON_TZ = [
   { id: 'America/Los_Angeles', name: 'Pacific Time (GMT−08:00 / −07:00)' },
   { id: 'UTC', name: 'UTC' },
 ];
-/* Old names some engines still list (and report as the browser's zone), under today's names. */
-const RENAMED = {
-  'Asia/Calcutta': 'Asia/Kolkata',
-  'Asia/Katmandu': 'Asia/Kathmandu',
-  'Asia/Rangoon': 'Asia/Yangon',
-  'Asia/Saigon': 'Asia/Ho_Chi_Minh',
-  'Europe/Kiev': 'Europe/Kyiv',
-  'America/Godthab': 'America/Nuuk',
-  'Atlantic/Faeroe': 'Atlantic/Faroe',
-  'Pacific/Enderbury': 'Pacific/Kanton',
-  'Pacific/Truk': 'Pacific/Chuuk',
-  'Pacific/Ponape': 'Pacific/Pohnpei',
-};
-const tzChecked = new Map();
-/**
- * `v` when it names a time zone (an IANA name like 'Asia/Dubai', or 'UTC'), else null. Never a
- * fallback: the caller decides whose clock to use instead (see server/lib/clock.js).
- * @param {unknown} v
- * @returns {string | null}
- */
-export function validTz(v) {
-  // Offsets ('+05:30') aren't zones: they don't follow daylight saving.
-  if (typeof v !== 'string' || !v || v.length > 64 || /^[+-]/.test(v)) return null;
-  if (!tzChecked.has(v)) {
-    let ok = false;
-    try {
-      new Intl.DateTimeFormat('en-US', { timeZone: v });
-      ok = true;
-    } catch {
-      /* not a zone this engine knows */
-    }
-    if (tzChecked.size < 1000) tzChecked.set(v, ok);
-    else return ok ? v : null;
-  }
-  return tzChecked.get(v) ? v : null;
-}
-/** A zone under its current name ('Asia/Calcutta' → 'Asia/Kolkata'); null when it isn't one.
- * @param {unknown} v */
-export const modernTz = v => {
-  const tz = validTz(v);
-  return tz && validTz(RENAMED[tz]) ? RENAMED[tz] : tz;
-};
+/* What a valid zone is (and today's name for an old one) is packages/client/dates.js', shared with
+   the CLI, MCP server and Slack bot; these are the app's and server's names for it. */
+/** `v` when it names a time zone, else null (validZone). */
+export const validTz = validZone;
+/** A zone under its current name ('Asia/Calcutta' → 'Asia/Kolkata'), else null (modernZone). */
+export const modernTz = modernZone;
 /** The city a zone is named after: 'America/New_York' → 'New York'. @param {string} tz */
 export const tzCity = tz =>
   String(tz || '')

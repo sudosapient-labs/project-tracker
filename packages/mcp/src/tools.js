@@ -15,7 +15,7 @@
    Starts, dues and times are on the person's clock (their time zone setting) both ways: results
    say '2026-11-20' or '2026-11-20 17:00', and dates sent in that form (or 'fri 5pm') are read on
    it, so a model never works out UTC offsets. The rules are @sudosapient/client/dates'. */
-import { compareDue, isOverdue, label, parseWhen } from '@sudosapient/client/dates';
+import { compareDue, isOverdue, label, modernZone, parseWhen, validZone } from '@sudosapient/client/dates';
 
 const seg = ref => encodeURIComponent(String(ref).trim());
 const str = (description, extra = {}) => ({ type: 'string', ...(description ? { description } : {}), ...extra });
@@ -44,7 +44,7 @@ const compact = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !=
    else the workspace's, else UTC: `timeZone` on /me/preferences). This computer's only when the
    server is too old to say. */
 const clocks = new WeakMap();
-const localTz = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+const localTz = () => modernZone(Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
 export function tzOf(api) {
   if (!clocks.has(api))
     clocks.set(
@@ -52,7 +52,7 @@ export function tzOf(api) {
       Promise.resolve()
         .then(() => api.get('/me/preferences'))
         .then(
-          r => r?.timeZone || r?.preferences?.tz || localTz(),
+          r => validZone(r?.timeZone) || validZone(r?.preferences?.tz) || localTz(),
           () => localTz(),
         ),
     );

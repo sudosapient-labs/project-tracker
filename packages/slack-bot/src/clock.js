@@ -10,19 +10,10 @@
    The zone is resolved once per request (handlers.js), carried in the run's context (ctx.tz) and on
    the request's own tracker client, and saved with a change waiting for Confirm, so a Confirm pressed
    later still reads the change on the asker's clock. Members come from directory() (cached a minute)
-   and Slack profiles are cached here for PROFILE_TTL, so a changed zone is used within minutes. */
-
-/* `v` when it names a time zone this runtime knows ('Asia/Dubai', 'UTC'), else null. Offsets
-   ('+04:00') aren't zones: they don't follow daylight saving. */
-export function zone(v) {
-  if (typeof v !== 'string' || !v || v.length > 64 || /^[+-]/.test(v)) return null;
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: v });
-    return v;
-  } catch {
-    return null;
-  }
-}
+   and Slack profiles are cached here for PROFILE_TTL, so a changed zone is used within minutes.
+   What counts as a zone (and today's name for an old one, like Slack's Asia/Calcutta) is
+   @sudosapient/client/dates' modernZone, the same check the tracker makes. */
+import { modernZone } from '@sudosapient/client/dates';
 
 /** @typedef {{ tz: string, source: 'person' | 'slack' | 'workspace' | 'default' | 'fallback' }} Clock */
 
@@ -33,11 +24,11 @@ export function zone(v) {
  * @returns {Clock}
  */
 export function clockOf(member, { slackTz = null, fallback }) {
-  const own = member?.timeZoneSource === 'person' ? zone(member.timeZone) : null;
+  const own = member?.timeZoneSource === 'person' ? modernZone(member.timeZone) : null;
   if (own) return { tz: own, source: 'person' };
-  const slack = zone(slackTz);
+  const slack = modernZone(slackTz);
   if (slack) return { tz: slack, source: 'slack' };
-  const tracker = zone(member?.timeZone);
+  const tracker = modernZone(member?.timeZone);
   if (tracker) return { tz: tracker, source: member?.timeZoneSource === 'workspace' ? 'workspace' : 'default' };
   return { tz: fallback, source: 'fallback' };
 }
@@ -50,7 +41,7 @@ export function slackZones(slack, { ttl = PROFILE_TTL, now = () => Date.now() } 
   const seen = new Map();
   const remember = (user, profile) => {
     if (seen.size > 5000) seen.clear();
-    seen.set(user, { at: now(), tz: zone(profile?.tz) });
+    seen.set(user, { at: now(), tz: modernZone(profile?.tz) });
   };
   return {
     remember,

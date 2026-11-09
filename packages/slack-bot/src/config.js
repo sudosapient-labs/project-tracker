@@ -1,7 +1,7 @@
 /* Environment → config for Sudo Tracker. Every variable is listed in the README. Secrets (Slack
    tokens, the tracker bot key, the model provider's key) come only from the environment. */
 import path from 'node:path';
-import { zone } from './clock.js';
+import { modernZone } from '@sudosapient/client/dates';
 
 const bool = (v, d = false) => (v == null || v === '' ? d : /^(1|true|yes|on)$/i.test(String(v)));
 const list = v =>
@@ -25,7 +25,7 @@ export function loadConfig(env = process.env) {
   const confirm = env.SLACK_BOT_CONFIRM || 'edits';
   if (!CONFIRM_POLICIES[confirm]) throw new Error(`SLACK_BOT_CONFIRM is one of ${Object.keys(CONFIRM_POLICIES).join(', ')}.`);
   // Only the last fallback for whose clock (clock.js): each person's own zone comes first.
-  const timezone = env.SLACK_BOT_TIMEZONE ? zone(env.SLACK_BOT_TIMEZONE) : 'UTC';
+  const timezone = env.SLACK_BOT_TIMEZONE ? modernZone(env.SLACK_BOT_TIMEZONE) : 'UTC';
   if (!timezone) throw new Error(`SLACK_BOT_TIMEZONE must be an IANA time zone, like Asia/Kolkata (got "${env.SLACK_BOT_TIMEZONE}").`);
   let mcpServers = {};
   if (env.SLACK_BOT_MCP_SERVERS) {

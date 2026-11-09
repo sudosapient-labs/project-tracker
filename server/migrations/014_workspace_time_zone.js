@@ -7,7 +7,7 @@
    stay on UTC until an Owner or Admin sets it in Settings → Workspace.
 
    Later migrations read it as `JSON.parse(db.prepare('SELECT data FROM workspace WHERE id = 1')
-   .get()?.data || '{}').tz`, valid when validTz (src/core/constants.js) says so. */
+   .get()?.data || '{}').tz`, valid when validTz (validZone in packages/client/dates.js) says so. */
 import { validTz } from '../../src/core/constants.js';
 
 export default function migrate(db) {

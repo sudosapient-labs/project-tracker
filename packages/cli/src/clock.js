@@ -3,14 +3,14 @@
    UTC). This computer's clock (TZ overrides it) only when the server is too old to say or can't be
    asked. The rules for the values are @sudosapient/client/dates'. --json output keeps the API's
    values (times in UTC). */
-import { label } from '@sudosapient/client/dates';
+import { label, modernZone, validZone } from '@sudosapient/client/dates';
 
 /* This computer's zone: only the fallback. */
-export const localTz = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+export const localTz = () => modernZone(Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
 /* The person's zone from the server; `api` makes the client (it throws when not logged in). */
 export async function personTz(api) {
   try {
-    return (await api().get('/me/preferences'))?.timeZone || localTz();
+    return validZone((await api().get('/me/preferences'))?.timeZone) || localTz();
   } catch {
     return localTz();
   }

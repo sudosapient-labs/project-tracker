@@ -58,7 +58,57 @@ export function checkWhen(v) {
   return { ok: true, value: new Date(v).toISOString() };
 }
 
-/* ---------- time zones ---------- */
+/* ---------- time zones ----------
+   A zone is any IANA name the JavaScript engine knows ('Asia/Kolkata', 'UTC'). This checks one; it
+   never picks one: whose clock to read on is the server's server/lib/clock.js, the app's
+   src/core/clock.js, or `timeZone` from the API in clients. */
+/* Old names some engines (and Slack profiles, and browsers) still give, under today's names. */
+const RENAMED = /** @type {Record<string, string>} */ ({
+  'Asia/Calcutta': 'Asia/Kolkata',
+  'Asia/Katmandu': 'Asia/Kathmandu',
+  'Asia/Rangoon': 'Asia/Yangon',
+  'Asia/Saigon': 'Asia/Ho_Chi_Minh',
+  'Europe/Kiev': 'Europe/Kyiv',
+  'America/Godthab': 'America/Nuuk',
+  'Atlantic/Faeroe': 'Atlantic/Faroe',
+  'Pacific/Enderbury': 'Pacific/Kanton',
+  'Pacific/Truk': 'Pacific/Chuuk',
+  'Pacific/Ponape': 'Pacific/Pohnpei',
+});
+/** @type {Map<string, boolean>} */
+const zoneChecked = new Map();
+/**
+ * `v` when it names a time zone this engine knows (an IANA name like 'Asia/Dubai', or 'UTC'), else
+ * null. Never a fallback: the caller decides whose clock to use instead.
+ * @param {unknown} v
+ * @returns {string | null}
+ */
+export function validZone(v) {
+  // Offsets ('+05:30') aren't zones: they don't follow daylight saving.
+  if (typeof v !== 'string' || !v || v.length > 64 || /^[+-]/.test(v)) return null;
+  let ok = zoneChecked.get(v);
+  if (ok === undefined) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: v });
+      ok = true;
+    } catch {
+      ok = false; // not a zone this engine knows
+    }
+    // Bounded: these can come from requests.
+    if (zoneChecked.size < 1000) zoneChecked.set(v, ok);
+  }
+  return ok ? v : null;
+}
+/**
+ * A zone under its current name ('Asia/Calcutta' → 'Asia/Kolkata'); null when it isn't one.
+ * @param {unknown} v
+ * @returns {string | null}
+ */
+export function modernZone(v) {
+  const tz = validZone(v);
+  return tz && validZone(RENAMED[tz]) ? RENAMED[tz] : tz;
+}
+
 const formatters = new Map();
 /**
  * The wall clock of a moment in a time zone.

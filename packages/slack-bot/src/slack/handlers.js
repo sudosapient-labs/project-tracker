@@ -18,9 +18,8 @@
 
    Handlers take Bolt's listener arguments but only use plain fields and the Web API client, so tests
    drive them with a fake client. app.js wires them to Bolt and acks. */
-import { compareDue, dayOf, fromWallClock } from '@sudosapient/client/dates';
+import { compareDue, dayOf, fromWallClock, validZone } from '@sudosapient/client/dates';
 import { trackerClient } from '../tracker.js';
-import { zone } from '../clock.js';
 import { EDIT, VIEW, isAdmin, level, shownHere, unmatchedText } from '../people.js';
 import { requestMessage } from '../prompt.js';
 import { renderCard } from './cards.js';
@@ -247,7 +246,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     const { pending, titles, slack: where } = taken.data;
     // The clock the changes were asked on, saved with them (only a card from before it was saved
     // reads on the asker's clock now).
-    const tz = zone(taken.data.tz) || (await tzOf(user, who.member));
+    const tz = validZone(taken.data.tz) || (await tzOf(user, who.member));
     const finish = () => store.finishConfirmation(id);
     if (Date.now() - taken.created_at > CONFIRM_TTL)
       try {
@@ -564,7 +563,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     if (!String(v.title || '').trim()) return errors({ title: 'Give the task a title.' });
     // The clock the time was picked on: the zone Slack says the picker showed, else the one the form
     // was opened with, else the person's now.
-    const tz = zone(v.dueTimeZone) || zone(meta.tz) || (await tzOf(user, who.member));
+    const tz = validZone(v.dueTimeZone) || validZone(meta.tz) || (await tzOf(user, who.member));
     const api = trackerAs(who.member, tz);
     const description = [v.description, meta.permalink ? `From Slack: ${meta.permalink}` : '', `— created by ${who.member.name} in Slack`]
       .filter(Boolean)

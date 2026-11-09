@@ -109,3 +109,26 @@ describe('reading what people type', () => {
     for (const s of ['', 'soon', '2026-02-31', '2026-11-20 25:00', 'fri 13pm', 'today at']) expect(read(s)).toBe(null);
   });
 });
+
+describe('time zones', () => {
+  it('knows an IANA zone and nothing else', () => {
+    for (const tz of ['Asia/Kolkata', 'Asia/Dubai', 'America/New_York', 'UTC', 'Asia/Calcutta']) expect(D.validZone(tz)).toBe(tz);
+    // Offsets don't follow daylight saving; the rest isn't a zone at all.
+    for (const v of ['+05:30', '-04:00', 'Mars/Olympus', 'IST but longer than any zone name could ever be', '', null, undefined, 5, {}])
+      expect(D.validZone(v)).toBe(null);
+    expect(D.validZone('x'.repeat(65))).toBe(null);
+  });
+  it('gives today’s name for an old one, and checks it the same way', () => {
+    expect(D.modernZone('Asia/Calcutta')).toBe('Asia/Kolkata');
+    expect(D.modernZone('Europe/Kiev')).toBe('Europe/Kyiv');
+    expect(D.modernZone('Asia/Dubai')).toBe('Asia/Dubai');
+    expect(D.modernZone('+05:30')).toBe(null);
+    expect(D.modernZone('Nowhere/Special')).toBe(null);
+  });
+  it('answers the same however many zones it has been asked about', () => {
+    for (let i = 0; i < 1100; i++) D.validZone(`Nowhere/Place_${i}`);
+    expect(D.validZone('Asia/Kolkata')).toBe('Asia/Kolkata');
+    expect(D.validZone('Nowhere/Place_1050')).toBe(null);
+    expect(D.validZone('Asia/Singapore')).toBe('Asia/Singapore');
+  });
+});
