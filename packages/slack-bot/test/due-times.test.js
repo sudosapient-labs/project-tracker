@@ -4,8 +4,9 @@
    due is refused before anyone confirms, the create modal takes a time, and each request tells the
    model the time now. Same harness as bot.test.js; people in other zones are in whose-clock.test.js. */
 import { describe, expect, it } from 'vitest';
-import { call, harness, saveZone, tracker } from './helpers.js';
-import { requestMessage } from '../src/prompt.js';
+import { call, harness, saveZone, tracker, workspaceZone } from './helpers.js';
+import { loadSkills, requestMessage } from '../src/prompt.js';
+import { mrkdwn } from '../src/slack/format.js';
 
 const IST = 'Asia/Kolkata';
 const unix = iso => Date.parse(iso) / 1000;
@@ -32,11 +33,65 @@ describe('due times in the Slack bot', () => {
     await mention(h);
     await h.handlers.idle();
     expect((await w.api.get(`/tasks/${t.key}`)).due).toBe('2026-11-09T18:29:00.000Z');
-    // The model reads it back on the same clock.
-    expect(results.join('\n')).toContain('"due":"2026-11-09 23:59"');
+    // The model reads it back on the same clock, with the zone, so it can say whose time it is.
+    expect(results.join('\n')).toContain('"due":"2026-11-09 23:59 GMT+5:30"');
     // The card shows each viewer their own time; the fallback is on the asker's clock.
     const card = JSON.stringify(h.slack.of('chat.update').at(-1).blocks);
     expect(card).toContain(`📅 <!date^${unix('2026-11-09T18:29:00Z')}^{date_short_pretty} {time}|2026-11-09 11:59 PM GMT+5:30>`);
+  });
+
+  it('words timed dues the model reads with their zone, all-day ones as plain days, and reads a zoned one back', async () => {
+    const w = await tracker();
+    await saveZone(w, 'ada', IST);
+    await workspaceZone(w, 'Asia/Dubai');
+    const timed = await w.api.post('/tasks', { project: 'WEB', title: 'Timed', assignee: 'me', due: '2026-11-09T20:30:00Z' });
+    await w.api.post('/tasks', { project: 'WEB', title: 'All day', due: '2026-11-12' });
+    await w.api.patch('/projects/WEB', { due: '2026-11-30T12:30:00Z' });
+    const h = await harness(w, {
+      confirm: 'none',
+      turns: [
+        [
+          call('list_tasks', {}),
+          call('get_task', { key: timed.key }),
+          call('summarise_project', { project: 'WEB' }),
+          call('list_projects', {}),
+          call('search', { q: 'Timed' }),
+        ],
+        // What it read, sent back as it was worded: the same moment.
+        [call('update_task', { key: timed.key, due: '2026-11-10 03:00 GMT+5:30' })],
+        // A time on another clock isn't read as this one.
+        [call('update_task', { key: timed.key, due: '2026-11-10 03:00 GMT+4' })],
+        [],
+      ],
+    });
+    const results = toolResults(h);
+    await mention(h);
+    await h.handlers.idle();
+    const by = name => results.filter(r => r.startsWith(name + ':')).join('\n');
+    for (const name of ['list_tasks', 'get_task', 'summarise_project', 'search']) expect(by(name)).toContain('"due":"2026-11-10 02:00 GMT+5:30"');
+    expect(by('list_tasks')).toContain('"due":"2026-11-12"');
+    expect(by('list_tasks')).not.toMatch(/2026-11-12 /);
+    expect(by('list_projects')).toContain('"due":"2026-11-30 18:00 GMT+5:30"');
+    expect(by('summarise_project')).toContain('"due":"2026-11-30 18:00 GMT+5:30"');
+    const [first, second] = results.filter(r => r.startsWith('update_task'));
+    expect(first).toContain('"due":"2026-11-10 03:00 GMT+5:30"');
+    expect(second).toContain('Not allowed: "2026-11-10 03:00 GMT+4" isn\'t a date');
+    expect((await w.api.get(`/tasks/${timed.key}`)).due).toBe('2026-11-09T21:30:00.000Z');
+  });
+
+  it('tells the model to keep the zone with every time it writes in a channel', () => {
+    const at = { now: new Date('2026-11-09T18:00:00Z'), timezone: IST, requester: { name: 'Deepak Kumar', role: 'Member' }, text: 'when is it due?' };
+    const inChannel = requestMessage({ ...at, channel: { name: 'general' } });
+    expect(inChannel).toContain('a time in tool results ends with its zone (GMT+5:30 now).');
+    expect(inChannel).toContain('People here may be on other clocks: write every time with its zone.');
+    expect(requestMessage({ ...at, channel: { dm: true } })).not.toContain('People here may be on other clocks');
+    expect(loadSkills().find(s => s.name === 'slack-style').body).toContain('keep the zone whenever you write a time');
+  });
+
+  it('never posts a date token the model wrote: its own text can’t hold one', () => {
+    const out = mrkdwn('Due <!date^1794330000^{date_short_pretty} {time}|Nov 10, 5:00 PM> now', { hosts: ['app.test'] });
+    expect(out).not.toContain('<!date');
+    expect(out).toContain('&lt;!date^');
   });
 
   it('creates a task due just after midnight on the right day', async () => {

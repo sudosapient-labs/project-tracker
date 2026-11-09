@@ -132,3 +132,20 @@ describe('time zones', () => {
     expect(D.validZone('Asia/Singapore')).toBe('Asia/Singapore');
   });
 });
+
+describe('words for people on other clocks', () => {
+  it('names the zone of a timed value, never of an all-day one', () => {
+    expect(D.label('2026-11-10T13:00:00.000Z', 'Asia/Dubai', { zone: true })).toBe('2026-11-10 17:00 GMT+4');
+    expect(D.label('2026-11-09T20:30:00.000Z', 'Asia/Kolkata', { zone: true, time: '12' })).toBe('2026-11-10 2:00 AM GMT+5:30');
+    expect(D.label('2026-07-10T13:00:00.000Z', 'America/New_York', { zone: true, style: 'short' })).toBe('Jul 10, 09:00 EDT');
+    expect(D.label('2026-11-10', 'Asia/Dubai', { zone: true })).toBe('2026-11-10');
+    expect(D.label('2026-11-10T13:00:00.000Z', 'Asia/Dubai')).toBe('2026-11-10 17:00');
+  });
+  it('reads those words back on the same clock, and refuses a time on another', () => {
+    expect(D.parseZoned('2026-11-10 17:00 GMT+4', 'Asia/Dubai')).toBe('2026-11-10T13:00:00.000Z');
+    expect(D.parseZoned('2026-11-10 5:00 PM GMT+4', 'Asia/Dubai')).toBe('2026-11-10T13:00:00.000Z');
+    expect(D.parseZoned('2026-11-10 17:00 GMT+4', 'Asia/Kolkata')).toBe(null);
+    expect(D.parseZoned('2026-11-10 5:00 PM', 'Asia/Dubai')).toBe('2026-11-10T13:00:00.000Z');
+    expect(D.parseZoned('2026-11-10', 'Asia/Dubai')).toBe('2026-11-10');
+  });
+});

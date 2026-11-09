@@ -4,7 +4,7 @@
    leaves a plain-text reply. */
 import { describe, expect, it } from 'vitest';
 import { call, harness, tracker } from './helpers.js';
-import { MAX_CARD_BLOCKS, cardSpec, renderCard, unsafeIn } from '../src/slack/cards.js';
+import { CARD_GUIDE, MAX_CARD_BLOCKS, cardSpec, renderCard, unsafeIn } from '../src/slack/cards.js';
 
 const HOSTS = ['app.test', 'slack.com', '*.slack.com'];
 const leaf = (type, props) => ({ type, props, children: [] });
@@ -262,6 +262,45 @@ describe('what a card can’t have', () => {
     expect(issuesOf({ elements: {} })).toEqual(['spec needs a root and elements']);
     expect(issuesOf({ root: 't', elements: { t: leaf('Text', { content: 'x' }) } })).toEqual(['root must be a Card']);
     expect(issuesOf(card({}, { f: leaf('Field', { label: 'x' }) }))).toEqual(['f.props.value: Invalid input']);
+  });
+});
+
+describe('times in cards', () => {
+  const dues = rows => card({ title: 'Due soon' }, { t: leaf('Table', { headers: ['Task', 'Due'], rows }) });
+
+  it('sends a time without its zone back to the model; one with its zone, or a plain day, is shown', () => {
+    expect(issuesOf(dues([['WEB-12', '2026-11-10 17:00']]))).toEqual([
+      'a Table cell has the time "17:00" without its zone: write it as the tool results do, e.g. "2026-11-14 17:00 GMT+4"',
+    ]);
+    expect(issuesOf(dues([['WEB-12', 'Nov 10, 5:00 PM']]))[0]).toContain('"5:00 PM" without its zone');
+    const fields = card({ title: 'Next' }, { f: { type: 'Fields', props: {}, children: ['d'] }, d: leaf('Field', { label: 'Due', value: '09:30' }) });
+    expect(issuesOf(fields)[0]).toContain('the Field "Due" has the time "09:30"');
+    expect(issuesOf(card({ title: 'x' }, { n: leaf('Text', { content: 'Standup moved to 10:00' }) }))[0]).toContain('a Text has the time "10:00"');
+
+    const { blocks } = renderCard(
+      dues([
+        ['WEB-12', '2026-11-10 17:00 GMT+4'],
+        ['WEB-15', '2026-11-10 5:00 PM GMT+5:30'],
+        ['WEB-19', '2026-11-12'],
+      ]),
+      { hosts: HOSTS },
+    );
+    const table = blocks.find(b => b.type === 'data_table');
+    expect(table.rows.slice(1).map(r => r[1].text)).toEqual(['2026-11-10 17:00 GMT+4', '2026-11-10 5:00 PM GMT+5:30', '2026-11-12']);
+  });
+
+  it('never lets a date token the model wrote through: it shows as text', () => {
+    const token = '<!date^1794330000^{date_short_pretty} {time}|Nov 10 GMT+4>';
+    const spec = card(
+      { title: 'x', subtitle: token },
+      { n: leaf('Text', { content: `Due ${token}` }), t: leaf('Table', { headers: ['Due'], rows: [[token]] }) },
+    );
+    const { blocks, text, plain } = renderCard(spec, { hosts: HOSTS });
+    for (const out of [json(blocks), json(text), json(plain)]) expect(out).not.toContain('<!date');
+  });
+
+  it('tells the model to keep the zone', () => {
+    expect(CARD_GUIDE).toContain('A time anywhere in a card keeps the zone tool results give it');
   });
 });
 

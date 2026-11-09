@@ -19,7 +19,7 @@
      card       the card (a json-render spec) show_card set for the reply, if any */
 import { tool } from 'langchain';
 import * as z from 'zod';
-import { compareDue, label, parseWhen } from '@sudosapient/client/dates';
+import { compareDue, label, parseZoned } from '@sudosapient/client/dates';
 import { TOOLS as MCP, fence, tzOf } from '@sudosapient/mcp/tools';
 import { COMMENT, EDIT, VIEW, level, shownHere } from './people.js';
 import { CARD_GUIDE, cardSpec, renderCard } from './slack/cards.js';
@@ -76,17 +76,20 @@ const brief = (t, who, projects, tz) =>
     status: t.status,
     priority: t.priority === 'none' ? null : t.priority,
     assignee: who.get(t.assignee),
-    due: t.due ? label(t.due, tz) : null,
+    due: shown(t.due, tz),
     archived: t.archived,
   });
 /* Dues the model sends and reads are on the requester's clock (ctx.tz, clock.js; the request says
    whose and what time it is there): '2026-11-20', or '2026-11-20 23:59' with a time. Code, not the
-   model, turns that into the UTC value the tracker stores. */
+   model, turns that into the UTC value the tracker stores. What the model reads it may repeat in a
+   channel, read by people on other clocks, so a timed one there names its zone ('2026-11-20 23:59
+   GMT+5:30'); sent back like that it's read the same. An all-day one is a plain day everywhere. */
+const shown = (v, tz) => (v ? label(v, tz, { zone: true }) : null);
 const DUE = 'YYYY-MM-DD, or YYYY-MM-DD HH:MM (24h) for a time of day, on the clock of the person asking';
 const tzIn = async ctx => ctx.tz || tzOf(ctx.api);
 async function dueArg(ctx, v) {
   if (!v) return null;
-  const out = parseWhen(v, await tzIn(ctx));
+  const out = parseZoned(v, await tzIn(ctx));
   if (!out) throw new Refused(`"${v}" isn't a date. Use YYYY-MM-DD, or YYYY-MM-DD HH:MM for a time of day.`);
   return out;
 }
@@ -176,7 +179,7 @@ export const TRACKER_TOOLS = [
           name: p.name,
           status: p.status,
           lead: who.get(p.lead),
-          due: p.due ? label(p.due, tz) : null,
+          due: shown(p.due, tz),
           open: p.openTasks,
           done: p.doneTasks,
           private: p.private,

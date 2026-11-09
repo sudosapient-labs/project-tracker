@@ -137,7 +137,8 @@ Dubai, and their 10:00 calendar event is at 08:30 (`manage_event` reads `date` a
 A program that runs the tools for other people with one key (the Slack bot) gives each person's
 client their zone with `useTimeZone(api, tz)` from `@sudosapient/mcp/tools`: the tools read and show
 dates on it, and the client sends it as `Sudo-Time-Zone`, so the server words history and events on
-it too.
+it too. `useTimeZone(api, tz, { zoneNames: true })` also names the zone with each timed start and due
+(`2026-11-20 17:00 GMT+4`), for results that may be read out to people on other clocks.
 
 Arguments are checked against each tool's `inputSchema` before it runs: a missing, unknown or
 mistyped one is an `isError` result naming it (`invalid_arguments: Missing required argument:

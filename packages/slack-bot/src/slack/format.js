@@ -57,12 +57,8 @@ export function mrkdwn(md, { hosts = [] } = {}) {
 export function when(v, tz) {
   if (!v) return '';
   if (!isTimed(v)) return label(v, tz);
-  const ms = Date.parse(v);
-  return `<!date^${Math.floor(ms / 1000)}^{date_short_pretty} {time}|${label(v, tz, { time: '12' })} ${zoneName(ms, tz)}>`;
+  return `<!date^${Math.floor(Date.parse(v) / 1000)}^{date_short_pretty} {time}|${label(v, tz, { time: '12', zone: true })}>`;
 }
-/* 'GMT+4', 'GMT+5:30', 'EST': the zone's short name at that moment. */
-const zoneName = (ms, tz) =>
-  new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' }).formatToParts(ms).find(p => p.type === 'timeZoneName')?.value || tz;
 
 const STATUS = { backlog: 'Backlog', todo: 'To do', progress: 'In progress', review: 'In review', done: 'Done' };
 const PRIORITY = { urgent: 'Urgent', high: 'High', medium: 'Medium', low: 'Low' };

@@ -63,7 +63,8 @@ describe('each person’s own clock', () => {
     expect(model.seen[0]).toMatch(/now on Ada's clock \(Asia\/Kolkata\)\./);
     expect(model.seen[1]).toMatch(/now on Bea's clock \(Asia\/Dubai\)\./);
     expect(results.filter(r => r.startsWith('update_task'))).toHaveLength(2);
-    for (const r of results.filter(r => r.startsWith('update_task'))) expect(r).toContain('"due":"2026-11-10 17:00"');
+    expect(results.find(r => r.startsWith('update_task'))).toContain('"due":"2026-11-10 17:00 GMT+5:30"');
+    expect(results.findLast(r => r.startsWith('update_task'))).toContain('"due":"2026-11-10 17:00 GMT+4"');
     // Each card: a token for every viewer's clock, with the asker's as the fallback.
     expect(cardText(h, ada.key)).toContain(`📅 ${token(INDIA, '2026-11-10 5:00 PM GMT+5:30')}`);
     expect(cardText(h, bea.key)).toContain(`📅 ${token(DUBAI, '2026-11-10 5:00 PM GMT+4')}`);
@@ -77,8 +78,8 @@ describe('each person’s own clock', () => {
     await mention(h, 'UBEA', '3.1');
     await h.handlers.idle();
     // 17:00 in India is 15:30 in Dubai: in the bot's own tool and in the one shared with MCP.
-    expect(results.find(r => r.startsWith('list_tasks'))).toContain('"due":"2026-11-10 15:30"');
-    expect(results.find(r => r.startsWith('get_task'))).toContain('2026-11-10 15:30');
+    expect(results.find(r => r.startsWith('list_tasks'))).toContain('"due":"2026-11-10 15:30 GMT+4"');
+    expect(results.find(r => r.startsWith('get_task'))).toContain('"due":"2026-11-10 15:30 GMT+4"');
     expect(results.join('\n')).not.toContain('17:00');
   });
 

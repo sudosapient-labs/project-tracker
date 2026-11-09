@@ -235,6 +235,13 @@ Slack (Socket Mode / HTTP)
     the zone. An all-day due is a plain date. Slack shows the token only in mrkdwn, so dates never go
     in plain text, headers or modals. `sudo-tracker chat` uses the requester's saved zone (else the
     tracker's for them).
+  - The model's own words can't hold a token (its replies and cards are escaped, so a token it
+    writes shows as text), so what it reads names the zone instead: a timed due or start in a tool
+    result is `2026-11-20 17:00 GMT+4` (the zone's short name on the asker's clock; an all-day one
+    stays `2026-11-20`), the prompt and the `slack-style` skill tell it to keep the zone with every
+    time it writes in a channel, and a card with a time of day and no zone after it goes back to the
+    model to fix. A due it sends back with that zone is read as the same moment; one naming another
+    clock's zone is refused.
 - **One run at a time per conversation**, in arrival order; a run stops after 3 minutes and each
   tracker call after 20 seconds. Slack redeliveries are recognised and
   handled once. Creating a task uses an idempotency key, so a replayed tool call can't create it

@@ -122,11 +122,41 @@ export function unsafeIn(blocks, text, hosts) {
   return problems;
 }
 
+/* A card is read by everyone in the channel, each on their own clock, and its text can't hold Slack's
+   date tokens (escaped like the rest), so a time in it must name its zone, as tool results give it
+   ('2026-11-14 17:00 GMT+4', 'Nov 14, 5:00 PM GMT+4'). A time of day not followed by a zone name
+   ('17:00', '5:00 PM') is sent back to the model to fix. */
+// Not the offset in a zone's name (GMT+5:30).
+const TIME = /(?<![+\-\d:])\b([01]?\d|2[0-3]):[0-5]\d(?:\s?[AaPp]\.?[Mm]\b\.?)?/g;
+const ZONE_NEXT = /^\s*(?:(?:GMT|UTC)(?:[+-]\d{1,2}(?::\d{2})?)?|[A-Z]{2,5})\b/;
+export const zonelessTime = s => {
+  for (const m of String(s ?? '').matchAll(TIME)) if (!ZONE_NEXT.test(s.slice(m.index + m[0].length))) return m[0];
+  return null;
+};
+function zonelessIn(card) {
+  const issues = [];
+  const check = (where, s) => {
+    const t = zonelessTime(s);
+    if (t) issues.push(`${where} has the time "${t}" without its zone: write it as the tool results do, e.g. "2026-11-14 17:00 GMT+4"`);
+  };
+  const walk = el => {
+    if (el.type === 'section') el.children.forEach(walk);
+    else if (el.type === 'text') check('a Text', el.content);
+    else if (el.type === 'fields') el.children.forEach(f => check(`the Field "${f.label}"`, f.value));
+    else if (el.type === 'table') el.rows.forEach(r => r.forEach(c => check('a Table cell', c)));
+  };
+  check('the subtitle', card.subtitle);
+  card.children.forEach(walk);
+  return [...new Set(issues)];
+}
+
 /* A spec → { blocks, text, plain } for Slack. `text` is the notification text; `plain` is the card
    as mrkdwn sections, posted instead of the blocks if Slack refuses them. Throws CardSpecError,
    with one issue per problem, for anything wrong: the tool sends those back to the model. */
 export function renderCard(spec, { hosts = [] } = {}) {
   const raw = toCard(spec, { components: COMPONENTS, limits: LIMITS });
+  const zoneless = zonelessIn(raw);
+  if (zoneless.length) throw new CardSpecError(zoneless);
   const card = escapeCard(raw, hosts);
   const blocks = cardToBlockKit(card, { maxBlocks: Infinity });
   const issues = [];
@@ -185,7 +215,7 @@ The card is flat: "root" is the key of the Card, and "elements" lists every elem
 - Section {}: groups children.
 - Text { content, style?: "plain" | "bold" | "muted" }: a paragraph. Markdown: **bold**, _italic_, \`code\`, [WEB-12](task url) links to tracker URLs from tool results. muted is for footnotes.
 - Fields {} with Field { label, value } children: up to 10 label/value pairs, for a few key numbers.
-- Table { headers: [..], rows: [[..]], caption }: at most one, up to 99 rows and 20 columns, one cell per header in every row. caption names the table ("Open tasks"). Cells are plain text: no links or formatting.
+- Table { headers: [..], rows: [[..]], caption }: at most one, up to 99 rows and 20 columns, one cell per header in every row. caption names the table ("Open tasks"). Cells are plain text: no links or formatting. A time anywhere in a card keeps the zone tool results give it ("Nov 14, 17:00 GMT+4"); a date without a time stays plain.
 - Chart { title, chart }: at most two. title up to 50 characters; labels, categories and series names up to 20 characters and unique.
   pie: { "type": "pie", "segments": [{ "label", "value" > 0 }] }, up to 12 segments, for shares of a whole.
   bar | line | area: { "type", "categories": [..], "series": [{ "name", "values": [one per category, in order] }], "xLabel"?, "yLabel"? }, up to 20 categories and 12 series.
@@ -193,4 +223,4 @@ The card is flat: "root" is the key of the Card, and "elements" lists every elem
 
 Example: { "root": "card", "elements": [
   { "key": "card", "type": "Card", "props": { "title": "Ada's open work", "subtitle": "4 tasks, 1 overdue" }, "children": ["tasks"] },
-  { "key": "tasks", "type": "Table", "props": { "caption": "Open tasks", "headers": ["Task", "Title", "Status", "Due"], "rows": [["WEB-12", "Fix login loop", "In progress", "Nov 3 (overdue)"], ["WEB-15", "Pricing page copy", "To do", "Nov 14"]] }, "children": [] } ] }`;
+  { "key": "tasks", "type": "Table", "props": { "caption": "Open tasks", "headers": ["Task", "Title", "Status", "Due"], "rows": [["WEB-12", "Fix login loop", "In progress", "Nov 3 (overdue)"], ["WEB-15", "Pricing page copy", "To do", "Nov 14, 17:00 GMT+4"]] }, "children": [] } ] }`;
