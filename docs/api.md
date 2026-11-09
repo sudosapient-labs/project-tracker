@@ -117,7 +117,7 @@ by id, email, full name, a unique first name, or `me`. 🔑 Owners and Admins on
 | Events        | `GET`, `POST /events`, `PATCH`, `DELETE /events/{id}`                                   | Calendar events (`from`, `to`, `project`); workspace-wide ones 🔑                                |
 | Views         | `GET`, `POST /views`, `PATCH`, `DELETE /views/{id}`                                     | Saved views: named filters shown as a project tab                                                |
 | Notifications | `GET /notifications`, `PATCH /notifications/{id}`, `POST /notifications/read-all`       | Inbox (`unread=true`), mark read or unread, mark all read                                        |
-| Workspace     | `GET /workspace`, `PATCH /workspace` 🔑, `POST /workspace/invite-link` 🔑               | Settings; rename and colour; the reusable join link                                              |
+| Workspace     | `GET /workspace`, `PATCH /workspace` 🔑, `POST /workspace/invite-link` 🔑               | Settings; rename, colour and time zone; the reusable join link                                   |
 |               | `GET /activity`                                                                         | The activity feed (`project`), newest first                                                      |
 | Search        | `GET /search?q=`                                                                        | Tasks, projects and people                                                                       |
 
@@ -125,8 +125,18 @@ People can be given as an id, an email, a full name, a unique first name, or `me
 is `YYYY-MM-DD` for all day, or an ISO 8601 date-time **with a zone** for a time of day
 (`2026-11-09T23:59+05:30` or `…Z`); a date-time without a zone is refused, since it would be a
 different moment on different clocks. Times are stored and returned in UTC
-(`2026-11-09T18:29:00.000Z`): show them in the reader's time zone (`GET /me/preferences` → `tz`),
-not by cutting the string. See [dates and times](architecture.md#dates-and-times).
+(`2026-11-09T18:29:00.000Z`): show them in the reader's time zone, not by cutting the string. See
+[dates and times](architecture.md#dates-and-times).
+
+**Time zones.** Each person's dates are read on one clock: their own zone, else the workspace's,
+else UTC ([whose clock](architecture.md#whose-clock)). Every Member, `GET /me` and
+`GET /me/preferences` say which, as `timeZone` (an IANA zone, always set) and `timeZoneSource`
+(`person`, `workspace` or `default`); anyone who can see a member sees them, bots included. Use
+`timeZone` to show someone their times and to read what they type ("Friday 5pm"), never your
+machine's zone. `preferences.tz` is only the zone the person saved, so it's missing when they have
+none; set it with `PATCH /me/preferences` (any IANA zone, like `Australia/Sydney`). The workspace's
+is `timeZone` on `GET /workspace` (`null` when unset); Owners and Admins change it with
+`PATCH /workspace` (`null` unsets it).
 
 Finishing a task (`status: done`, or `…/complete`) sets `completedAt` from the server's clock;
 moving it to any other status clears it. A repeating task finished with a due date gets one next
@@ -235,7 +245,7 @@ the app (select several, a whole column) are one request per task here.
 | Saved views   | Save a view, rename, change its filters, delete                                                                  | `/views…`                                          | `views …`                                     | `list_views`, `manage_view`                                       |
 | Notifications | Inbox, mark read or unread, mark all read                                                                        | `/notifications…`                                  | `inbox …`                                     | `list_notifications`, `mark_notifications_read`                   |
 | Activity      | The workspace, project and task feeds                                                                            | `GET /activity`, `…/activity`                      | `activity`, `show`                            | `list_activity`, `get_task`                                       |
-| Workspace     | Rename, colour 🔑                                                                                                | `PATCH /workspace`                                 | `workspace edit`                              | `update_workspace`                                                |
+| Workspace     | Rename, colour, time zone 🔑                                                                                     | `PATCH /workspace`                                 | `workspace edit`                              | `update_workspace`                                                |
 | Preferences   | Display preferences (theme, accent, density, language, time zone, formats, …)                                    | `PATCH /me/preferences`                            | `prefs set`                                   | `update_settings preferences`                                     |
 |               | Notification preferences (email, push and in-app per kind)                                                       | `PATCH /me/preferences`                            | `notify-prefs set`                            | `update_settings notifications`                                   |
 | Keys          | See the key in use; revoke it                                                                                    | `GET /me`, `DELETE /me/key`                        | `whoami`, `logout --revoke`                   | —                                                                 |

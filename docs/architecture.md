@@ -94,10 +94,36 @@ MCP server and the Slack bot:
 The sync schema accepts only these two; the API also takes a date-time with an offset and stores it
 in UTC, and refuses one without a zone. A timed value's day depends on the reader (`2026-11-09T20:30Z`
 is Nov 10, 2:00 AM in India), so code reads values with `dayOf`, `timeOf`, `label`, `instant`,
-`isOverdue` and `compareDue` and the reader's time zone (Settings → time zone; on the server,
-`server/lib/clock.js`), never with `value.slice(0, 10)` or string comparison. What people type
-("fri 5pm") becomes a value through `parseWhen`. Calendar events are a separate model (a day plus
-an optional `HH:MM`).
+`isOverdue` and `compareDue` and the reader's time zone, never with `value.slice(0, 10)` or string
+comparison. What people type ("fri 5pm") becomes a value through `parseWhen`. Calendar events are a
+separate model (a day plus an optional `HH:MM`).
+
+### Whose clock
+
+Stored values don't depend on anyone's clock; reading or writing them in words or as a day does.
+Which time zone that is, is decided in one place, in this order:
+
+1. **The person's** saved zone (Settings → Date and time; `prefs.tz`, any IANA zone).
+2. **The workspace's** (Settings → Workspace, Owners and Admins; `tz` on the workspace doc,
+   `timeZone` in `GET /workspace`), for people who haven't set one, and for bots such as the Slack
+   bot's account.
+3. **UTC**.
+
+Never the machine's zone: on the server that is UTC, not anyone's. On the server the order lives in
+`server/lib/clock.js` (`clockOf(repo, uid)` → `{ tz, time, source }`, and `workspaceClock(repo)`),
+and everything the server writes or decides for someone goes through it: activity text,
+notifications, reminders and digests, repeats, `sort=due`, "today" in the API, session dates. The
+API shows the result as `timeZone` and `timeZoneSource` (`person`, `workspace` or `default`) on
+Members, `GET /me` and `GET /me/preferences`, so other surfaces use the same clock: the MCP server
+and the CLI read the person's from there, and fall back to their computer's only when an older
+server doesn't say.
+
+The app (`src/core/clock.js`, `zoneOf`) uses the saved zone, else the browser's, else the
+workspace's, else UTC. The browser's zone is never only shown: when someone with none saved opens
+the app, it saves the browser's as theirs, once, and says so ("Time zone set to Dubai from your
+browser"), so the server and the app agree. A zone they chose is never replaced. A new workspace
+takes the Owner's zone when setup finishes; migration 014 gave existing ones the zone most of their
+people had saved.
 
 ## Public API, MCP and CLI
 
