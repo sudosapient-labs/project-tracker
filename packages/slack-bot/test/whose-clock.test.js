@@ -238,6 +238,59 @@ describe('confirmations keep the asker’s clock', () => {
   });
 });
 
+describe('a waiting change keeps the moment it was asked for', () => {
+  const press = (h, user, id) =>
+    h.handlers
+      .onAction({ action: { action_id: 'pending_confirm', value: id }, body: { user: { id: user }, channel: { id: 'C1' } }, respond: async () => {} })
+      .then(() => h.handlers.idle());
+  const cardId = blocks => blocks?.find(b => b.block_id === 'pending')?.elements[0].value;
+  // Monday Nov 9, 10:00 in Dubai; "tomorrow 5pm" is Tuesday Nov 10, 17:00 there.
+  const ASKED = Date.parse('2026-11-09T06:00:00Z');
+  const at = async (ms, fn) => {
+    vi.useFakeTimers({ now: ms, toFake: ['Date'] });
+    try {
+      return await fn();
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
+  it('“tomorrow 5pm” confirmed the next day is still the day it was asked about, on the card and in the change', async () => {
+    const { w, bea } = await team();
+    const h = await harness(w, { model: new PerPerson(() => [call('update_task', { key: bea.key, due: 'tomorrow 17:00' })]) });
+    await at(ASKED, async () => {
+      await mention(h, 'UBEA', '20.1');
+      await h.handlers.idle();
+    });
+    const card = h.slack.of('chat.update').at(-1);
+    const id = cardId(card.blocks);
+    expect(JSON.stringify(card.blocks)).toContain(`due → ${token(DUBAI, '2026-11-10 5:00 PM GMT+4')}`);
+    // Saved with the card as the value, not the words.
+    expect(h.store.confirmation(id).data.pending[0].args.due).toBe(DUBAI);
+    // Pressed the next morning (Tuesday 06:00 in Dubai, within the card's day): still Nov 10.
+    await at(ASKED + 20 * 3_600_000, () => press(h, 'UBEA', id));
+    expect((await w.api.get(`/tasks/${bea.key}`)).due).toBe(DUBAI);
+    expect(blocksOf(h, card.ts)).toContain(token(DUBAI, '2026-11-10 5:00 PM GMT+4'));
+  });
+
+  it('and after a restart', async () => {
+    const { w } = await team();
+    const h = await harness(w, {
+      model: new PerPerson(() => [call('create_task', { project: 'WEB', title: 'Later', due: 'tomorrow 17:00' })]),
+      confirm: 'all',
+    });
+    await at(ASKED, async () => {
+      await mention(h, 'UBEA', '21.1');
+      await h.handlers.idle();
+    });
+    const id = cardId(h.slack.of('chat.update').at(-1).blocks);
+    const h2 = await harness(w, { store: h.store, checkpointer: h.checkpointer, model: new PerPerson(() => []), confirm: 'all' });
+    await h2.handlers.recover();
+    await at(ASKED + 20 * 3_600_000, () => press(h2, 'UBEA', id));
+    expect((await w.api.get('/tasks')).data.find(t => t.title === 'Later').due).toBe(DUBAI);
+  });
+});
+
 describe('cards for everyone in the channel', () => {
   it('a link preview shows a timed due as a date token and an all-day due as a plain date', async () => {
     const { w, ada, bea } = await team();

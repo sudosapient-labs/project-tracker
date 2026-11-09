@@ -117,7 +117,8 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
         threadTs: ctx.slack.threadTs,
         messageTs: ts,
         // A card the agent made before stopping for Confirm is shown with the reply after it. The
-        // asker's clock goes with the changes: their dates are on it, whenever Confirm is pressed.
+        // changes' dates are already values (agent.js pins them on the asker's clock), and that
+        // clock goes with them, for the card's words whenever Confirm is pressed.
         data: { pending: out.pending, titles, slack: ctx.slack, card: ctx.card || null, tz: ctx.tz },
       });
       return slack.chat.update({
@@ -278,7 +279,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
         // From here the change may be made. A restart after this can't tell whether it was, so
         // recover() says so rather than making it again (only create_task has an idempotency key).
         store.markResuming(id);
-        const out = await agent.resume({ threadId: taken.thread_id, ids: taken.interrupts, approve, ctx });
+        const out = await agent.resume({ threadId: taken.thread_id, ids: taken.interrupts, approve, ctx, pending });
         if (out.stale)
           return await slack.chat.update({
             channel,

@@ -357,4 +357,20 @@ export async function wouldBeAllowed(ctx, name, args = {}) {
   }
 }
 
+/* A change waiting for Confirm with its dates as the values they stand for now, on the asker's clock:
+   "tomorrow 10:00" is read once, when the card is made, so the card and the change Confirm makes are
+   the same moment, however late (or after however many restarts) it's pressed. The bot's tools take
+   one date, `due`; `start` is here for when one does. An unreadable date is left as it is (the tool
+   refuses it). */
+const DATE_ARGS = ['due', 'start'];
+export async function pinDates(ctx, args = {}) {
+  const out = { ...args };
+  for (const k of DATE_ARGS) {
+    if (typeof out[k] !== 'string' || !out[k]) continue;
+    const v = parseZoned(out[k], await tzIn(ctx));
+    if (v) out[k] = v;
+  }
+  return out;
+}
+
 export const WRITE_TOOLS = ['create_task', 'update_task', 'complete_task', 'assign', 'comment', 'link_thread'];

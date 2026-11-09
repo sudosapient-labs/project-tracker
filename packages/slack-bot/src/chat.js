@@ -61,7 +61,7 @@ export async function chatSession(config, { as, project = null, decide, log = co
     while (out.pending.length) {
       const approve = await decide(out.pending);
       c = ctx();
-      out = await agent.resume({ threadId, ids: out.pending.map(p => p.id), approve, ctx: c });
+      out = await agent.resume({ threadId, ids: out.pending.map(p => p.id), approve, ctx: c, pending: out.pending });
       if (out.stale) break;
       touched.push(...out.touched);
       card = out.card || card;

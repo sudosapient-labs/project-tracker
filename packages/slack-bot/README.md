@@ -226,8 +226,9 @@ Slack (Socket Mode / HTTP)
   own tracker client on that zone, so people asking at the same time never share one; it sends the
   zone as `Sudo-Time-Zone`, so what the tracker words itself (history like "to Nov 10, 5:00 PM",
   calendar events) is on the asker's clock too, not the bot member's. A change
-  waiting for Confirm keeps the asker's zone, so Confirm, whenever it's pressed and after a restart,
-  makes the change they asked for.
+  waiting for Confirm keeps the asker's zone, and its dates are read when it's asked ("tomorrow
+  17:00" is saved as the moment it meant then), so the card shows, and Confirm makes, whenever it's
+  pressed and after a restart, the change they asked for.
   - Messages in a channel are read by everyone, each on their own clock, so a timed due on a task
     card, a list, a preview or a confirmation is Slack's date token
     (`<!date^UNIX^{date_short_pretty} {time}|fallback>`): each viewer sees their own day and time.

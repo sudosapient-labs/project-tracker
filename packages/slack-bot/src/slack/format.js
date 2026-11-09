@@ -100,8 +100,9 @@ const short = (v, n) => {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 };
 
-/* A start or due the model gave a tool ('2026-11-20 17:00', on `tz`, the asker's clock), as when()
-   shows it; as given when it can't be read (or `tz` isn't known: a card saved before it was kept). */
+/* A start or due of a change waiting for Confirm, as when() shows it: a stored value (agent.js pins
+   them), or on a card saved before that, the model's words on `tz`, the asker's clock; as given when
+   it can't be read (or `tz` isn't known: a card saved before it was kept). */
 const givenWhen = (v, tz) => {
   const value = tz && v ? parseWhen(v, tz) : null;
   return value ? when(value, tz) : esc(short(v, 120));
