@@ -1,6 +1,7 @@
 /* Slack text and Block Kit: the agent's reply as mrkdwn, task cards with actions, confirmation cards,
    and the create-task modal. Everything other people wrote (titles, names) is escaped, so it can't
    become a link, a mention or formatting. */
+import { label } from '@sudosapient/client/dates';
 
 /* Slack's three control characters. */
 export const esc = s =>
@@ -54,12 +55,12 @@ export const statusName = s => STATUS[s] || s;
 const button = (text, action_id, value, style) => ({ type: 'button', text: { type: 'plain_text', text }, action_id, value, ...(style ? { style } : {}) });
 
 /* One task as a Slack card: key, title (linked), status, assignee, due, and buttons. */
-export function taskCard(t, { assignee, project, actions = true } = {}) {
+export function taskCard(t, { assignee, project, actions = true, tz = 'UTC' } = {}) {
   const facts = [
     statusName(t.status),
     PRIORITY[t.priority],
     assignee ? `👤 ${esc(assignee)}` : 'Unassigned',
-    t.due ? `📅 ${t.due.slice(0, 10)}` : null,
+    t.due ? `📅 ${label(t.due, tz, { time: '12' })}` : null,
     project ? esc(project) : null,
   ].filter(Boolean);
   const blocks = [{ type: 'section', text: { type: 'mrkdwn', text: `*<${t.url}|${esc(t.key)} ${esc(t.title)}>*\n${facts.join('  ·  ')}` } }];
@@ -208,6 +209,7 @@ export function createTaskModal({ title, description, projects, members, default
         element: { type: 'static_select', action_id: 'v', options: Object.entries(PRIORITY).map(([v, t]) => opt(t, v)) },
       },
       { type: 'input', block_id: 'due', optional: true, label: { type: 'plain_text', text: 'Due date' }, element: { type: 'datepicker', action_id: 'v' } },
+      { type: 'input', block_id: 'due_time', optional: true, label: { type: 'plain_text', text: 'Due time' }, element: { type: 'timepicker', action_id: 'v' } },
       {
         type: 'input',
         block_id: 'description',
@@ -223,7 +225,15 @@ export function createTaskModal({ title, description, projects, members, default
 export function modalValues(view) {
   const v = id => {
     const el = view.state.values[id]?.v;
-    return el?.value ?? el?.selected_option?.value ?? el?.selected_date ?? null;
+    return el?.value ?? el?.selected_option?.value ?? el?.selected_date ?? el?.selected_time ?? null;
   };
-  return { title: v('title'), project: v('project'), assignee: v('assignee'), priority: v('priority'), due: v('due'), description: v('description') };
+  return {
+    title: v('title'),
+    project: v('project'),
+    assignee: v('assignee'),
+    priority: v('priority'),
+    due: v('due'),
+    dueTime: v('due_time'),
+    description: v('description'),
+  };
 }

@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { zoneParts } from '@sudosapient/client/dates';
 
 const SKILLS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'skills');
 
@@ -52,12 +53,13 @@ const esc = s => String(s).replace(/</g, '‹').replace(/>/g, '›');
 
 /* The user message for one request: when and where, who's asking, the thread so far (fenced as
    untrusted), and what they asked. */
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
 export function requestMessage({ now, timezone, requester, channel, transcript, text }) {
-  const day = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
-  const get = t => day.find(p => p.type === t)?.value;
-  const date = `${get('year')}-${get('month')}-${get('day')} (${get('weekday')})`;
+  // The day and the time now, so "today", "Friday" and "by 6pm" can be resolved on this clock.
+  const at = zoneParts(+now, timezone);
   const lines = [
-    `Today is ${date}, time zone ${timezone}.`,
+    `Today is ${at.day} (${WEEKDAYS[at.weekday]}), ${String(at.hour).padStart(2, '0')}:${String(at.minute).padStart(2, '0')} now, time zone ${timezone}.`,
     `Asking: ${requester.name} (${requester.role}${requester.email ? `, ${requester.email}` : ''}).`,
     channel.dm
       ? `Where: a direct message with you${channel.project ? ` (default project ${channel.project})` : ''}.`

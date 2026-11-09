@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ApiError, seg } from '@sudosapient/client';
+import { showDate } from './clock.js';
 
 export const STATUSES = ['backlog', 'todo', 'progress', 'review', 'done'];
 export const PRIORITIES = ['urgent', 'high', 'medium', 'low', 'none'];
@@ -56,7 +57,8 @@ const list = v =>
         .flatMap(s => String(s).split(','))
         .map(s => s.trim())
         .filter(Boolean);
-const when = ms => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : '');
+// A moment, on this computer's clock.
+const when = ms => (ms ? showDate(new Date(ms).toISOString()) : '');
 const onOff = (k, v) => {
   if (/^(on|true|yes)$/i.test(v)) return true;
   if (/^(off|false|no)$/i.test(v)) return false;
@@ -366,10 +368,10 @@ export const NOUNS = {
               ),
             );
             if (p.description) x.print('\n' + p.description);
-            x.print(`\n${p.openTasks} open · ${p.doneTasks} done${p.start ? ` · ${p.start}` : ''}${p.due ? ` → ${p.due}` : ''}`);
+            x.print(`\n${p.openTasks} open · ${p.doneTasks} done${p.start ? ` · ${showDate(p.start)}` : ''}${p.due ? ` → ${showDate(p.due)}` : ''}`);
             if (p.members.length)
               x.print('\nPeople: ' + p.members.map(m => `${names.get(m) || m}${p.permissions[m] ? ` (${p.permissions[m]})` : ''}`).join(', '));
-            for (const m of p.milestones) x.print(`  ◆ ${m.name}${m.date ? ` ${m.date.slice(0, 10)}` : ''}`);
+            for (const m of p.milestones) x.print(`  ◆ ${m.name}${m.date ? ` ${showDate(m.date)}` : ''}`);
             x.print('\n' + x.dim(p.url));
           });
         },

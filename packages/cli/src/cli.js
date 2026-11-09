@@ -7,6 +7,8 @@ import readline from 'node:readline';
 import { parseArgs } from 'node:util';
 import { ApiError, createClient, plainHttpRemote, seg } from '@sudosapient/client';
 import { clearConfig, configPath, loadConfig, saveConfig } from '@sudosapient/client/config';
+import { parseWhen } from '@sudosapient/client/dates';
+import { localTz, showDate } from './clock.js';
 import { ALIASES, NOUNS, PRIORITIES, STATUSES, nounHelp, rawApi, reaction, several } from './commands.js';
 
 // Kept equal to package.json by release-please (extra-files in release-please-config.json).
@@ -36,7 +38,8 @@ More (sudo-cli help <command> lists each one's subcommands)
   teams, people, bots, files, events, views, inbox, activity, workspace, me, prefs, notify-prefs, favorites
   api <METHOD> <path> [--data <json>] [-f key=value]... [-F key=value]...   any endpoint, JSON out
 
-Shortcuts: new, done, assign, show (= tasks …). Dates: today, tomorrow, friday, +3d, +2w, 2026-11-20.
+Shortcuts: new, done, assign, show (= tasks …). Dates: today, tomorrow, friday, +3d, +2w, 2026-11-20, each
+optionally with a time ("friday 5pm", "2026-11-20 17:00"), on this computer's clock (or TZ).
 Deleting a project, person, bot, team or file asks first (--yes to skip; required without a
 terminal). Deleted tasks and comments can be undeleted for 10 minutes, so they don't ask.
 Options: --json (machine-readable output), --url, --insecure (allow a plain http:// URL to another
@@ -100,23 +103,12 @@ const OPTIONS = {
   version: { type: 'boolean', short: 'v' },
 };
 
-/* Everyday dates to YYYY-MM-DD, in local time. A weekday is its next occurrence (today counts). */
-const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-export function parseDue(s, now = new Date()) {
-  const v = String(s).trim().toLowerCase();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-  const inDays = n => {
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + n);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  };
-  if (v === 'today') return inDays(0);
-  if (v === 'tomorrow') return inDays(1);
-  const rel = /^\+?(\d{1,3})\s*(d|w)$/.exec(v);
-  if (rel) return inDays(Number(rel[1]) * (rel[2] === 'w' ? 7 : 1));
-  if (v === 'next week') return inDays((8 - now.getDay()) % 7 || 7);
-  const day = DAYS.findIndex(n => n === v || n.slice(0, 3) === v);
-  if (day >= 0) return inDays((day - now.getDay() + 7) % 7);
-  throw new UsageError(`Can't read the date “${s}”. Try today, tomorrow, friday, +3d or 2026-11-20.`);
+/* Everyday dates, optionally with a time: today, tomorrow, friday (its next occurrence; today
+   counts), +3d, 2w, next week, 2026-11-20, then e.g. 5pm or 17:00. A day alone is all day. */
+export function parseDue(s, now = new Date(), tz = localTz()) {
+  const v = parseWhen(s, tz, now);
+  if (!v) throw new UsageError(`Can't read the date “${s}”. Try today, tomorrow, friday 5pm, +3d or 2026-11-20 17:00.`);
+  return v;
 }
 
 class UsageError extends Error {}
@@ -237,7 +229,7 @@ export async function run(argv, io = {}) {
   const who = async a => new Map((await a.all('/members')).map(m => [m.id, m.name]));
   const pad = (s, n) => String(s ?? '').padEnd(n);
   const row = (t, names) =>
-    `${bold(pad(t.key, 9))} ${pad(t.status, 8)} ${pad(t.priority === 'none' ? '' : t.priority, 6)} ${pad(names.get(t.assignee) || dim('—'), 14)} ${pad(t.due ? t.due.slice(0, 10) : '', 10)} ${t.title}`;
+    `${bold(pad(t.key, 9))} ${pad(t.status, 8)} ${pad(t.priority === 'none' ? '' : t.priority, 6)} ${pad(names.get(t.assignee) || dim('—'), 14)} ${pad(showDate(t.due), 16)} ${t.title}`;
   const need = (v, msg) => {
     if (!v) throw new UsageError(msg);
     return v;
@@ -358,7 +350,7 @@ export async function run(argv, io = {}) {
         // Safe to retry: the server replays the first response for the same Idempotency-Key.
         const t = await api().post('/tasks', body, { idempotencyKey: randomUUID() });
         if (o.json) json(t);
-        else print(`Created ${bold(t.key)} ${t.title}${t.due ? dim(` · due ${t.due.slice(0, 10)}`) : ''}\n${dim(t.url)}`);
+        else print(`Created ${bold(t.key)} ${t.title}${t.due ? dim(` · due ${showDate(t.due)}`) : ''}\n${dim(t.url)}`);
         return 0;
       }
       case 'done': {
@@ -395,11 +387,11 @@ export async function run(argv, io = {}) {
           return 0;
         }
         print(`${bold(t.key)} ${t.title}`);
-        print(dim(`${t.status} · ${t.priority} · ${names.get(t.assignee) || 'unassigned'}${t.due ? ` · due ${t.due.slice(0, 10)}` : ''}`));
+        print(dim(`${t.status} · ${t.priority} · ${names.get(t.assignee) || 'unassigned'}${t.due ? ` · due ${showDate(t.due)}` : ''}`));
         if (t.description) print('\n' + t.description);
         for (const s of t.subtasks)
           print(
-            `  [${s.done ? 'x' : ' '}] ${s.title}${s.assignee ? ` · ${names.get(s.assignee) || '?'}` : ''}${s.due ? ` · ${s.due.slice(0, 10)}` : ''}  ${dim(s.id)}`,
+            `  [${s.done ? 'x' : ' '}] ${s.title}${s.assignee ? ` · ${names.get(s.assignee) || '?'}` : ''}${s.due ? ` · ${showDate(s.due)}` : ''}  ${dim(s.id)}`,
           );
         if (comments.older) print('\n' + dim(`${comments.older} older comment${comments.older === 1 ? '' : 's'} not shown`));
         for (const c of comments.data)
