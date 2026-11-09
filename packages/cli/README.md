@@ -98,9 +98,11 @@ sudo-cli api GET /tasks -f project=WEB      # any endpoint; -f sends strings, -F
 - `none` clears a field: `--due none`, `--team none`, `--repeat none`, `--label none`.
 
 Due dates: `today`, `tomorrow`, a weekday (`friday`, `fri`; today counts), `next week`, `+3d`, `+2w`, or
-`2026-11-20`, each optionally with a time: `--due "friday 5pm"`, `--due "2026-11-20 17:00"`. Times are
-read and shown on this computer's clock (set `TZ` to use another); `--json` keeps the API's values,
-where a time is in UTC. Set `SUDO_PROJECT=WEB` to skip `-p`. Exit codes: `0` ok, `1` the API refused (the
+`2026-11-20`, each optionally with a time: `--due "friday 5pm"`, `--due "2026-11-20 17:00"`. Dates and
+times are read and shown on your clock in the workspace: your time zone (Settings → Date and time, or
+`prefs set tz=Asia/Dubai`), else the workspace's (`workspace edit --tz Asia/Dubai`), else UTC; `prefs`
+says which. Only an older server that doesn't say makes the CLI use this computer's clock (`TZ`).
+`--json` keeps the API's values, where a time is in UTC. Set `SUDO_PROJECT=WEB` to skip `-p`. Exit codes: `0` ok, `1` the API refused (the
 message says why; with `--json` it's `{ error, code }` on stderr), `2` a usage error.
 
 **Several keys at once** (`done`, `tasks rm`, `tasks archive`, `restore`, `fav`, `unfav`,

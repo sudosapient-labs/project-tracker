@@ -300,6 +300,29 @@ describe('dates and times on the person’s clock', () => {
     expect(bad.text).toContain('Can’t read the date “someday”');
   });
 
+  it('uses the zone the server reads the person’s dates in (the workspace’s), never the server machine’s', async () => {
+    const machineTz = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    try {
+      const { t, ada } = await workspace();
+      const admin = await hosted(t, await apiKey(ada));
+      // Ada has no zone of her own: the workspace's is hers.
+      expect((await call(admin, 'update_workspace', { timeZone: 'Asia/Kolkata' })).data).toMatchObject({ timeZone: 'Asia/Kolkata' });
+      const mcp = await hosted(t, await apiKey(ada));
+      const task = (await call(mcp, 'create_task', { project: 'WEB', title: 'Night deploy', due: '2026-11-10 02:00' })).data;
+      const raw = JSON.parse(t.db.get("SELECT data FROM tasks WHERE json_extract(data, '$.key') = ?", task.key).data);
+      expect(raw.due).toBe('2026-11-09T20:30:00.000Z');
+      expect((await call(mcp, 'get_task', { key: task.key })).data.due).toBe('2026-11-10 02:00');
+      // Her own zone, once she sets it, from the next call.
+      await call(mcp, 'update_settings', { preferences: { tz: 'Europe/London' } });
+      expect((await call(mcp, 'get_task', { key: task.key })).data.due).toBe('2026-11-09 20:30');
+      expect((await call(admin, 'update_workspace', { timeZone: 'Mars/Base' })).isError).toBe(true);
+    } finally {
+      if (machineTz === undefined) delete process.env.TZ;
+      else process.env.TZ = machineTz;
+    }
+  });
+
   it('counts a task overdue on the person’s clock in a project summary', async () => {
     const { t, ada } = await workspace();
     await ada.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata' } });

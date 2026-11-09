@@ -205,6 +205,95 @@ describe('against a workspace', () => {
   });
 });
 
+describe('whose clock', () => {
+  const machineTz = process.env.TZ;
+  afterEach(() => {
+    if (machineTz === undefined) delete process.env.TZ;
+    else process.env.TZ = machineTz;
+  });
+
+  it('reads and shows dates on the zone the server uses for the person, not this computer’s', async () => {
+    process.env.TZ = 'America/Los_Angeles';
+    const t = setup();
+    const ada = await account(t);
+    await ada.c.sync([
+      {
+        c: 'projects',
+        id: 'pweb',
+        k: 'put',
+        v: {
+          id: 'pweb',
+          key: 'WEB',
+          name: 'Website',
+          icon: 'globe',
+          color: 'indigo',
+          status: 'active',
+          team: '',
+          lead: null,
+          members: [],
+          desc: '',
+          milestones: [],
+        },
+      },
+    ]);
+    const c = cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: await apiKey(ada.c) });
+    // Ada has no zone of her own; the workspace is in India.
+    expect((await c('workspace', 'edit', '--tz', 'Asia/Kolkata')).code).toBe(0);
+    expect((await c('workspace')).out).toContain('time zone Asia/Kolkata');
+    // 02:00 on Nov 10 in India is 20:30 UTC on Nov 9 (and 12:30 PM on Nov 9 in Los Angeles).
+    const made = await c('new', 'Night', 'deploy', '-p', 'WEB', '--due', '2026-11-10 02:00', '-a', 'me');
+    expect(made.out).toMatch(/^Created WEB-201 Night deploy · due 2026-11-10 02:00/);
+    expect(JSON.parse(t.db.get("SELECT data FROM tasks WHERE json_extract(data, '$.key') = 'WEB-201'").data).due).toBe('2026-11-09T20:30:00.000Z');
+    expect((await c('tasks')).out).toMatch(/WEB-201\s+todo\s+Ada Owner\s+2026-11-10 02:00\s+Night deploy/);
+    // --json keeps the API's UTC value.
+    expect(JSON.parse((await c('show', 'WEB-201', '--json')).out).due).toBe('2026-11-09T20:30:00.000Z');
+    expect((await c('prefs')).out).toContain('Dates and times show on Asia/Kolkata (the workspace’s).');
+
+    // Her own zone wins over the workspace's.
+    await c('prefs', 'set', 'tz=Europe/London');
+    expect((await c('show', 'WEB-201')).out).toContain('due 2026-11-09 20:30');
+    await c('tasks', 'edit', 'WEB-201', '--due', '2026-12-01 9am');
+    expect(JSON.parse(t.db.get("SELECT data FROM tasks WHERE json_extract(data, '$.key') = 'WEB-201'").data).due).toBe('2026-12-01T09:00:00.000Z');
+  });
+
+  it('falls back to this computer’s clock when the server doesn’t say (an older server)', async () => {
+    process.env.TZ = 'Asia/Kolkata';
+    const t = setup();
+    const ada = await account(t);
+    const token = await apiKey(ada.c);
+    // An older server: /me/preferences without timeZone.
+    const fetch = async (url, init) => {
+      const res = await t.app.request(url, init);
+      if (!String(url).endsWith('/me/preferences')) return res;
+      const { timeZone, timeZoneSource, ...old } = await res.json();
+      return new Response(JSON.stringify(old), { status: res.status, headers: { 'content-type': 'application/json' } });
+    };
+    await ada.c.sync([
+      {
+        c: 'projects',
+        id: 'pweb',
+        k: 'put',
+        v: {
+          id: 'pweb',
+          key: 'WEB',
+          name: 'Website',
+          icon: 'globe',
+          color: 'indigo',
+          status: 'active',
+          team: '',
+          lead: null,
+          members: [],
+          desc: '',
+          milestones: [],
+        },
+      },
+    ]);
+    const c = cli(null, { SUDO_URL: 'http://localhost', SUDO_API_KEY: token }, { fetch });
+    expect((await c('new', 'Night', 'deploy', '-p', 'WEB', '--due', '2026-11-10 02:00')).code).toBe(0);
+    expect(JSON.parse(t.db.get("SELECT data FROM tasks WHERE json_extract(data, '$.key') = 'WEB-201'").data).due).toBe('2026-11-09T20:30:00.000Z');
+  });
+});
+
 describe('rate limits', () => {
   afterEach(() => vi.useRealTimers());
 

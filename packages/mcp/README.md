@@ -115,11 +115,11 @@ events, views, notifications, teams, bots).
 
 **Admin** (only listed when the key's person is an Owner or Admin; `list_bots` with a Read only key too):
 
-| Tool               | Does                                                    | Annotations           |
-| ------------------ | ------------------------------------------------------- | --------------------- |
-| `list_bots`        | Bots with their projects and keys                       | read-only, idempotent |
-| `update_workspace` | Name, colour, logo; `inviteLink` makes a new join link  | destructive           |
-| `manage_bot`       | Create, change, remove a bot, or revoke one of its keys | destructive           |
+| Tool               | Does                                                              | Annotations           |
+| ------------------ | ----------------------------------------------------------------- | --------------------- |
+| `list_bots`        | Bots with their projects and keys                                 | read-only, idempotent |
+| `update_workspace` | Name, colour, logo, time zone; `inviteLink` makes a new join link | destructive           |
+| `manage_bot`       | Create, change, remove a bot, or revoke one of its keys           | destructive           |
 
 `openWorldHint` is `false` on all of them. Calling a write tool with a Read only key is an
 `insufficient_scope` result, and an admin tool for someone who isn't an Owner or Admin a `forbidden`
@@ -127,7 +127,9 @@ one. Some things stay in the app on
 purpose (making API keys, including bot keys; password, two-factor, sessions, sign-in email,
 account deletion, the Owner's workspace export); see [the API reference](../../docs/api.md).
 
-Dates and times are on your own clock (Settings → time zone), both ways: results say `2026-11-20`, or
+Dates and times are on your clock in the workspace, both ways: your time zone (Settings → Date and
+time), else the workspace's, else UTC, as the server reports it (`timeZone` on `/me/preferences`;
+this computer's only with an older server that doesn't say): results say `2026-11-20`, or
 `2026-11-20 17:00` for a time of day, and `due`, `start` and milestone dates take the same (or `today`,
 `fri`, `+3d`, `fri 5pm`). The tracker stores times in UTC; the server converts.
 

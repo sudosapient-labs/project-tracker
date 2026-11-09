@@ -57,8 +57,8 @@ const list = v =>
         .flatMap(s => String(s).split(','))
         .map(s => s.trim())
         .filter(Boolean);
-// A moment, on this computer's clock.
-const when = ms => (ms ? showDate(new Date(ms).toISOString()) : '');
+// A moment, on the person's clock (x.showTz).
+const when = (ms, tz) => (ms ? showDate(new Date(ms).toISOString(), tz) : '');
 const onOff = (k, v) => {
   if (/^(on|true|yes)$/i.test(v)) return true;
   if (/^(off|false|no)$/i.test(v)) return false;
@@ -351,7 +351,11 @@ export const NOUNS = {
         usage: 'projects show <KEY>',
         async run(x) {
           const a = x.api();
-          const [p, names] = await Promise.all([a.get(`/projects/${seg(x.need(x.args[0], 'Which project? sudo-cli projects show WEB'))}`), x.names(a)]);
+          const [p, names, tz] = await Promise.all([
+            a.get(`/projects/${seg(x.need(x.args[0], 'Which project? sudo-cli projects show WEB'))}`),
+            x.names(a),
+            x.showTz(),
+          ]);
           x.emit(p, () => {
             x.print(`${x.bold(p.key)} ${p.name}`);
             x.print(
@@ -368,10 +372,10 @@ export const NOUNS = {
               ),
             );
             if (p.description) x.print('\n' + p.description);
-            x.print(`\n${p.openTasks} open · ${p.doneTasks} done${p.start ? ` · ${showDate(p.start)}` : ''}${p.due ? ` → ${showDate(p.due)}` : ''}`);
+            x.print(`\n${p.openTasks} open · ${p.doneTasks} done${p.start ? ` · ${showDate(p.start, tz)}` : ''}${p.due ? ` → ${showDate(p.due, tz)}` : ''}`);
             if (p.members.length)
               x.print('\nPeople: ' + p.members.map(m => `${names.get(m) || m}${p.permissions[m] ? ` (${p.permissions[m]})` : ''}`).join(', '));
-            for (const m of p.milestones) x.print(`  ◆ ${m.name}${m.date ? ` ${showDate(m.date)}` : ''}`);
+            for (const m of p.milestones) x.print(`  ◆ ${m.name}${m.date ? ` ${showDate(m.date, tz)}` : ''}`);
             x.print('\n' + x.dim(p.url));
           });
         },
@@ -930,12 +934,12 @@ export const NOUNS = {
         async run(x) {
           const a = x.api();
           const n = Math.min(Math.max(Number(x.o.limit) || 30, 1), 500);
-          const [ns, names] = await Promise.all([a.all('/notifications', { unread: x.o.unread ? 'true' : undefined }, n), x.names(a)]);
+          const [ns, names, tz] = await Promise.all([a.all('/notifications', { unread: x.o.unread ? 'true' : undefined }, n), x.names(a), x.showTz()]);
           x.emit(ns, () => {
             if (!ns.length) x.print(x.dim(x.o.unread ? 'Nothing unread.' : 'Your inbox is empty.'));
             for (const v of ns)
               x.print(
-                `${v.read ? ' ' : x.bold('•')} ${x.dim(when(v.at))} ${names.get(v.by) || 'Sudo Sapient'} ${v.text}${v.snippet ? x.dim(` — ${v.snippet}`) : ''} ${x.dim(v.id)}`,
+                `${v.read ? ' ' : x.bold('•')} ${x.dim(when(v.at, tz))} ${names.get(v.by) || 'Sudo Sapient'} ${v.text}${v.snippet ? x.dim(` — ${v.snippet}`) : ''} ${x.dim(v.id)}`,
               );
           });
         },
@@ -976,17 +980,18 @@ export const NOUNS = {
         async run(x) {
           const a = x.api();
           const n = Math.min(Math.max(Number(x.o.limit) || 30, 1), 500);
-          const [as, names, ps] = await Promise.all([
+          const [as, names, ps, tz] = await Promise.all([
             a.all('/activity', { project: x.o.project }, n),
             x.names(a),
             a.all('/projects', { includeArchived: 'true' }),
+            x.showTz(),
           ]);
           const keys = new Map(ps.map(p => [p.id, p.key]));
           x.emit(as, () => {
             if (!as.length) x.print(x.dim('Nothing yet.'));
             for (const e of as)
               x.print(
-                `${x.dim(when(e.at))} ${x.pad(keys.get(e.project) || '', 6)} ${names.get(e.by) || '?'}${e.via ? x.dim(` via ${e.via}`) : ''} ${e.verb}${e.extra ? ` ${e.extra}` : ''}`,
+                `${x.dim(when(e.at, tz))} ${x.pad(keys.get(e.project) || '', 6)} ${names.get(e.by) || '?'}${e.via ? x.dim(` via ${e.via}`) : ''} ${e.verb}${e.extra ? ` ${e.extra}` : ''}`,
               );
           });
         },
@@ -1002,17 +1007,21 @@ export const NOUNS = {
         usage: 'workspace [show]',
         async run(x) {
           const w = await x.api().get('/workspace');
-          x.emit(w, () => x.print(`${x.bold(w.name || '(no name)')} · ${w.color}${w.brand ? ' · logo in the sidebar' : ''}`));
+          x.emit(w, () =>
+            x.print(`${x.bold(w.name || '(no name)')} · ${w.color}${w.brand ? ' · logo in the sidebar' : ''} · time zone ${w.timeZone || 'not set (UTC)'}`),
+          );
         },
       },
       edit: {
-        usage: 'workspace edit [--name <n>] [--color <#RRGGBB>] [--brand on|off]   (Owners and Admins)',
+        usage: 'workspace edit [--name <n>] [--color <#RRGGBB>] [--brand on|off] [--tz <zone|none>]   (Owners and Admins)',
         async run(x) {
           const b = {};
           if (x.o.name != null) b.name = x.o.name;
           if (x.o.color != null) b.color = x.o.color;
           if (x.o.brand != null) b.brand = onOff('', x.o.brand) === true;
-          const w = await x.api().patch('/workspace', nonEmpty(x, b, 'Pass --name, --color or --brand.'));
+          // An IANA zone (Asia/Dubai): the clock of people who haven't set their own.
+          if (x.o.tz != null) b.timeZone = /^none$/i.test(x.o.tz) ? null : x.o.tz;
+          const w = await x.api().patch('/workspace', nonEmpty(x, b, 'Pass --name, --color, --brand or --tz.'));
           x.emit(w, () => x.print(`Updated the workspace: ${w.name}`));
         },
       },
@@ -1036,6 +1045,9 @@ export const NOUNS = {
           const p = await x.api().get('/me/preferences');
           x.emit(p.preferences, () => {
             for (const [k, v] of Object.entries(p.preferences)) x.print(`${x.pad(k, 14)} ${v}`);
+            // The zone in use: tz when set, else the workspace's, else UTC (older servers don't say).
+            const from = { person: 'yours', workspace: 'the workspace’s', default: 'UTC: none set' }[p.timeZoneSource];
+            if (p.timeZone) x.print(x.dim(`Dates and times show on ${p.timeZone}${from ? ` (${from})` : ''}.`));
           });
         },
       },

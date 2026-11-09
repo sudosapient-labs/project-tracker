@@ -40,8 +40,9 @@ const MAX_UPLOAD = 700 * 1024;
 
 /* Drop null, '', [] and false so results carry only what's set. */
 const compact = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null && v !== '' && v !== false && !(Array.isArray(v) && !v.length)));
-/* The person's time zone (Settings → time zone), read once per client; their computer's if the
-   server won't say. */
+/* The person's time zone, read once per client: the one the server reads their dates in (their own,
+   else the workspace's, else UTC: `timeZone` on /me/preferences). This computer's only when the
+   server is too old to say. */
 const clocks = new WeakMap();
 const localTz = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 export function tzOf(api) {
@@ -51,7 +52,7 @@ export function tzOf(api) {
       Promise.resolve()
         .then(() => api.get('/me/preferences'))
         .then(
-          r => r?.preferences?.tz || localTz(),
+          r => r?.timeZone || r?.preferences?.tz || localTz(),
           () => localTz(),
         ),
     );
@@ -461,7 +462,7 @@ export const TOOLS = {
       const tkey = await taskKeys(api, favs.tasks, 20);
       return compact({
         workspace: ws,
-        me: compact({ name: me.name, email: me.email, role: me.role, title: me.title, keyScope: me.key.scope }),
+        me: compact({ name: me.name, email: me.email, role: me.role, title: me.title, keyScope: me.key.scope, timeZone: prefs.timeZone }),
         preferences: prefs.preferences,
         notifications: prefs.notifications,
         favorites: [...favs.projects.map(id => keys.get(id)), ...favs.tasks.map(tkey)].filter(Boolean),
@@ -885,7 +886,11 @@ export const TOOLS = {
           ? [
               {
                 what: { set: [...(preferences ? ['preferences'] : []), ...(notifications ? ['notifications'] : [])].join(', ') },
-                run: async () => void (await api.patch('/me/preferences', compact({ preferences, notifications }))),
+                run: async () => {
+                  await api.patch('/me/preferences', compact({ preferences, notifications }));
+                  // A new time zone applies from the next call.
+                  clocks.delete(api);
+                },
               },
             ]
           : []),
@@ -995,9 +1000,12 @@ export const TOOLS = {
   update_workspace: {
     admin: true,
     annotations: writes({ destructive: true, idempotent: false }),
-    description: 'Rename the workspace or change its colour; inviteLink makes a new join link (admins).',
-    inputSchema: obj({ name: str(), color: str('#RRGGBB'), brand: BOOL, inviteLink: BOOL }),
+    description: 'Rename the workspace or change its colour or time zone; inviteLink makes a new join link (admins).',
+    inputSchema: obj({ name: str(), color: str('#RRGGBB'), brand: BOOL, timeZone: str('IANA zone for people without their own; "" unsets'), inviteLink: BOOL }),
     async run(api, { inviteLink, ...a }) {
+      if (a.timeZone === '') a.timeZone = null;
+      // It may be the person's clock too: read it again next time.
+      if ('timeZone' in a) clocks.delete(api);
       let ws;
       let link = null;
       const r = await steps([
