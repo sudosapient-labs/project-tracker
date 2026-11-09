@@ -52,7 +52,8 @@ everything about them is in `packages/client/dates.js` (see
   `zoneOf` in `src/core/clock.js` in the app, `timeZone` from `/me/preferences` or a Member in
   clients. It's the person's saved zone, else the workspace's, else UTC. Store moments (UTC) and
   days; format them on the reader's clock. `test/core/dates-convention.test.js` fails on code that
-  reads the machine's zone.
+  reads the machine's zone, cuts a UTC day from a moment, uses UTC getters, formats a date without a
+  zone, compares starts and dues as strings, or (in the app) reads a moment on the browser's clock.
 
 ## Tests
 
