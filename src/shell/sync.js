@@ -46,6 +46,14 @@ const gone = new Map();
 const crossed = new Set();
 const hooks = { signedOut: () => {}, otherUser: () => {}, stillMe: () => true, resync: () => {}, descConflict: () => false };
 export const onSync = h => Object.assign(hooks, h);
+/* The session ended (expired, revoked, signed out elsewhere): nothing more is sent from this tab, as
+   it would only be refused again. What's waiting stays queued, and signedOut (actions/session.js)
+   keeps it in the browser for when this person signs in again. */
+let ended = false;
+function sessionEnded(e) {
+  ended = true;
+  hooks.signedOut(e);
+}
 
 const fields = o => new Map(Object.keys(o).map(k => [k, JSON.stringify(o[k])]));
 /* Projects I can't open come as stubs; give them the empty fields pages read, in the record and its
@@ -59,11 +67,25 @@ const keyOf = (c, id) => `${c}:${id}`;
 const who = () => (S.ui.me?.id ? { 'x-sudo-user': S.ui.me.id } : {});
 
 /* ---------- lifecycle ---------- */
-export function prime(data) {
+/* `kept`: edits this person left unsaved in this browser earlier (see takeKept), to send now. */
+export function prime(data, kept = []) {
   shadow = { docs: {} };
   (data.projects || []).forEach(p => fill('projects', p));
   for (const c of COLLS) shadow[c] = new Map((data[c] || []).map(e => [e.id, fields(e)]));
   for (const d of DOCS) shadow.docs[d] = JSON.stringify(data[d] ?? null);
+  // They go first: they were made before anything queued since. Each is this person's own change,
+  // made from what they saw then, so it's sent as their queue would have been had they stayed: a
+  // field they changed is set again over the fresh data, as any edit made offline is. List and map
+  // fields keep the `base` they were edited from, not the fresh value: the server then applies only
+  // this person's additions and removals (server/sync/merge.js), so nothing someone else added or
+  // removed since is undone (re-based on the fresh data, the old list would read as this person
+  // removing what others added). The server may already have some of them (the page went while
+  // they were on their way): a patch then sets the same values again, a merged field finds its
+  // additions and removals already made, a delete finds nothing to delete. A new record (a put)
+  // the fresh data already has did reach it (ids are new for each record, and a put doesn't change
+  // once sent: later edits go as patches), so it isn't sent again over what others changed since.
+  const has = op => op.k === 'put' && op.id && (data[op.c] || []).some(e => e.id === op.id);
+  queue.unshift(...kept.filter(op => !has(op)));
   // First what the server did while this data was loading, in the order it reached this tab: our
   // changes it confirmed and other people's from the live stream. The data may have been read
   // before or after any of them; laid over it in that order, each record ends at its latest.
@@ -138,9 +160,15 @@ export function stopSync() {
   disconnectLive();
 }
 export const pendingCount = () => queue.length + inflight.length;
+/* How many changes waiting in `ops`, as the person would count them: one per record changed (the
+   activity entry that comes with an edit, and a re-read, aren't changes of theirs). At least one
+   when there's anything. */
+export const changeCount = (ops = [...inflight, ...queue]) =>
+  ops.length && Math.max(1, new Set(ops.filter(op => !op.read && op.c !== 'activity').map(op => keyOf(op.c, op.id))).size);
 /* <html data-sync="saving|saved|offline"> reflects whether every local change has reached the server. */
 function syncState() {
   document.documentElement.dataset.sync = S.ui.offline ? 'offline' : queue.length || inflight.length || flushing ? 'saving' : 'saved';
+  keepSoon();
 }
 
 /* ---------- local → server ---------- */
@@ -390,7 +418,7 @@ function settle(ops, results) {
 let flushCtl = null;
 export async function flush() {
   // While what pagehide sent is unanswered (back from the back/forward cache), wait for it.
-  if (flushing || !queue.length || !shadow || exitSends) return;
+  if (flushing || !queue.length || !shadow || exitSends || ended) return;
   // Someone else signed in on this browser: their session mustn't send this person's changes.
   if (!hooks.stillMe()) return void hooks.otherUser();
   flushing = true;
@@ -425,8 +453,11 @@ export async function flush() {
     } else {
       inflight = [];
       inflightBytes = 0;
-      if (e.status === 401) hooks.signedOut(e);
-      else if (e.status === 409 && e.code === 'other_user') {
+      if (e.status === 401) {
+        // The session ended: the batch goes back at the head of the queue, to be kept with it.
+        queue.unshift(...ops);
+        sessionEnded(e);
+      } else if (e.status === 409 && e.code === 'other_user') {
         queue.unshift(...ops);
         hooks.otherUser();
       } else if (e.status === 413 && ops.length > 1) {
@@ -463,9 +494,13 @@ export async function flush() {
    changes are reported as usual. `retry`: try even if the last attempt left us offline (the live
    stream just reconnected, so the server may be back). */
 export async function settled({ retry = false } = {}) {
-  if (retry && shadow && S.ui.offline) await retryNow();
-  else collect();
-  while (shadow && (queue.length || flushing) && !S.ui.offline) {
+  if (retry && shadow && S.ui.offline) {
+    collect(false);
+    // With nothing to send, the reload this waits for is what tells whether we're back (reloaded).
+    if (queue.length) await retryNow();
+  } else collect();
+  // (Once the session has ended nothing more is sent: the queue is kept, not waited for.)
+  while (shadow && (queue.length || flushing) && !S.ui.offline && !ended) {
     if (exitSends) await exitSends;
     else if (flushing) await new Promise(r => setTimeout(r, 25));
     else await flush();
@@ -521,7 +556,7 @@ export async function sameUser() {
     return false;
   }
   if (!shadow) return false;
-  if (!s.user || s.user.twoFactorPending) hooks.signedOut();
+  if (!s.user || s.user.twoFactorPending) sessionEnded();
   else if (!hooks.stillMe() || (S.ui.me?.id && s.user.id !== S.ui.me.id)) hooks.otherUser();
   else return true;
   return false;
@@ -529,20 +564,34 @@ export async function sameUser() {
 /* Try the server again (the backoff timer, the browser coming online, "Try again"). The tab stays
    offline until it answers. */
 export async function retryNow() {
-  if (!shadow) return;
+  if (!shadow || ended) return;
   clearTimeout(retryT);
   collect(false);
   if (!(await sameUser())) return;
   if (queue.length) await flush();
-  else {
+  else if (resyncWhenSaved && !flushing) {
+    // A reload is still to do (one failed, or it waited for the queue): whether it loads is what
+    // says we're back, so the tab stays offline (and the backoff keeps growing) until it does.
+    resyncWhenSaved = false;
+    await hooks.resync();
+  } else {
     online();
     syncState();
-    if (resyncWhenSaved && !flushing) {
-      resyncWhenSaved = false;
-      hooks.resync();
-    }
   }
   if (!live && shadow) connectLive();
+}
+/* How a reload (a fresh bootstrap) went. One that failed for any reason but the session ending (a
+   deploy's 502, the network) leaves the tab offline and is tried again with the backoff until one
+   loads: what changed meanwhile (missed while the live stream was down, or the reason the server
+   asked for a reload) must arrive, or new edits build on stale data. */
+export function reloaded(ok) {
+  if (!shadow) return;
+  if (ok) online();
+  else {
+    resyncWhenSaved = true;
+    offline();
+  }
+  syncState();
 }
 
 /* Before the tab goes away, send what's still queued with one keepalive request, which outlives
@@ -574,8 +623,9 @@ export function keepaliveBatch(ops, budget = KEEPALIVE_BYTES) {
   return out;
 }
 addEventListener('pagehide', () => {
-  if (!shadow || !hooks.stillMe()) return;
+  if (!shadow || !hooks.stillMe() || ended) return;
   collect(false);
+  keepNow();
   const reclaim = flushCtl && inflight.length ? inflight : [];
   // From the head of the queue: what an earlier pagehide sent, if that is still unanswered (back
   // from the back/forward cache meanwhile), goes again ahead of the rest, in place of it.
@@ -609,6 +659,7 @@ addEventListener('pagehide', () => {
       for (const op of keep) keptAlive.delete(op);
       queue = queue.filter(op => !sent.has(op) || keep.has(op));
       if (shadow && settle(ops, results)) refresh();
+      keepSoon();
     } catch {
       /* offline, or stopped by a later pagehide that sent these again: they stay queued */
     }
@@ -637,6 +688,115 @@ addEventListener('beforeunload', e => {
   }
 });
 addEventListener('online', () => retryNow());
+// Hidden (switched away from, the screen locked) is often the last sure moment: phones may then
+// freeze or kill the page without pagehide or beforeunload. What's still waiting out the save
+// delay is sent now (small batches with keepalive, so freezing the page doesn't stop them), and
+// whatever hasn't been confirmed is written down (see keepNow).
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'hidden' || !shadow) return;
+  collect();
+  keepNow();
+});
+
+/* ---------- edits waiting to be saved, kept in the browser ---------- */
+/* What's waiting to be saved (the batch on its way, then the queue) is also written to IndexedDB,
+   under the person it belongs to, so a reload, a crash, a tab the browser discarded, "Leave anyway"
+   or a session that ended doesn't lose it: the next time this person opens the app in this browser
+   it's sent once their data has loaded (takeKept, then prime). Someone else signing in here never
+   sends it: it's dropped and they're told. Each tab writes its own entry and holds a lock named
+   after it while it's open, so a tab only takes over entries of tabs that are gone (another open
+   tab is still sending its own). Every access is guarded: with storage blocked or full the app
+   works as before, the edits only in memory. */
+const KEEP_DB = 'sudo-sapient.unsaved';
+const TAB_LOCK = 'sudo-sapient.tab:';
+try {
+  navigator.locks?.request(TAB_LOCK + CLIENT_ID, () => new Promise(() => {})).catch(() => {});
+} catch {
+  /* no Web Locks: see takeKept */
+}
+let keepDb = null;
+const openKeep = () =>
+  (keepDb ||= new Promise(resolve => {
+    try {
+      const req = indexedDB.open(KEEP_DB, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('tabs', { keyPath: 'tab' });
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = req.onblocked = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  }));
+/* Run `fn(store, out)` in one read-write transaction. Resolves with `out` once it's written, or
+   null if it couldn't be. */
+async function keepTx(fn, out = {}) {
+  const db = await openKeep();
+  if (!db) return null;
+  return new Promise(resolve => {
+    try {
+      const tx = db.transaction('tabs', 'readwrite');
+      tx.oncomplete = () => resolve(out);
+      tx.onerror = tx.onabort = () => resolve(null);
+      fn(tx.objectStore('tabs'), out);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+let keepT = null;
+/* Whether this tab has an entry to keep up to date (or remove once everything is saved). */
+let keptHere = false;
+/* Written at most every 400 ms while edits keep coming (typing saves on every keystroke). */
+function keepSoon() {
+  keepT ||= setTimeout(keepNow, 400);
+}
+/* Write down what's waiting now. Resolves with whether it's safely kept (true with nothing waiting). */
+export function keepNow() {
+  clearTimeout(keepT);
+  keepT = null;
+  const user = S.ui.me?.id;
+  // Someone else signed in on this browser: this person's edits are never sent, so not kept either.
+  if (!shadow || !user || !hooks.stillMe()) return Promise.resolve(false);
+  const ops = [...inflight, ...queue].filter(op => !op.read);
+  if (!ops.length && !keptHere) return Promise.resolve(true);
+  keptHere = ops.length > 0;
+  return keepTx(st => (ops.length ? st.put({ tab: CLIENT_ID, user, at: Date.now(), ops }) : st.delete(CLIENT_ID))).then(Boolean);
+}
+/* Forget what this tab kept (signed out on purpose, or someone else signed in here). */
+export function dropKept() {
+  clearTimeout(keepT);
+  keepT = null;
+  keptHere = false;
+  return keepTx(st => st.delete(CLIENT_ID));
+}
+/* Take over what tabs that are gone left unsaved: `mine`, this person's edits (oldest tab first),
+   to send (they move to this tab's entry in the same step, so they're never in neither); `others`,
+   how many edits of anyone else were dropped, never to be sent as this person. */
+export async function takeKept(user) {
+  let open = null;
+  try {
+    open = new Set((await navigator.locks.query()).held.map(l => l.name));
+  } catch {
+    // No Web Locks (an older browser, or plain http on another address): every entry is taken as
+    // left behind. An open tab's edits may then be sent twice, which is harmless (see pagehide).
+  }
+  const got = await keepTx(
+    (st, out) => {
+      const req = st.getAll();
+      req.onsuccess = () => {
+        for (const e of req.result.sort((a, b) => a.at - b.at)) {
+          if (e.tab === CLIENT_ID || open?.has(TAB_LOCK + e.tab)) continue;
+          if (e.user === user) out.mine.push(...e.ops);
+          else out.dropped.push(...e.ops);
+          st.delete(e.tab);
+        }
+        if (out.mine.length) st.put({ tab: CLIENT_ID, user, at: Date.now(), ops: out.mine });
+      };
+    },
+    { mine: [], dropped: [] },
+  );
+  if (got?.mine.length) keptHere = true;
+  return { mine: got?.mine || [], others: changeCount(got?.dropped || []) };
+}
 
 /* ---------- per-person UI state (prefs, view settings, sidebar) ---------- */
 const stateBody = () => ({ prefs: S.prefs, views: S.views, collapsed: !!S.ui.collapsed });
@@ -674,6 +834,8 @@ export function connectLive() {
   live = es;
   es.addEventListener('hello', () => {
     liveDelay = 1000;
+    // Catch up on what was missed while the stream was down. A reload that fails is tried again
+    // until one loads (see reloaded), so clearing `missed` here loses nothing.
     if (missed) {
       missed = false;
       hooks.resync();
@@ -688,7 +850,7 @@ export function connectLive() {
     missed = true;
     api('GET', '/api/auth/session')
       .then(s => {
-        if (!s.user || s.user.twoFactorPending) return hooks.signedOut();
+        if (!s.user || s.user.twoFactorPending) return sessionEnded();
         if (S.ui.me?.id && s.user.id !== S.ui.me.id) return hooks.otherUser();
         liveT = setTimeout(connectLive, liveDelay);
       })

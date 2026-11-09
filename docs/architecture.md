@@ -20,6 +20,10 @@ proxies `/api` to the API on :8787.
   later value of each field wins), and each request stays within the server's limits (500 ops,
   4 MB, 900,000 characters of descriptions); an op the server defers because its per-request
   budget is spent (`retry`) is sent again, and a batch refused as too large (`413`) is split.
+- **Unsaved edits are kept.** What's waiting to be saved is also written to IndexedDB under the
+  signed-in person, so a reload, a crash, a discarded tab or an ended session doesn't lose it; it's
+  sent after the next bootstrap, only for the same person (anyone else's is dropped, and they're
+  told how many changes). Hiding the page sends what's waiting at once.
 - **Lists and maps merge.** A project's `members`, `perms` and `milestones`, a task's `subtasks`,
   `labels` and `deps`, and a comment's reactions (`re`) are whole values, so the client sends each one with the value it edited from (`base`) and
   the server applies only that client's additions, removals and changes onto the current value
@@ -51,7 +55,8 @@ proxies `/api` to the API on :8787.
   the workspace offer no Undo: the server keeps nothing to restore them from.
 - **Live updates.** Other people's changes arrive over Server-Sent Events (`GET /api/events`) and are
   merged in, filtered to what each person can see. A tab's own changes aren't echoed back to it
-  (`x-client-id`). When the stream drops, the client reconnects and bootstraps again.
+  (`x-client-id`). When the stream drops, the client reconnects and bootstraps again; a
+  bootstrap that fails is retried with backoff (the tab shows offline meanwhile).
 - **Per-person data** (preferences, view settings, favourites, sidebar order, notification
   preferences) is stored per account (`PUT /api/me/state`), not in the browser.
 - **Files** stream to `POST /api/files` as the raw request body, are written under `UPLOAD_DIR` with a
