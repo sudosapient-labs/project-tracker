@@ -108,12 +108,15 @@ export function fakeSlack({ threads = {}, channels = {} } = {}) {
 
 /* The bot, wired to the tracker `w` and a fake Slack. `turns`: the scripted model's tool calls,
    one list per model turn (an empty list ends the run with a text reply). `model`: a real chat
-   model instead (the live scenarios). */
-export async function harness(w, { turns = [], confirm = 'edits', slack = fakeSlack(), env = {}, model: real = null } = {}) {
+   model instead (the live scenarios). `store` and `checkpointer`: another harness's, to start the bot
+   again on the same saved state (a restart). */
+export async function harness(
+  w,
+  { turns = [], confirm = 'edits', slack = fakeSlack(), env = {}, model: real = null, store = openStore(':memory:'), checkpointer = new MemorySaver() } = {},
+) {
   const config = { ...loadConfig({ SLACK_BOT_CONFIRM: confirm, SLACK_BOT_TIMEZONE: 'UTC', ...env }), tracker: { url: 'http://app.test', key: w.token } };
-  const store = openStore(':memory:');
   const model = real || new FakeToolCallingModel({ toolCalls: turns });
-  const agent = await createSudoAgent({ config, store, model, checkpointer: new MemorySaver() });
+  const agent = await createSudoAgent({ config, store, model, checkpointer });
   const dir = directory(w.api, { ttl: 0 });
   const handlers = createHandlers({
     config,
@@ -125,7 +128,7 @@ export async function harness(w, { turns = [], confirm = 'edits', slack = fakeSl
     reader: slackContext(slack, { botUserId: 'UBOT', botName: config.name }),
     fetch: w.fetch,
   });
-  return { config, store, agent, handlers, slack, model };
+  return { config, store, checkpointer, agent, handlers, slack, model };
 }
 
 export const call = (name, args, id = `call_${name}_${Math.random().toString(36).slice(2, 8)}`) => ({ name, args, id });

@@ -1,6 +1,10 @@
 /* Sudo Tracker against a real tracker: mentions run the agent with the requester's access, writes
    to existing tasks wait for Confirm, cards and slash commands act as the person who clicked, and
    link previews show only what that person may see. */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { call, fakeSlack, harness, tracker } from './helpers.js';
 import { level } from '../src/people.js';
@@ -474,6 +478,19 @@ describe('/sudo', () => {
     expect(await run(h, 'link', 'UOUT')).toContain('out@elsewhere.com');
   });
 
+  it('a link stops working when the linked member becomes an Owner or Admin', async () => {
+    const w = await tracker();
+    const h = await harness(w);
+    expect(await run(h, 'link <@UOUT|out> bea@example.com')).toContain('Linked <@UOUT> to *Bea Member*');
+    expect(await run(h, 'link', 'UOUT')).toContain('linked to *Bea Member*');
+    const { members } = (await w.ada.get('/api/bootstrap')).body.data;
+    const bea = members.find(m => m.id === 'mbea');
+    expect((await w.ada.sync([{ c: 'members', id: 'mbea', k: 'put', v: { ...bea, role: 'Admin' } }])).status).toBe(200);
+    // Links never reach Owners or Admins, so UOUT no longer acts as Bea; only her own Slack email does.
+    expect(await run(h, 'link', 'UOUT')).toContain('out@elsewhere.com');
+    expect(h.store.person('UOUT')).toBeNull();
+  });
+
   it('Guests can’t relink a channel, and Members need edit rights on the project', async () => {
     const w = await tracker();
     const h = await harness(w);
@@ -526,5 +543,19 @@ describe('pieces', () => {
     const id = s.saveConfirmation({ threadId: 't#0', interrupts: ['i1'], requester: 'U', channel: 'C', threadTs: '1', data: { pending: [] } });
     expect(s.takeConfirmation(id)).toMatchObject({ requester: 'U', interrupts: ['i1'] });
     expect(s.takeConfirmation(id)).toBeNull();
+  });
+
+  it('adds the new confirmation columns to a database from before them', () => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sudo-bot-')), 'slack-bot.db');
+    const old = new DatabaseSync(file);
+    old.exec(
+      'CREATE TABLE confirmations (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, interrupts TEXT NOT NULL, requester TEXT NOT NULL, channel TEXT NOT NULL, thread_ts TEXT, message_ts TEXT, data TEXT NOT NULL, created_at INTEGER NOT NULL)',
+    );
+    old.exec(`INSERT INTO confirmations VALUES ('c1', 't#0', '["i1"]', 'U', 'C', '1', '2', '{"pending":[]}', 1)`);
+    old.close();
+    const s = openStore(file);
+    expect(s.takeConfirmation('c1', { by: 'U', approve: true })).toMatchObject({ requester: 'U', taken_by: 'U', approve: 1, resumed_at: null });
+    expect(s.takenConfirmations().map(c => c.id)).toEqual(['c1']);
+    s.close();
   });
 });

@@ -128,6 +128,12 @@ different moment on different clocks. Times are stored and returned in UTC
 (`2026-11-09T18:29:00.000Z`): show them in the reader's time zone (`GET /me/preferences` → `tz`),
 not by cutting the string. See [dates and times](architecture.md#dates-and-times).
 
+Finishing a task (`status: done`, or `…/complete`) sets `completedAt` from the server's clock;
+moving it to any other status clears it. A repeating task finished with a due date gets one next
+occurrence (due moved on by the repeat, in the key's person's time zone), however many people
+finish it at once. Reopening the task removes that occurrence again only while nobody has changed
+or commented on it; otherwise it stays, and finishing again adds no other.
+
 `labels`, `dependsOn` and a project's `milestones` in a `PATCH` replace the whole list with the one sent (read the task, change the
 list, send it back). The API reads and writes in one request, so unlike the app it never sends a
 list it fetched long ago; the app sends what it edited from, and the server merges only its changes

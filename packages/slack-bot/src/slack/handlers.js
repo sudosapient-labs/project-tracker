@@ -22,6 +22,7 @@ import { confirmBlocks, createTaskModal, esc, loadingModal, messageModal, modalV
 
 const seg = ref => encodeURIComponent(String(ref).trim());
 const WORKING = '_Working on it…_';
+const RESTARTED = 'Sorry, I restarted before I finished this, so it may be only partly done. Ask me again if you still need it.';
 const MAX_CARDS = 5;
 const CONFIRM_TTL = 24 * 3600_000;
 const TRACKER_TIMEOUT = 20_000;
@@ -167,6 +168,8 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     const member = who.member;
 
     const placeholder = await post(channel, replyThread, { text: WORKING });
+    // Kept until the reply replaces the placeholder, so if the bot stops first, recover() can say so.
+    store.startRun({ channel, threadTs: replyThread, ts: placeholder.ts });
     return serial(convo, async () => {
       try {
         let { threadId, cursor } = store.conversation(convo);
@@ -201,6 +204,8 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
       } catch (e) {
         console.error('agent run failed', e);
         await slack.chat.update({ channel, ts: placeholder.ts, text: failure(e) }).catch(() => {});
+      } finally {
+        store.endRun(channel, placeholder.ts);
       }
     });
   }
@@ -215,25 +220,41 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     if (held.requester !== user) return say(`Only <@${held.requester}> can confirm this.`);
     const who = await people.resolve(user);
     if (!who.member) return say(unmatchedText(who, config.name));
-    const taken = store.takeConfirmation(id);
+    // Taken, not deleted: two clicks still can't both act on it, and it stays until the card shows
+    // what happened, so a restart in between is found by recover() instead of dropping the change.
+    const taken = store.takeConfirmation(id, { by: user, approve });
     if (!taken) return say('That was already handled.');
     const { channel, message_ts: ts } = taken;
     const { pending, titles, slack: where } = taken.data;
+    const finish = () => store.finishConfirmation(id);
     if (Date.now() - taken.created_at > CONFIRM_TTL)
-      return slack.chat.update({ channel, ts, text: 'Expired', blocks: resolvedBlocks(pending, 'Expired: ask again if you still want this.', titles) });
+      try {
+        return await slack.chat.update({ channel, ts, text: 'Expired', blocks: resolvedBlocks(pending, 'Expired: ask again if you still want this.', titles) });
+      } finally {
+        finish();
+      }
     const prefix = resolvedBlocks(pending, `${approve ? 'Confirmed' : 'Cancelled'} by <@${user}>.`, titles);
-    await slack.chat.update({
-      channel,
-      ts,
-      text: approve ? 'Confirmed' : 'Cancelled',
-      blocks: [...prefix, { type: 'context', elements: [{ type: 'mrkdwn', text: WORKING }] }],
-    });
+    try {
+      await slack.chat.update({
+        channel,
+        ts,
+        text: approve ? 'Confirmed' : 'Cancelled',
+        blocks: [...prefix, { type: 'context', elements: [{ type: 'mrkdwn', text: WORKING }] }],
+      });
+    } catch (e) {
+      // The card still shows its buttons, so they should still work.
+      store.untakeConfirmation(id);
+      throw e;
+    }
     return serial(taken.thread_id.replace(/#\d+$/, ''), async () => {
       const ctx = { api: trackerAs(who.member), dir, store, requester: who.member, slack: where, touched: [], card: taken.data.card || null };
       try {
+        // From here the change may be made. A restart after this can't tell whether it was, so
+        // recover() says so rather than making it again (only create_task has an idempotency key).
+        store.markResuming(id);
         const out = await agent.resume({ threadId: taken.thread_id, ids: taken.interrupts, approve, ctx });
         if (out.stale)
-          return slack.chat.update({
+          return await slack.chat.update({
             channel,
             ts,
             text: 'Out of date',
@@ -245,8 +266,46 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
         await slack.chat
           .update({ channel, ts, text: failure(e), blocks: [...prefix, { type: 'section', text: { type: 'mrkdwn', text: failure(e) } }] })
           .catch(() => {});
+      } finally {
+        finish();
       }
     });
+  }
+
+  /* On start, before taking events: what the last process left unfinished, told to the people
+     waiting on it. Nothing is run again, since a write may already have happened (a task created
+     by a run cut off, a change half made); a run's requests aren't replayed either.
+     - a reply still "Working on it…" says the bot restarted, and to ask again;
+     - a Cancel says it was cancelled (a cancelled change is never made);
+     - a Confirm the agent hadn't started on yet gets its buttons back: nothing was changed, and the
+       saved conversation is still paused on exactly those changes;
+     - a Confirm the agent had started on says it may or may not have gone through, to check first. */
+  async function recover() {
+    const show = (where, what) =>
+      slack.chat.update({ ...where, ...what }).catch(e => console.warn('couldn’t update a message after a restart', e?.data?.error || e?.message));
+    for (const r of store.runs()) {
+      await show({ channel: r.channel, ts: r.ts }, { text: RESTARTED });
+      store.endRun(r.channel, r.ts);
+    }
+    for (const c of store.takenConfirmations()) {
+      const { pending, titles } = c.data;
+      const it = pending.length === 1 ? 'this change' : 'these changes';
+      const where = { channel: c.channel, ts: c.message_ts };
+      if (c.approve && !c.resumed_at) {
+        store.untakeConfirmation(c.id);
+        const note = {
+          type: 'context',
+          elements: [{ type: 'mrkdwn', text: `_I restarted before making ${it}, so nothing was changed. Confirm again if you still want it._` }],
+        };
+        await show(where, { text: 'Waiting for you to confirm', blocks: [note, ...confirmBlocks(c.id, pending, c.requester, titles)] });
+        continue;
+      }
+      const note = c.approve
+        ? `Confirmed by <@${c.taken_by}>, but I restarted while making ${it}, so I can’t tell whether ${pending.length === 1 ? 'it' : 'they'} went through. Check before you ask me again.`
+        : `Cancelled by <@${c.taken_by}>.`;
+      await show(where, { text: c.approve ? 'Interrupted' : 'Cancelled', blocks: resolvedBlocks(pending, note, titles) });
+      store.finishConfirmation(c.id);
+    }
   }
 
   /* Complete / Assign to me / Status on a task card, checked against the person who clicked. */
@@ -612,6 +671,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     onMessageShortcut,
     onCreateSubmit,
     onLinkShared,
+    recover,
     /* For tests: wait until every queued run has finished. */
     idle: () => Promise.all([...locks.values()].map(p => p.catch(() => {}))),
   };

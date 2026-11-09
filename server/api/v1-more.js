@@ -433,7 +433,8 @@ export function registerMore(h) {
     run: (x, { params }) => {
       const t = findTask(x, params.ref);
       const now = Date.now();
-      const { nextId, fav, prevStatus, ...rest } = t;
+      // A copy starts its own lifecycle: the server sets when it was finished and drops the links between repeats.
+      const { fav, ...rest } = t;
       const n = { ...h.newTask(x, rest), ...rest, id: newId('t'), title: `${t.title} (copy)`.slice(0, 500), created: now, updated: now };
       delete n.key;
       const [saved] = write(x, [put('tasks', n), actOp(x, n, 'created')]);

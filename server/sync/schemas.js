@@ -1,7 +1,7 @@
 // @ts-check
 /* Shapes of synced records, matching what the client renders. Known fields are type-checked;
-   unknown fields pass through (the UI keeps small flags like `prevStatus` on records), bounded by
-   the per-record size limit in the engine. */
+   unknown fields pass through (the UI keeps small flags on records), bounded by the per-record size
+   limit in the engine. */
 import { z } from 'zod';
 import { FILTER_FIELDS, PCOLORS, PRIOS, PSTAT, REACTIONS, RECUR, ROLES, STATUSES } from '../../src/core/constants.js';
 import { FILE_TYPES } from '../../src/core/file-types.js';
@@ -51,7 +51,11 @@ export const SCHEMAS = {
     recur: z.enum(RECUR).nullable().optional(),
     archived: z.boolean().optional(),
     archivedAt: ts.nullable().optional(),
+    // Set by the server only (task-status.js).
     completedAt: ts.nullable().optional(),
+    prevStatus: z.enum(STATUSES.map(s => s.id)).optional(),
+    nextId: id.optional(),
+    repeatOf: z.object({ id, sum: z.string().max(64).nullable() }).optional(),
   }),
   projects: z.looseObject({
     id,

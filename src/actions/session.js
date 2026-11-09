@@ -11,39 +11,53 @@ import { toast } from '../ui/toast.js';
 import { hashFor, render, routeFromHash } from '../shell/render.js';
 import {
   OFFLINE_MSG,
+  changeCount,
   collect,
   commit,
   connectLive,
+  dropKept,
   flush,
+  keepNow,
   loadingFresh,
   onSync,
   pendingCount,
   prime,
   refresh,
   reloadWhenSaved,
+  reloaded,
   sameUser,
   settled,
   stopSync,
+  takeKept,
 } from '../shell/sync.js';
 import { A, EMAIL_RE, confirmDlg } from './actions.js';
 import { disablePushHere, refreshPush } from './push.js';
 
 const AUTH_SCREENS = ['login', 'signup', 'forgot'];
+const changes = n => (n === 1 ? '1 change' : `${n} changes`);
 
 /* ---------- loading the workspace ---------- */
-function hydrate(b) {
+/* `kept`: edits to send that this person left unsaved here earlier (see prime). */
+function hydrate(b, kept) {
   S.data = b.data;
   S.prefs = { ...DEFAULT_PREFS, ...b.prefs, tz: validTz(b.prefs?.tz) };
   S.views = b.views || {};
   S.ui.collapsed = !!b.collapsed;
   setTimeZone(S.prefs.tz);
-  prime(S.data);
+  prime(S.data, kept);
 }
 
 let reloading = null;
+let again = false;
 /* Re-read everything from the server (after reconnecting, or when access changed). */
 export function reload() {
-  reloading ||= (async () => {
+  // Asked again while one is loading: its data may be from before what this one is for (a change
+  // missed while the live stream was down), so another follows it.
+  if (reloading) {
+    again = true;
+    return reloading;
+  }
+  reloading = (async () => {
     try {
       // A tab waking up (back from the back/forward cache, the stream reconnecting) may find
       // someone else signed in on this browser: then it sends nothing and signs out.
@@ -68,11 +82,18 @@ export function reload() {
       }
       // Not under someone's caret: shown once they leave the field they're typing in.
       refresh();
+      reloaded(true);
     } catch (e) {
-      if (e.status === 401 || e.status === 403) signedOut();
+      if (e.status === 401 || e.status === 403) sessionEnded();
+      // Any other failure (a deploy's 502, the network) is tried again until a reload loads.
+      else reloaded(false);
     } finally {
       loadingFresh(false);
       reloading = null;
+      if (again) {
+        again = false;
+        reload();
+      }
     }
   })();
   return reloading;
@@ -80,14 +101,30 @@ export function reload() {
 
 async function enter(hash, msg) {
   const b = await get('/api/bootstrap');
-  hydrate(b);
+  // Edits left unsaved in this browser (the page went, or the session ended, while they waited):
+  // this person's are sent on top of the fresh data; anyone else's are dropped, never sent as them.
+  // Taken only once the data has loaded, so a failed load leaves them kept for next time.
+  const kept = await takeKept(S.ui.me.id);
+  hydrate(b, kept.mine);
   connectLive();
+  const sending = changeCount();
+  if (sending) flush();
   S.ui.errors = {};
+  const told = () => {
+    if (sending) toast(`Saving ${changes(sending)} you made here earlier that hadn't reached the server yet.`, { kind: 'info', ms: 6000 });
+    const n = kept.others;
+    if (n)
+      toast(`${changes(n)} someone else made in this browser ${n === 1 ? "wasn't saved, and was" : "weren't saved, and were"} discarded.`, {
+        kind: 'info',
+        ms: 8000,
+      });
+  };
   if (!b.workspace.onboarded && me()?.role === 'Owner') {
     S.ui.auth = 'onboarding';
     S.ui.onb = 0;
     S.ui.onbData.ws = '';
     render();
+    told();
     return;
   }
   S.ui.auth = null;
@@ -95,6 +132,7 @@ async function enter(hash, msg) {
   S.ui.returnTo = null;
   refreshPush();
   if (msg) toast(msg);
+  told();
 }
 
 /* Route from the URL hash: a page (see hashFor in shell/render.js), or a deep link written by
@@ -133,10 +171,14 @@ const stillMe = () => !S.ui.me || !who() || who() === S.ui.me.id;
 /* Someone else signed in on this browser: their session mustn't send this person's changes, so the
    tab signs out at once, sending nothing. */
 function otherUser() {
-  const lost = pendingCount();
-  signedOut(`Someone else signed in on this browser, so you were signed out here.${lost ? " Changes that hadn't been saved yet were not sent." : ''}`, {
-    keepWho: true,
-  });
+  const lost = changeCount();
+  const were = lost === 1 ? 'was' : 'were';
+  signedOut(
+    `Someone else signed in on this browser, so you were signed out here.${lost ? ` ${changes(lost)} that hadn't been saved yet ${were} not sent.` : ''}`,
+    {
+      keepWho: true,
+    },
+  );
 }
 addEventListener('storage', e => {
   if (e.key === WHO_KEY && e.newValue && S.ui.me && e.newValue !== S.ui.me.id) otherUser();
@@ -475,12 +517,15 @@ const DEVICE_PREFS = ['theme', 'accent', 'side', 'density', 'motion'];
    next. Personal preferences leave the browser and the page reloads, so no state survives: a new
    API key or bot key, recovery codes, two-factor setup, drafts, half-filled forms, searches. */
 let leaving = false;
-export function signedOut(msg, { keepWho = false } = {}) {
+/* `keepEdits`: edits still waiting stay kept in the browser (the session only ended; see sessionEnded).
+   Otherwise they go: signed out on purpose (after being asked), or someone else signed in. */
+export async function signedOut(msg, { keepWho = false, keepEdits = false } = {}) {
   // Once: the live stream closing can report the same sign-out again before the reload.
   if (leaving) return;
   leaving = true;
   const mine = S.ui.me && who() === S.ui.me.id;
   stopSync();
+  if (!keepEdits) await dropKept();
   S.data = emptyData();
   S.views = {};
   Object.assign(S.ui, { pop: null, palette: null, drawer: null, modals: [], route: 'home', params: {}, history: [], errors: {}, me: null, offline: false });
@@ -542,7 +587,32 @@ async function leave() {
   signedOut();
 }
 
-onSync({ signedOut: () => signedOut('Your session ended. Sign in again to continue.'), otherUser, stillMe, resync: reload });
+/* The session ended (expired, revoked, signed out in another tab). Edits still waiting aren't
+   dropped: they're kept in this browser and sent when this person signs in again (see enter), and
+   the sign-in screen says how many. The page reloads only once they're safely kept; if they can't
+   be (storage blocked), it doesn't reload unasked over them. */
+let ending = false;
+async function sessionEnded() {
+  if (ending || leaving) return;
+  // Someone else has signed in on this browser since: these edits are never theirs to send.
+  if (!stillMe()) return otherUser();
+  ending = true;
+  const n = changeCount();
+  const msg = 'Your session ended. Sign in again to continue.';
+  if (!n) return signedOut(msg);
+  if (await keepNow()) return signedOut(`${msg} ${changes(n)} waiting to be saved will be sent when you do.`, { keepEdits: true });
+  confirmDlg({
+    title: 'Your session ended',
+    body: esc(
+      `${changes(n)} haven't been saved, and this browser can't keep them until you sign in again. Copy anything you need first: signing in again loses them.`,
+    ),
+    ok: 'Sign in again',
+    icon: 'log-out',
+    run: () => signedOut(msg),
+  });
+}
+
+onSync({ signedOut: sessionEnded, otherUser, stillMe, resync: reload });
 
 /* ---------- onboarding ---------- */
 async function finishSetup() {

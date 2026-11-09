@@ -4,17 +4,21 @@
 
    Operation:  { c: collection, id, k: 'put' | 'patch' | 'del', v: object, base?: object, restore?: true }
                `restore`: a put that undoes this person's recent delete of the record (rules.js `restore`).
-               `base`: for list and map fields in a patch, the values the client edited from (merge.js).
-   Result:     { ok: true, v: canonical } | { ok: false, error, v: canonical-or-null }
-   A rejected op is rolled back alone (savepoint) and the client resets that record to `v`. */
+               `base`: for list and map fields in a patch, the values the client edited from (src/core/merge.js);
+               for a task's `desc`, the description it was edited from (see descMoved).
+   Result:     { ok: true, v: canonical } | { ok: false, error, code?, v: canonical-or-null }
+   A rejected op is rolled back alone (savepoint) and the client resets that record to `v`.
+   Records the batch changed besides its own (e.g. the next occurrence of a repeating task) come
+   back as `changes`, since the live stream skips the tab that sent it. */
 import fs from 'node:fs';
 import path from 'node:path';
 import { COLLS } from '../repo.js';
 import { Reject } from '../lib/http.js';
 import { currentAuth } from '../auth.js';
 import { DOC_SCHEMAS, MAX_RECORD_BYTES, SCHEMAS } from './schemas.js';
-import { MERGED, mergeField } from './merge.js';
+import { MERGED, mergeField } from '../../src/core/merge.js';
 import { RICH_MS_PER_REQUEST, RICH_PER_REQUEST } from './budget.js';
+import { cleanRich } from '../lib/rich-text.js';
 import { RULES, canSee, isAdmin, memberFor, projectFor, removeMemberCascade } from './rules.js';
 
 const PROJECT_SCOPED = new Set(['tasks', 'comments', 'activity', 'files', 'events', 'savedViews']);
@@ -25,6 +29,19 @@ const PERSONAL_DOCS = new Set(['projOrder', 'recentSearches', 'notifPrefs']);
 const DOCS = new Set(['ws', ...PERSONAL_DOCS]);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
+/* Whether the stored description `cur` is neither the one a write started from (`from`) nor the one
+   it writes (`mine`: the same write sent again, e.g. after the page went away). Either may have been
+   cleaned when it was saved, so each also counts as it would be stored. */
+function descMoved(cur, from, mine) {
+  const stored = x => {
+    try {
+      return cleanRich(x);
+    } catch {
+      return null;
+    }
+  };
+  return ![from, mine].some(x => x === cur || (typeof x === 'string' && typeof cur === 'string' && stored(x) === cur));
+}
 
 export function createEngine({ db, repo, config, mailer, pusher = null, log = console, limit = () => true }) {
   const conns = new Set();
@@ -144,8 +161,13 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
 
     const v = { ...op.v };
     // List and map fields sent with the value they were edited from (`base`) are merged onto the
-    // current value, so a stale write only applies its own changes (see merge.js).
+    // current value, so a stale write only applies its own changes (see src/core/merge.js).
     if (before && k === 'patch' && op.base) for (const f of MERGED[c] || []) if (f in v && f in op.base) v[f] = mergeField(op.base[f], v[f], before[f]);
+    // A task description sent with the one it was edited from (`base.desc`) is only written over
+    // that one: when someone else's was saved meanwhile it's refused (`desc_conflict`), and the app
+    // keeps this person's text for them to choose, instead of silently replacing the other.
+    if (before && k === 'patch' && c === 'tasks' && 'desc' in v && op.base && 'desc' in op.base && descMoved(before.desc, op.base.desc, v.desc))
+      throw Object.assign(new Reject('Someone else changed this description while you were editing it.', 409), { code: 'desc_conflict' });
     const personal = {};
     for (const f of rule.personal || []) {
       if (f in v) personal[f] = v[f];
@@ -247,7 +269,15 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
             if (!(e instanceof Reject)) {
               log.error?.(`[sync] op ${i} (${op?.c}/${op?.k}) failed`, e);
               results.push({ ok: false, error: 'Something went wrong saving this change.', status: 500, v: current(op, favs, ctx.me) });
-            } else results.push({ ok: false, error: e.message, status: e.status, ...(e.retry ? { retry: true } : {}), v: current(op, favs, ctx.me) });
+            } else
+              results.push({
+                ok: false,
+                error: e.message,
+                status: e.status,
+                ...(e.retry ? { retry: true } : {}),
+                ...(e.code ? { code: e.code } : {}),
+                v: current(op, favs, ctx.me),
+              });
             if (e instanceof Reject && e.retry) deferred = e;
             if (atomic) throw (failed = results.at(-1));
           }
@@ -255,10 +285,33 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
       });
     } catch (e) {
       if (!failed || e !== failed) throw e;
-      return { results, links: [], failed, ...(failed.gone ? { gone: true } : {}) };
+      return { results, links: [], changes: [], failed, ...(failed.gone ? { gone: true } : {}) };
     }
     afterCommit(ctx, clientId);
-    return { results, links: ctx.links, failed };
+    return { results, links: ctx.links, changes: sideEffects(ctx, ops, favs), failed };
+  }
+
+  /* What the batch changed beyond the records its ops name, as the sender may see it (their last
+     state), for the tab that sent it: publish() leaves that tab out. */
+  function sideEffects(ctx, ops, favs) {
+    const named = new Set(ops.map(op => `${op?.c}:${op?.id}`));
+    const last = new Map();
+    for (const ch of ctx.changes) {
+      const k = `${ch.c}:${ch.id}`;
+      if (DOCS.has(ch.c) || ch.c === 'notifs' || named.has(k) || (ch.onlyUser && ch.onlyUser !== ctx.uid)) continue;
+      last.delete(k);
+      last.set(k, ch);
+    }
+    const out = [];
+    for (const ch of last.values()) {
+      if (!ch.v) {
+        if (!ch.pid || !PROJECT_SCOPED.has(ch.c) || canSee(repo.get('projects', ch.pid) || ch.proj, ctx.me)) out.push({ c: ch.c, id: ch.id, v: null });
+        continue;
+      }
+      const v = visible(ch.c, ch.v, ctx.me);
+      if (v) out.push({ c: ch.c, id: ch.id, v: project(ch.c, v, favs) });
+    }
+    return out;
   }
 
   function current(op, favs, me) {

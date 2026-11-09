@@ -12,29 +12,51 @@ proxies `/api` to the API on :8787.
 - **Writes.** Actions keep mutating `S.data` and calling `save()`. `shell/sync.js` diffs `S.data`
   against what the server last confirmed and sends field-level operations to `POST /api/sync` (up to
   500 per batch). The server (`server/sync/`) validates each one, checks permissions, applies side
-  effects (task keys, cascading deletes, notifications, invite emails) and returns the canonical
-  record; a rejected change is rolled back on the client with a toast. Each batch runs in one SQLite
+  effects (task keys, cascading deletes, notifications, invite emails, a task's status lifecycle)
+  and returns the canonical record, plus any other record the batch changed (`changes`, which the
+  live stream doesn't send that tab); a rejected change is rolled back on the client with a toast. Each batch runs in one SQLite
   transaction. `<html data-sync>` shows `saving` / `saved` / `offline`; changes made while offline
   are retried. Consecutive changes to the same record are folded into one queued operation (the
   later value of each field wins), and each request stays within the server's limits (500 ops,
   4 MB, 900,000 characters of descriptions); an op the server defers because its per-request
   budget is spent (`retry`) is sent again, and a batch refused as too large (`413`) is split.
+- **Unsaved edits are kept.** What's waiting to be saved is also written to IndexedDB under the
+  signed-in person, so a reload, a crash, a discarded tab or an ended session doesn't lose it; it's
+  sent after the next bootstrap, only for the same person (anyone else's is dropped, and they're
+  told how many changes). Hiding the page sends what's waiting at once.
 - **Lists and maps merge.** A project's `members`, `perms` and `milestones`, a task's `subtasks`,
   `labels` and `deps`, and a comment's reactions (`re`) are whole values, so the client sends each one with the value it edited from (`base`) and
   the server applies only that client's additions, removals and changes onto the current value
-  (`server/sync/merge.js`). A stale write (an offline queue, a tab behind) can't undo someone else's
+  (`src/core/merge.js`). A stale write (an offline queue, a tab behind) can't undo someone else's
   change: a person taken off a project stays off. Entries are matched by id (milestones by name),
   and reactions emoji by emoji, so two people reacting at once both count. A patch without `base` (the REST API, which
   reads and writes in one request) replaces the whole value.
-- **Undo.** Undo puts back only the records the action changed. A record it deleted is re-sent
+- **Task status.** The server owns what follows from a task's status
+  (`server/sync/task-status.js`, for sync and the REST API alike); clients only change `status`, and
+  what they send for the other fields is ignored. Finishing sets `completedAt` and `prevStatus`
+  (where it was, for Reopen and Undo); reopening clears both. A repeating task finished with a due
+  date gets one next occurrence, made in the same transaction, so concurrent completions make one;
+  the original names it (`nextId`) and it names the original (`repeatOf`, with a fingerprint of how
+  the server made it). Reopening removes it only if it still matches that fingerprint (nobody has
+  worked on it, whatever its timestamps say) and has no comments; otherwise it stays linked.
+- **Edit windows and descriptions.** The task, project and team edit windows save only what was
+  changed in them since they opened (lists merged onto the current value), so a field someone else
+  changed meanwhile keeps their value. A task's description is sent with the one it was edited from
+  (`base.desc`); when someone else's was saved meanwhile, the server refuses it (`desc_conflict`)
+  and the app, which also notices one arriving while the editor has focus, keeps the person's text
+  and asks whether to keep theirs or write it over.
+- **Undo.** Undo puts back only the records the action changed, and in each only the fields it
+  changed that nobody has changed since (lists and maps merged), so later edits stay. A record it deleted is re-sent
   with `restore: true`; the server then restores its own copy, kept in `recent_deletes` for 10
   minutes and only for the person who deleted it, so a comment keeps its author, time and
   reactions, a task its key, and nobody is notified again. When there is no such copy (too late,
-  or someone else deleted it) the Undo is refused (`410`); records of other kinds (projects,
-  files, events, …) are created like anything new.
+  or someone else deleted it) the Undo is refused (`410`); records of other kinds (teams,
+  events, …) are created like anything new. Deleting a project or a file and removing someone from
+  the workspace offer no Undo: the server keeps nothing to restore them from.
 - **Live updates.** Other people's changes arrive over Server-Sent Events (`GET /api/events`) and are
   merged in, filtered to what each person can see. A tab's own changes aren't echoed back to it
-  (`x-client-id`). When the stream drops, the client reconnects and bootstraps again.
+  (`x-client-id`). When the stream drops, the client reconnects and bootstraps again; a
+  bootstrap that fails is retried with backoff (the tab shows offline meanwhile).
 - **Per-person data** (preferences, view settings, favourites, sidebar order, notification
   preferences) is stored per account (`PUT /api/me/state`), not in the browser.
 - **Files** stream to `POST /api/files` as the raw request body, are written under `UPLOAD_DIR` with a
@@ -170,7 +192,7 @@ they only see its work once they add themselves.
 Dependencies point downward:
 
 1. `core/` depends on nothing else in the app. The server imports parts of it (`access.js`,
-   `rich-text.js`, `constants.js`, `file-types.js`), which is why the Docker image includes `src/core`.
+   `rich-text.js`, `constants.js`, `file-types.js`, `merge.js`), which is why the Docker image includes `src/core`.
 2. `ui/`, `shell/`, `components/`, `pages/`, `views/`, `overlays/` and `features/` render HTML from state.
 3. `actions/` change state and re-render. Each action module registers its handlers on the shared
    action table (`A`) when it loads, so `main.js` imports them after `actions/actions.js`.

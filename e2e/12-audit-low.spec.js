@@ -81,12 +81,17 @@ test('completing a repeating task again after Undo or reopening schedules one ne
       .map(t => t.status)
       .sort();
   const toggle = page.locator('.drawer [data-a="toggleDone"]').first();
+  const rows = page.locator('[data-task-row]', { hasText: 'Water the plants' });
 
   await toggle.click();
   await expect.poll(statuses).toEqual(['done', 'todo']);
+  // The server makes the next one; the answer to this tab's change brings it here too.
+  await toastWith(page, 'Next “Water the plants” scheduled for');
+  await expect(rows).toHaveCount(2);
   // Undo, then complete again: still one next occurrence.
   await page.locator('#toasts .toast', { hasText: 'Completed' }).getByRole('button', { name: 'Undo' }).click();
   await expect.poll(statuses).toEqual(['todo']);
+  await expect(rows).toHaveCount(1);
   await toggle.click();
   await expect.poll(statuses).toEqual(['done', 'todo']);
   // Reopened: the untouched next occurrence goes with it; completed again, there's one.

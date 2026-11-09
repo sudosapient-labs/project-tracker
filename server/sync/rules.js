@@ -12,6 +12,7 @@ import { mentioned, notify } from '../notify.js';
 import { issueToken } from '../routes/auth.js';
 import { label } from '../../packages/client/dates.js';
 import { clockOf } from '../lib/clock.js';
+import { LIFECYCLE, createdStatus, settleStatus } from './task-status.js';
 
 export { projectLevel };
 export const isAdmin = ctx => isAdminRole(ctx.me);
@@ -273,6 +274,8 @@ export const RULES = {
   tasks: {
     scope: v => v.project,
     personal: ['fav'],
+    // When it was finished, where it was before, and the links between repeats (task-status.js).
+    serverOwned: LIFECYCLE,
     create(ctx, t) {
       const p = needProject(ctx, t.project);
       needAssignee(ctx, p, t.assignee);
@@ -280,6 +283,7 @@ export const RULES = {
       t.desc = richDesc(ctx, t.desc, t.project);
       settleAttachments(ctx, t);
       settleKey(ctx, t, p);
+      createdStatus(ctx, t);
       if (t.assignee) notify(ctx, t.assignee, 'assign', { type: 'assign', task: t.id, text: 'assigned you', snippet: dueSnippet(ctx, t, t.assignee) }, t);
       return t;
     },
@@ -300,6 +304,7 @@ export const RULES = {
       if (keys.includes('assignee')) {
         if (t.assignee) notify(ctx, t.assignee, 'assign', { type: 'assign', task: t.id, text: 'assigned you', snippet: dueSnippet(ctx, t, t.assignee) }, t);
       }
+      if (keys.includes('status')) settleStatus(ctx, before, t, { create: RULES.tasks.create, cascade: deleteTaskCascade });
       if (keys.includes('status') && t.assignee && !keys.includes('assignee')) {
         const done = t.status === 'done';
         notify(

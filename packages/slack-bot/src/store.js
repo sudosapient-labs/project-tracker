@@ -5,7 +5,12 @@
    - channels: Slack channel → the tracker project it's about (`/sudo project WEB`)
    - threads:  task ↔ Slack thread it was created from or linked to (for synced threads later)
    - confirmations: changes waiting for a Confirm button. Each card has its own id, and names the
-               conversation and the exact interrupts it shows, who asked, and where it was posted
+               conversation and the exact interrupts it shows, who asked, and where it was posted.
+               A click marks it taken (`taken_at`, `taken_by`, `approve`), `resumed_at` once the
+               agent starts acting on it, and it's deleted only when the card shows the outcome, so
+               a restart in between can tell the person (handlers.js recover())
+   - runs:     replies still "Working on it…": deleted when the reply replaces the placeholder, so
+               the ones left after a restart can say the bot stopped before finishing
    - guidance: instructions admins give the agent, workspace-wide or per channel
    - seen:     Slack events already handled (Slack retries; Socket Mode can redeliver)
    - conversations: one per Slack thread per person (or per DM per day). `round` starts a fresh
@@ -50,7 +55,11 @@ CREATE TABLE IF NOT EXISTS confirmations (
   thread_ts TEXT,
   message_ts TEXT,
   data TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  taken_at INTEGER,
+  taken_by TEXT,
+  approve INTEGER,
+  resumed_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS confirmations_by_thread ON confirmations (thread_id);
 CREATE TABLE IF NOT EXISTS guidance (
@@ -68,13 +77,33 @@ CREATE TABLE IF NOT EXISTS conversations (
   round INTEGER NOT NULL DEFAULT 0,
   cursor TEXT
 );
+CREATE TABLE IF NOT EXISTS runs (
+  channel TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  thread_ts TEXT,
+  started_at INTEGER NOT NULL,
+  PRIMARY KEY (channel, ts)
+);
 `;
+
+/* Columns added after a table was first made: CREATE TABLE IF NOT EXISTS leaves a table from an
+   older version as it was, so they're added to it here. */
+const ADDED = { confirmations: ['taken_at INTEGER', 'taken_by TEXT', 'approve INTEGER', 'resumed_at INTEGER'] };
 
 export function openStore(file = ':memory:') {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
   db.exec(SCHEMA);
+  for (const [table, cols] of Object.entries(ADDED)) {
+    const has = new Set(
+      db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .map(c => c.name),
+    );
+    for (const col of cols) if (!has.has(col.split(' ')[0])) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col}`);
+  }
   const one = (sql, ...a) => db.prepare(sql).get(...a);
   const all = (sql, ...a) => db.prepare(sql).all(...a);
   const run = (sql, ...a) => db.prepare(sql).run(...a);
@@ -141,11 +170,36 @@ export function openStore(file = ':memory:') {
       );
       return id;
     },
-    confirmation: id => row(one('SELECT * FROM confirmations WHERE id = ?', id)),
-    /* Take a confirmation, once: two clicks on Confirm can't both act on it. */
-    takeConfirmation: id => row(one('DELETE FROM confirmations WHERE id = ? RETURNING *', id)),
+    /* A card still waiting for its click (not one already taken). */
+    confirmation: id => row(one('SELECT * FROM confirmations WHERE id = ? AND taken_at IS NULL', id)),
+    /* Take a confirmation, once: two clicks on Confirm can't both act on it. It stays, marked taken,
+       until finishConfirmation, so a restart before then finds it (takenConfirmations). */
+    takeConfirmation: (id, { by = null, approve = null } = {}, now = Date.now()) =>
+      row(
+        one(
+          'UPDATE confirmations SET taken_at = ?, taken_by = ?, approve = ? WHERE id = ? AND taken_at IS NULL RETURNING *',
+          now,
+          by,
+          approve == null ? null : approve ? 1 : 0,
+          id,
+        ),
+      ),
+    /* The agent is about to act on a taken confirmation: from here a change may have been made. */
+    markResuming: (id, now = Date.now()) => run('UPDATE confirmations SET resumed_at = ? WHERE id = ?', now, id),
+    /* Waiting for a click again (a restart came before anything was done). */
+    untakeConfirmation: id => run('UPDATE confirmations SET taken_at = NULL, taken_by = NULL, approve = NULL, resumed_at = NULL WHERE id = ?', id),
+    /* The card shows what happened: the confirmation is done with. */
+    finishConfirmation: id => run('DELETE FROM confirmations WHERE id = ?', id),
+    /* Confirmations taken but not finished (what a restart interrupted). */
+    takenConfirmations: () => all('SELECT * FROM confirmations WHERE taken_at IS NOT NULL ORDER BY taken_at').map(row),
     /* Every confirmation still open in a conversation, taken (to mark their cards superseded). */
-    takeConfirmationsIn: threadId => all('DELETE FROM confirmations WHERE thread_id = ? RETURNING *', threadId).map(row),
+    takeConfirmationsIn: threadId => all('DELETE FROM confirmations WHERE thread_id = ? AND taken_at IS NULL RETURNING *', threadId).map(row),
+
+    /* A reply in progress: its "Working on it…" placeholder, until the reply replaces it. */
+    startRun: ({ channel, threadTs = null, ts }, now = Date.now()) =>
+      run('INSERT OR REPLACE INTO runs (channel, ts, thread_ts, started_at) VALUES (?, ?, ?, ?)', channel, ts, threadTs, now),
+    endRun: (channel, ts) => run('DELETE FROM runs WHERE channel = ? AND ts = ?', channel, ts),
+    runs: () => all('SELECT * FROM runs ORDER BY started_at'),
 
     guidance: scope => one('SELECT text FROM guidance WHERE scope = ?', scope)?.text || '',
     setGuidance: (scope, text, setBy, now = Date.now()) =>
