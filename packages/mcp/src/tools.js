@@ -430,7 +430,7 @@ export const TOOLS = {
     },
   },
   list_events: {
-    description: 'Calendar events by date.' + UNTRUSTED,
+    description: 'Calendar events by date, on the person’s clock.' + UNTRUSTED,
     annotations: READ,
     inputSchema: obj({ project: KEY, from: str('YYYY-MM-DD'), to: str('YYYY-MM-DD') }),
     async run(api, q) {
@@ -954,7 +954,7 @@ export const TOOLS = {
   },
   manage_event: {
     annotations: writes({ destructive: true, idempotent: false }),
-    description: 'Create, change or delete a calendar event (no project: workspace-wide).',
+    description: 'Create, change or delete a calendar event (no project: workspace-wide), on the person’s clock.',
     inputSchema: obj(
       { action: enm(['create', 'update', 'delete']), id: str(), title: str(), date: str('YYYY-MM-DD'), time: str('HH:MM, "" all day'), project: KEY },
       ['action'],

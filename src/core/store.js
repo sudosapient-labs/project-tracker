@@ -165,8 +165,10 @@ export function taskProg(t) {
 }
 
 /* ---------- activity + notification helpers ---------- */
+/* `extra`: the words after the verb, or for a start or due, whenAct's words and value (core/activity.js). */
 export function logAct(verb, t, extra = '') {
-  D().activity.unshift({ id: uid('a'), by: D().me, verb, task: t?.id || null, project: t?.project || null, at: Date.now(), extra });
+  const more = typeof extra === 'string' ? { extra } : extra;
+  D().activity.unshift({ id: uid('a'), by: D().me, verb, task: t?.id || null, project: t?.project || null, at: Date.now(), ...more });
   if (t) t.updated = Date.now();
 }
 

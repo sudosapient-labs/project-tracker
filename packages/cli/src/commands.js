@@ -827,7 +827,7 @@ export const NOUNS = {
   },
 
   events: {
-    about: 'Calendar events',
+    about: 'Calendar events (days and times on your clock)',
     default: 'list',
     verbs: {
       list: {

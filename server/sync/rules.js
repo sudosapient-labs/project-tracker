@@ -10,7 +10,7 @@ import { cleanCheckedRich, richTextProblem } from '../lib/rich-text.js';
 import { RICH_MS_PER_REQUEST } from './budget.js';
 import { mentioned, notify } from '../notify.js';
 import { issueToken } from '../routes/auth.js';
-import { label } from '../../packages/client/dates.js';
+import { dayOf, fromWallClock, isCanonical, label, timeOf } from '../../packages/client/dates.js';
 import { clockOf } from '../lib/clock.js';
 import { LIFECYCLE, createdStatus, settleStatus } from './task-status.js';
 
@@ -142,6 +142,24 @@ function settleDesc(ctx, desc, pid) {
 function needEventScope(ctx, pid) {
   if (pid) return needProject(ctx, pid);
   if (!isAdmin(ctx)) throw new Reject('Only admins can change workspace-wide events.');
+}
+/* An event is `when`: a day (all day) or the UTC instant it starts. `date` and `time` are its day and
+   time on the saver's clock, kept for apps from before `when` (they show those). Such an app sends
+   only `date` and `time`: they're read on its person's clock (server/lib/clock.js), as the API reads
+   them. `changed`: the fields this write changes (none given: a new event). */
+function settleEventWhen(ctx, e, changed) {
+  const { tz } = clockOf(ctx.repo, ctx.uid);
+  const legacy = e.when == null || (changed && !changed.includes('when') && (changed.includes('date') || changed.includes('time')));
+  if (legacy) {
+    if (typeof e.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(e.date) || !isCanonical(e.date)) throw new Reject('date: Invalid date', 400);
+    const time = e.time ?? '';
+    if (typeof time !== 'string' || !/^(([01]\d|2[0-3]):[0-5]\d)?$/.test(time)) throw new Reject('time: Invalid time', 400);
+    e.when = time ? fromWallClock(e.date, time, tz) : e.date;
+  } else if (changed && !changed.includes('when')) return e;
+  if (!isCanonical(e.when)) throw new Reject('when: Invalid date', 400);
+  e.date = dayOf(e.when, tz);
+  e.time = timeOf(e.when, tz);
+  return e;
 }
 
 export const HOUR = 3_600_000;
@@ -586,12 +604,12 @@ export const RULES = {
     scope: v => v.project,
     create(ctx, e) {
       needEventScope(ctx, e.project);
-      return e;
+      return settleEventWhen(ctx, e);
     },
-    update(ctx, b, e) {
+    update(ctx, b, e, changed) {
       needEventScope(ctx, b.project);
       if (e.project !== b.project) needEventScope(ctx, e.project);
-      return e;
+      return settleEventWhen(ctx, e, changed);
     },
     remove(ctx, e) {
       needEventScope(ctx, e.project);

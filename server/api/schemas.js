@@ -203,7 +203,14 @@ export const Activity = named(
     id: z.string(),
     by: z.string().describe('Member id'),
     verb: z.string().describe('e.g. "created", "completed", "moved"'),
-    extra: z.string(),
+    extra: z.string().describe('The words after the verb and task, e.g. "to Nov 10, 6:30 PM"; a start or due in it is on your clock'),
+    when: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        `For an entry that set a start or due: the value it was set to, null when cleared. ${WHEN_OUT}. Absent on other entries, and on ones saved before it was kept.`,
+      ),
     via: z.string().nullable().describe('What made the change when it was not the app, e.g. "Claude" or "CLI"'),
     task: z.string().nullable(),
     taskKey: z.string().nullable().describe('The task’s key (e.g. WEB-12), while it exists'),
@@ -353,11 +360,17 @@ export const Event = named(
   z.object({
     id: z.string(),
     title: z.string(),
-    date: z.string().describe('YYYY-MM-DD'),
-    time: z.string().describe('HH:MM start, or empty for all day'),
+    date: z.string().describe('YYYY-MM-DD: its day on your clock (timeZone on GET /me/preferences)'),
+    time: z.string().describe('HH:MM (24h): when it starts on your clock, or empty for all day'),
+    when: z
+      .string()
+      .nullable()
+      .describe(
+        'The event as stored: YYYY-MM-DD for all day, or the UTC moment it starts (2026-11-10T04:30:00.000Z), the same for everyone; null for an event saved before times had a zone that could not be read',
+      ),
     project: z.string().nullable().describe('Project id; null for a workspace-wide event'),
   }),
-  'A calendar event.',
+  'A calendar event. A timed one is one moment: each reader gets its day and time on their own clock.',
 );
 
 const Filter = z.object({
@@ -592,22 +605,24 @@ export const DownloadQuery = z.object({ download: bool.describe('true: always as
 
 const time = z
   .string()
-  .regex(/^(\d{2}:\d{2})?$/, 'Use HH:MM, or empty for all day')
-  .describe('HH:MM, or empty for all day');
+  .regex(/^(([01]\d|2[0-3]):[0-5]\d)?$/, 'Use HH:MM, or empty for all day')
+  .describe('HH:MM (24h) on your clock, or empty for all day');
 const day = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')
   .refine(v => checkWhen(v).ok, 'That date doesn’t exist');
 export const EventQuery = z.object({
   project: ref.optional().describe('Project id or key'),
-  from: day.optional().describe('From this day (YYYY-MM-DD)'),
-  to: day.optional().describe('To this day'),
+  from: day.optional().describe('From this day (YYYY-MM-DD) on your clock'),
+  to: day.optional().describe('To this day, on your clock'),
   limit,
   cursor,
 });
+// The day and time are read on the key's person's clock (timeZone on GET /me/preferences); a timed
+// event is stored as the moment it starts.
 export const EventCreate = z.strictObject({
   title: z.string().trim().min(1, 'Give the event a title').max(200),
-  date: day,
+  date: day.describe('YYYY-MM-DD, on your clock'),
   time: time.optional(),
   project: ref.nullable().optional().describe('Project id or key; null or left out for a workspace-wide event (admins only)'),
 });

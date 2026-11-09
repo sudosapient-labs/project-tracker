@@ -335,6 +335,35 @@ describe('dates and times on the person’s clock', () => {
     expect(sum.overdue.map(x => x.title)).toEqual(['Late']);
     expect(sum.next.map(x => x.title)).toEqual(['Today']);
   });
+
+  it('shows history and events on the reader’s clock, not the writer’s', async () => {
+    const { t, ada } = await workspace();
+    await ada.sync([
+      put('members', { id: 'mbob', name: 'Bob Lee', email: 'bob@example.com', role: 'Member', team: '', title: '', c: '#6B7280', status: 'invited', tz: '' }),
+    ]);
+    const bob = (await account(t, { name: 'Bob Lee', email: 'bob@example.com', invite: t.lastLink('bob@example.com').split('#invite/')[1] })).c;
+    await ada.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata' } });
+    await bob.put('/api/me/state', { prefs: { tz: 'Asia/Dubai' } });
+    const india = await hosted(t, await apiKey(ada));
+    const dubai = await hosted(t, await apiKey(bob));
+
+    // Ada, in India, moves a due to 6:30 PM and sets a 10:00 standup.
+    const task = (await call(india, 'create_task', { project: 'WEB', title: 'Ship it' })).data;
+    await call(india, 'update_task', { key: task.key, due: '2026-11-10 18:30' });
+    const ev = (await call(india, 'manage_event', { action: 'create', title: 'Standup', date: '2026-11-20', time: '10:00', project: 'WEB' })).data;
+    expect(ev).toMatchObject({ date: '2026-11-20', time: '10:00' });
+
+    // Bob, in Dubai, reads 5:00 PM and 08:30.
+    expect((await call(dubai, 'get_task', { key: task.key })).data.activity.find(l => l.includes('changed due date of'))).toMatch(
+      /Ada Owner via Claude changed due date of to Nov 10, 5:00 PM$/,
+    );
+    expect((await call(india, 'get_task', { key: task.key })).data.activity.find(l => l.includes('changed due date of'))).toMatch(/to Nov 10, 6:30 PM$/);
+    expect((await call(dubai, 'list_activity', {})).data.find(l => l.includes('changed due date of'))).toMatch(/to Nov 10, 5:00 PM$/);
+    expect((await call(dubai, 'list_events', {})).data).toEqual([{ id: ev.id, title: 'Standup', date: '2026-11-20', time: '08:30', project: 'WEB' }]);
+    // His change is read on his clock too: 09:00 in Dubai is 10:30 in India.
+    await call(dubai, 'manage_event', { action: 'update', id: ev.id, time: '09:00' });
+    expect((await call(india, 'list_events', {})).data[0]).toMatchObject({ date: '2026-11-20', time: '10:30' });
+  });
 });
 
 describe('MCP over HTTP without the SDK', () => {

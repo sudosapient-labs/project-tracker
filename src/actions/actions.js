@@ -3,6 +3,7 @@
    ===================================================================== */
 import { $, $$, addD, dOff, esc, fmtDateTime, fmtTime, instant, iso, parse, parseTime, shiftD, today, uid, withDay, withTime } from '../core/utils.js';
 import { PR, PSTAT, RECUR_DAYS, ST, tzCity } from '../core/constants.js';
+import { whenAct } from '../core/activity.js';
 import { D, S, allTasks, canSee, commentsOf, logAct, me, mem, memName, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
 import { descMark, fileType, fsize, richHtml } from '../ui/helpers.js';
 import { plainDescText, textToHtml } from '../core/rich-text.js';
@@ -91,9 +92,10 @@ export function applyPatch(t, patch) {
         msgs.push(`Next “${t.title}” scheduled for ${fmtDateTime(shiftD(t.due, RECUR_DAYS[t.recur] || 7))}`);
     } else if (k === 'assignee') logAct('assigned', t, nv ? `to ${mem(nv)?.name}` : '(unassigned)');
     else if (k === 'priority') logAct('changed priority of', t, `to ${PR[nv].name}`);
-    else if (k === 'due') logAct('changed due date of', t, nv ? `to ${fmtDateTime(nv)}` : '(cleared)');
-    else if (k === 'start') logAct('changed start date of', t, nv ? `to ${fmtDateTime(nv)}` : '(cleared)');
-    else if (k === 'project') {
+    else if (k === 'due' || k === 'start') {
+      const verb = `changed ${k} date of`;
+      logAct(verb, t, whenAct(verb, nv, fmtDateTime));
+    } else if (k === 'project') {
       const p = proj(nv);
       t.key = nextKey(p);
       logAct('moved', t, `to ${p.name}`);
@@ -341,7 +343,7 @@ function setDate(p, v, keep) {
     if (!sb) return;
     mutate(() => {
       sb.due = v;
-      logAct('set a subtask due date on', t, v ? fmtDateTime(v) : '(cleared)');
+      logAct('set a subtask due date on', t, whenAct('set a subtask due date on', v, fmtDateTime));
     });
     return;
   }

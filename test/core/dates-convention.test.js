@@ -18,10 +18,14 @@ const files = dir =>
   });
 
 const RULES = [
-  // t.due.slice(0, 10), p.start.slice(0, 10), m.date.slice(0, 10)
-  { what: 'the day of a start or due cut from the string', re: /\.(due|start|date)\??\.slice\(0,\s*10\)/ },
+  // t.due.slice(0, 10), p.start.slice(0, 10), m.date.slice(0, 10), e.when.slice(0, 10) (an event, or
+  // the value an activity entry set)
+  { what: 'the day of a start or due cut from the string', re: /\.(due|start|date|when)\??\.slice\(0,\s*10\)/ },
   // (a.due || '9999').localeCompare(…)
-  { what: 'starts or dues compared as strings', re: /\.(due|start)\s*\|\|\s*'9999'/ },
+  { what: 'starts or dues compared as strings', re: /\.(due|start|when)\s*\|\|\s*'9999'/ },
+  // e.date === ds, e.time in the app: a stored event's day and time are the saver's; read `when` on
+  // the reader's clock. (The API's events already give `date` and `time` on the reader's clock.)
+  { what: 'an event’s day or time as saved, not on the reader’s clock', re: /\b(e|ev|it\.ev)\.(date|time)\b/, only: 'src/' },
 ];
 
 /* Whose clock is decided in one place (AGENTS.md): server/lib/clock.js on the server, src/core/clock.js
@@ -69,7 +73,7 @@ describe('dates go through packages/client/dates.js', () => {
         fs.readFileSync(path.join(ROOT, f), 'utf8')
           .split('\n')
           .forEach((line, i) => {
-            for (const r of RULES) if (r.re.test(line)) hits.push(`${f}:${i + 1}: ${r.what}`);
+            for (const r of RULES) if ((!r.only || f.startsWith(r.only)) && r.re.test(line)) hits.push(`${f}:${i + 1}: ${r.what}`);
           });
     expect(hits).toEqual([]);
   });

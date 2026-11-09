@@ -2,8 +2,8 @@
 /* Start and due values: the one definition the web app, the server, the CLI, the MCP server and the
    Slack bot all use. Don't handle these values anywhere without going through this file.
 
-   A value (a task's start or due, a subtask's due, a project's start or due, a milestone's date) is
-   one of exactly two shapes:
+   A value (a task's start or due, a subtask's due, a project's start or due, a milestone's date, a
+   calendar event's start, the value an activity entry set) is one of exactly two shapes:
 
      all day   'YYYY-MM-DD'                a calendar day with no time and no time zone: Nov 9 is
                                            Nov 9 wherever it's read. It counts as the *end* of that

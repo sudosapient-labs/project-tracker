@@ -292,6 +292,57 @@ describe('whose clock', () => {
     expect((await c('new', 'Night', 'deploy', '-p', 'WEB', '--due', '2026-11-10 02:00')).code).toBe(0);
     expect(JSON.parse(t.db.get("SELECT data FROM tasks WHERE json_extract(data, '$.key') = 'WEB-201'").data).due).toBe('2026-11-09T20:30:00.000Z');
   });
+
+  it('shows history and events on the reader’s clock, not the writer’s', async () => {
+    process.env.TZ = 'America/Los_Angeles';
+    const t = setup();
+    const ada = await account(t);
+    await ada.c.sync([
+      {
+        c: 'members',
+        id: 'mbob',
+        k: 'put',
+        v: { id: 'mbob', name: 'Bob Lee', email: 'bob@example.com', role: 'Member', team: '', title: '', c: '#6B7280', status: 'invited', tz: '' },
+      },
+      {
+        c: 'projects',
+        id: 'pweb',
+        k: 'put',
+        v: {
+          id: 'pweb',
+          key: 'WEB',
+          name: 'Website',
+          icon: 'globe',
+          color: 'indigo',
+          status: 'active',
+          team: '',
+          lead: null,
+          members: [],
+          desc: '',
+          milestones: [],
+        },
+      },
+    ]);
+    const bob = await account(t, { name: 'Bob Lee', email: 'bob@example.com', invite: t.lastLink('bob@example.com').split('#invite/')[1] });
+    await ada.c.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata' } });
+    await bob.c.put('/api/me/state', { prefs: { tz: 'Asia/Dubai' } });
+    const india = cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: await apiKey(ada.c) });
+    const dubai = cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: await apiKey(bob.c) });
+
+    // Ada, in India: a due at 6:30 PM, and a standup at 10:00.
+    expect((await india('new', 'Ship', 'it', '-p', 'WEB', '--due', '2026-11-10 18:30')).code).toBe(0);
+    await india('tasks', 'edit', 'WEB-201', '--due', '2026-11-11 18:30');
+    expect((await india('events', 'new', 'Standup', '--date', '2026-11-20', '--time', '10:00', '-p', 'WEB')).out).toMatch(
+      /^Added Standup on 2026-11-20 at 10:00/,
+    );
+
+    // Bob, in Dubai.
+    expect((await dubai('activity')).out).toMatch(/Ada Owner via CLI changed due date of to Nov 11, 5:00 PM\n/);
+    expect((await india('activity')).out).toMatch(/Ada Owner via CLI changed due date of to Nov 11, 6:30 PM\n/);
+    expect((await dubai('events')).out).toMatch(/^2026-11-20 08:30 {3}Standup/);
+    // --json keeps the stored moment alongside.
+    expect(JSON.parse((await dubai('events', '--json')).out)[0]).toMatchObject({ date: '2026-11-20', time: '08:30', when: '2026-11-20T04:30:00.000Z' });
+  });
 });
 
 describe('rate limits', () => {

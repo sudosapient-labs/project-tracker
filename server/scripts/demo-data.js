@@ -489,13 +489,15 @@ export function seed() {
     { id: 'f11', project: 'p3', name: 'campaign-brief.pdf', type: 'pdf', size: '1.1 MB', by: 'm5', at: minsAgo(4000) },
     { id: 'f12', project: 'p4', name: 'launch-plan.docx', type: 'doc', size: '180 KB', by: 'm1', at: minsAgo(6000) },
   ];
+  // `when` is the event (the moment it starts); `date` and `time` are what apps from before it show.
+  const ev = (id, title, day, time, project) => ({ id, title, when: withTime(day, time), date: day, time, project });
   const events = [
-    { id: 'e1', title: 'Design review', date: dOff(1), time: '10:00', project: 'p1' },
-    { id: 'e2', title: 'Sprint planning', date: dOff(5), time: '09:30', project: 'p2' },
-    { id: 'e3', title: 'Launch sync', date: dOff(0), time: '15:00', project: 'p4' },
-    { id: 'e4', title: 'Stakeholder demo', date: dOff(9), time: '14:00', project: 'p1' },
-    { id: 'e5', title: 'Campaign kickoff', date: dOff(-3), time: '11:00', project: 'p3' },
-    { id: 'e6', title: 'Retro', date: dOff(12), time: '16:00', project: 'p2' },
+    ev('e1', 'Design review', dOff(1), '10:00', 'p1'),
+    ev('e2', 'Sprint planning', dOff(5), '09:30', 'p2'),
+    ev('e3', 'Launch sync', dOff(0), '15:00', 'p4'),
+    ev('e4', 'Stakeholder demo', dOff(9), '14:00', 'p1'),
+    ev('e5', 'Campaign kickoff', dOff(-3), '11:00', 'p3'),
+    ev('e6', 'Retro', dOff(12), '16:00', 'p2'),
   ];
   const tmp = tk('t3');
   tmp.updated = minsAgo(38);

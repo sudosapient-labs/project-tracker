@@ -8,7 +8,8 @@
 import { Hono } from 'hono';
 import { PR, ST } from '../../src/core/constants.js';
 import { clockOf as memberClock } from '../lib/clock.js';
-import { instant, label } from '../../packages/client/dates.js';
+import { dayOf, instant, isCanonical, label, timeOf } from '../../packages/client/dates.js';
+import { actExtra, whenAct } from '../../src/core/activity.js';
 import { textToHtml } from '../../src/core/rich-text.js';
 import { newId } from '../lib/crypto.js';
 import { PERMS, isAdminRole, projectLevel } from '../../src/core/access.js';
@@ -46,10 +47,13 @@ const shortDate = (x, v) => {
   const { tz, time } = clockOf(x);
   return label(v, tz, { style: 'short', time });
 };
+/* An activity entry's fields for a start or due set to `v`, worded on the key's person's clock. */
+const whenFields = (x, verb, v) => whenAct(verb, v, w => shortDate(x, w));
 
 /* ---------- public views of synced records ---------- */
 const LEVEL = ['none', 'view', 'comment', 'edit', 'full'];
-/* `clock`: a member's clock (server/lib/clock.js), for the effective time zone on Member. */
+/* `clock`: a member's clock (server/lib/clock.js), for the effective time zone on Member; and the
+   reader's (`me`), for activity and events, which read on the reader's clock. */
 const views = (config, me, favs, keyOf, clock) => ({
   task: t => ({
     id: t.id,
@@ -129,7 +133,11 @@ const views = (config, me, favs, keyOf, clock) => ({
     id: a.id,
     by: a.by,
     verb: a.verb,
-    extra: a.extra || '',
+    extra: actExtra(a, v => {
+      const { tz, time } = clock(me.id);
+      return label(v, tz, { style: 'short', time });
+    }),
+    ...(a.when !== undefined ? { when: a.when } : {}),
     via: a.via ?? null,
     task: a.task ?? null,
     taskKey: keyOf(a.task),
@@ -156,7 +164,13 @@ const views = (config, me, favs, keyOf, clock) => ({
     uploadedAt: f.at,
     url: f.url ? `${config.appUrl}/api/v1/files/${f.id}/content` : null,
   }),
-  event: e => ({ id: e.id, title: e.title, date: e.date, time: e.time || '', project: e.project ?? null }),
+  // `date` and `time` on the reader's clock; `when` as stored. (An event the migration couldn't read
+  // has only the day and time it was saved with.)
+  event: e => {
+    if (!isCanonical(e.when)) return { id: e.id, title: e.title, date: e.date, time: e.time || '', when: null, project: e.project ?? null };
+    const { tz } = clock(me.id);
+    return { id: e.id, title: e.title, date: dayOf(e.when, tz), time: timeOf(e.when, tz), when: e.when, project: e.project ?? null };
+  },
   view: v => ({ id: v.id, project: v.project, name: v.name, type: v.type, filters: (v.filters || []).map(f => ({ field: f.f, op: f.op, values: f.v })) }),
   notification: n => ({
     id: n.id,
@@ -248,6 +262,7 @@ export function v1Routes({ limit, uploads }) {
     };
     // A key acts as its person: an Owner's or Admin's key has their admin powers, as in the app.
     const admin = isAdminRole(me);
+    const clocks = new Map();
     return {
       c,
       db,
@@ -259,7 +274,8 @@ export function v1Routes({ limit, uploads }) {
       visible,
       favorites,
       resetFavorites,
-      V: views(config, me, favorites, keyOf, id => memberClock(repo, id)),
+      // Each member's clock once per request (activity and events read the caller's on every row).
+      V: views(config, me, favorites, keyOf, id => clocks.get(id) || clocks.set(id, memberClock(repo, id)).get(id)),
     };
   };
   const findProject = (x, ref, field = 'project') => {
@@ -319,10 +335,12 @@ export function v1Routes({ limit, uploads }) {
     }
     return results.map(r => r.v);
   }
-  /* The activity line the app logs with each change (store.js logAct). */
+  /* The activity line the app logs with each change (store.js logAct). `extra`: its words, or for a
+     start or due, `whenFields` (the words and the value). */
   const actOp = (x, t, verb, extra = '') => {
     const id = newId('a');
-    return { c: 'activity', id, k: 'put', v: { id, by: x.me.id, verb, task: t.id, project: t.project, at: Date.now(), extra } };
+    const more = typeof extra === 'string' ? { extra } : extra;
+    return { c: 'activity', id, k: 'put', v: { id, by: x.me.id, verb, task: t.id, project: t.project, at: Date.now(), ...more } };
   };
   /* The key the next task in project `p` gets (the app's nextKey; the server keeps it, see
      rules.js settleKey). */
@@ -406,8 +424,8 @@ export function v1Routes({ limit, uploads }) {
       const m = b.assignee === null ? null : findMember(x, b.assignee, 'assignee');
       if (set('assignee', m?.id ?? null)) acts.push(['assigned', m ? `to ${m.name}` : '(unassigned)']);
     }
-    if (b.due !== undefined && set('due', b.due)) acts.push(['changed due date of', b.due ? `to ${shortDate(x, b.due)}` : '(cleared)']);
-    if (b.start !== undefined && set('start', b.start)) acts.push(['changed start date of', b.start ? `to ${shortDate(x, b.start)}` : '(cleared)']);
+    if (b.due !== undefined && set('due', b.due)) acts.push(['changed due date of', whenFields(x, 'changed due date of', b.due)]);
+    if (b.start !== undefined && set('start', b.start)) acts.push(['changed start date of', whenFields(x, 'changed start date of', b.start)]);
     if (b.labels !== undefined && set('labels', b.labels)) acts.push(['updated labels on', '']);
     if (b.estimate !== undefined && set('estimate', b.estimate)) acts.push(['estimated', b.estimate || 'none']);
     if (b.recurrence !== undefined && set('recur', b.recurrence)) acts.push(['set repeat on', b.recurrence ? b.recurrence.toLowerCase() : 'off']);
@@ -737,6 +755,7 @@ export function v1Routes({ limit, uploads }) {
     limit,
     uploads,
     shortDate,
+    whenFields,
     clockOf,
     zoneView,
   });
