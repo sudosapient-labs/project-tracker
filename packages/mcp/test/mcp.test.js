@@ -281,6 +281,39 @@ describe('MCP over Streamable HTTP (/api/mcp)', () => {
   });
 });
 
+describe('dates and times on the person’s clock', () => {
+  it('reads what the model sends and shows results in the person’s time zone, not UTC', async () => {
+    const { t, ada } = await workspace();
+    await ada.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata' } });
+    const mcp = await hosted(t, await apiKey(ada));
+    // 02:00 on Nov 10 in India is still Nov 9 in UTC.
+    const task = (await call(mcp, 'create_task', { project: 'WEB', title: 'Night deploy', due: '2026-11-10 02:00' })).data;
+    const raw = JSON.parse(t.db.get("SELECT data FROM tasks WHERE json_extract(data, '$.key') = ?", task.key).data);
+    expect(raw.due).toBe('2026-11-09T20:30:00.000Z');
+    expect((await call(mcp, 'get_task', { key: task.key })).data.due).toBe('2026-11-10 02:00');
+    expect((await call(mcp, 'list_tasks', { project: 'WEB' })).data.find(x => x.key === task.key).due).toBe('2026-11-10 02:00');
+    // A day alone stays all day; "" clears; what can't be read is refused before the API sees it.
+    expect((await call(mcp, 'update_task', { key: task.key, due: '2026-11-12' })).data.due).toBe('2026-11-12');
+    expect((await call(mcp, 'update_task', { key: task.key, due: '' })).data.due).toBeUndefined();
+    const bad = await call(mcp, 'update_task', { key: task.key, due: 'someday' });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain('Can’t read the date “someday”');
+  });
+
+  it('counts a task overdue on the person’s clock in a project summary', async () => {
+    const { t, ada } = await workspace();
+    await ada.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata' } });
+    const api = keyClient(t.app, await apiKey(ada));
+    // An hour ago, and the end of today on the person's clock.
+    await api.post('/tasks', { project: 'WEB', title: 'Late', due: new Date(Date.now() - 3600_000).toISOString() });
+    const mcp = await hosted(t, await apiKey(ada));
+    await call(mcp, 'create_task', { project: 'WEB', title: 'Today', due: 'today' });
+    const sum = (await call(mcp, 'summarise_project', { project: 'WEB' })).data;
+    expect(sum.overdue.map(x => x.title)).toEqual(['Late']);
+    expect(sum.next.map(x => x.title)).toEqual(['Today']);
+  });
+});
+
 describe('MCP over HTTP without the SDK', () => {
   const rpc = (t, token, body, headers = {}) =>
     t.app.request('/api/mcp', {

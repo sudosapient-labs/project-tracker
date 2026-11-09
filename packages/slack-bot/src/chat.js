@@ -8,7 +8,7 @@
    decided up front with --yes / --no. Conversations live in memory and end with the process. */
 import readline from 'node:readline/promises';
 import { MemorySaver } from '@langchain/langgraph';
-import { createClient } from '@sudosapient/client';
+import { trackerClient } from './tracker.js';
 import { createSudoAgent } from './agent.js';
 import { mcpTools } from './mcp.js';
 import { directory } from './people.js';
@@ -20,7 +20,7 @@ const plainAction = ({ name, args }) => `${name.replace(/_/g, ' ')} ${JSON.strin
 
 /* One conversation: send(text) → { text, touched, card } after any confirmations. */
 export async function chatSession(config, { as, project = null, decide, log = console, fetch } = {}) {
-  const api = createClient({ url: config.tracker.url, key: config.tracker.key, client: 'Slack', ...(fetch ? { fetch } : {}) });
+  const api = trackerClient(config, { fetch });
   const dir = directory(api);
   const requester = await dir.byEmail(as);
   if (!requester) throw new Error(`No active tracker member has the email ${as}.`);
@@ -29,7 +29,7 @@ export async function chatSession(config, { as, project = null, decide, log = co
   const mcp = await mcpTools(config.mcpServers, { log });
   const agent = await createSudoAgent({ config, store, tools: mcp.tools, checkpointer: new MemorySaver() });
   const threadId = `terminal:${Date.now()}`;
-  const labelled = createClient({ url: config.tracker.url, key: config.tracker.key, client: `Slack (${requester.name})`, ...(fetch ? { fetch } : {}) });
+  const labelled = trackerClient(config, { client: `Slack (${requester.name})`, fetch });
   const ctx = () => ({
     api: labelled,
     dir,

@@ -127,6 +127,10 @@ one. Some things stay in the app on
 purpose (making API keys, including bot keys; password, two-factor, sessions, sign-in email,
 account deletion, the Owner's workspace export); see [the API reference](../../docs/api.md).
 
+Dates and times are on your own clock (Settings → time zone), both ways: results say `2026-11-20`, or
+`2026-11-20 17:00` for a time of day, and `due`, `start` and milestone dates take the same (or `today`,
+`fri`, `+3d`, `fri 5pm`). The tracker stores times in UTC; the server converts.
+
 Arguments are checked against each tool's `inputSchema` before it runs: a missing, unknown or
 mistyped one is an `isError` result naming it (`invalid_arguments: Missing required argument:
 project.`), so the model can correct the call. `null` for an optional argument is read as `""` where

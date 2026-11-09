@@ -17,7 +17,8 @@
      card       the card (a json-render spec) show_card set for the reply, if any */
 import { tool } from 'langchain';
 import * as z from 'zod';
-import { TOOLS as MCP, fence } from '@sudosapient/mcp/tools';
+import { compareDue, label, parseWhen } from '@sudosapient/client/dates';
+import { TOOLS as MCP, fence, tzOf } from '@sudosapient/mcp/tools';
 import { COMMENT, EDIT, VIEW, level, shownHere } from './people.js';
 import { CARD_GUIDE, cardSpec, renderCard } from './slack/cards.js';
 
@@ -65,7 +66,7 @@ async function taskFor(ctx, ref, need = VIEW) {
 }
 
 const names = async ctx => new Map((await ctx.dir.members()).map(m => [m.id, m.name]));
-const brief = (t, who, projects) =>
+const brief = (t, who, projects, tz) =>
   compact({
     key: t.key,
     title: t.title,
@@ -73,9 +74,19 @@ const brief = (t, who, projects) =>
     status: t.status,
     priority: t.priority === 'none' ? null : t.priority,
     assignee: who.get(t.assignee),
-    due: t.due,
+    due: t.due ? label(t.due, tz) : null,
     archived: t.archived,
   });
+/* Dues the model sends and reads are on the team's clock (SLACK_BOT_TIMEZONE; the request says which
+   and what time it is there): '2026-11-20', or '2026-11-20 23:59' with a time. Code, not the model,
+   turns that into the UTC value the tracker stores. */
+const DUE = 'YYYY-MM-DD, or YYYY-MM-DD HH:MM (24h) for a time of day, on the team’s clock';
+async function dueArg(ctx, v) {
+  if (!v) return null;
+  const out = parseWhen(v, await tzOf(ctx.api));
+  if (!out) throw new Refused(`"${v}" isn't a date. Use YYYY-MM-DD, or YYYY-MM-DD HH:MM for a time of day.`);
+  return out;
+}
 
 /* Every tool: run, then fence the result; a refusal or API error comes back as text the model can
    explain ("Couldn't …"), so one failed call doesn't end the conversation. */
@@ -102,10 +113,10 @@ const footer = ctx => `\n\n—\nRequested by ${ctx.requester.name} in Slack${ctx
 
 export const TRACKER_TOOLS = [
   make('search', 'Search tasks, projects and people by words or a task key.' + UNTRUSTED, z.object({ q: z.string().min(1) }), async (ctx, { q }) => {
-    const [r, who, visible] = await Promise.all([ctx.api.get('/search', { q, limit: 20 }), names(ctx), openHere(ctx)]);
+    const [r, who, visible, tz] = await Promise.all([ctx.api.get('/search', { q, limit: 20 }), names(ctx), openHere(ctx), tzOf(ctx.api)]);
     const keyOf = new Map(visible.map(p => [p.id, p.key]));
     return compact({
-      tasks: r.tasks.filter(t => keyOf.has(t.project)).map(t => brief(t, who, keyOf)),
+      tasks: r.tasks.filter(t => keyOf.has(t.project)).map(t => brief(t, who, keyOf, tz)),
       projects: r.projects.filter(p => keyOf.has(p.id)).map(p => compact({ key: p.key, name: p.name })),
       people: r.members.map(m => compact({ name: m.name })),
     });
@@ -136,27 +147,37 @@ export const TRACKER_TOOLS = [
     }),
     async (ctx, { project, assignee, status = 'open', q, limit = 30 }) => {
       if (project) await projectFor(ctx, project);
-      const [tasks, who, visible] = await Promise.all([
+      const [tasks, who, visible, tz] = await Promise.all([
         // sort=due so the cap drops the latest due, not the oldest; sorted again here for older servers.
         ctx.api.all('/tasks', { project, assignee: person(ctx, assignee), status: status === 'all' ? undefined : status, q, sort: 'due' }, 500),
         names(ctx),
         openHere(ctx),
+        tzOf(ctx.api),
       ]);
       const keyOf = new Map(visible.map(p => [p.id, p.key]));
       return tasks
         .filter(t => keyOf.has(t.project))
-        .sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'))
+        .sort((a, b) => compareDue(a.due, b.due, tz))
         .slice(0, limit)
-        .map(t => brief(t, who, keyOf));
+        .map(t => brief(t, who, keyOf, tz));
     },
   ),
 
   make('list_projects', 'Projects the person asking can open, with open/done counts.' + UNTRUSTED, z.object({}), async ctx => {
-    const [visible, who] = await Promise.all([openHere(ctx), names(ctx)]);
+    const [visible, who, tz] = await Promise.all([openHere(ctx), names(ctx), tzOf(ctx.api)]);
     return visible
       .filter(p => !p.archived)
       .map(p =>
-        compact({ key: p.key, name: p.name, status: p.status, lead: who.get(p.lead), due: p.due, open: p.openTasks, done: p.doneTasks, private: p.private }),
+        compact({
+          key: p.key,
+          name: p.name,
+          status: p.status,
+          lead: who.get(p.lead),
+          due: p.due ? label(p.due, tz) : null,
+          open: p.openTasks,
+          done: p.doneTasks,
+          private: p.private,
+        }),
       );
   }),
 
@@ -185,14 +206,20 @@ export const TRACKER_TOOLS = [
       title: z.string().min(1).max(200),
       description: z.string().optional().describe('Plain text: context, what done looks like'),
       assignee: z.string().optional().describe('"me", a name or an email'),
-      due: z.string().optional().describe('YYYY-MM-DD'),
+      due: z.string().optional().describe(DUE),
       priority: z.enum(PRIORITY).optional(),
       status: z.enum(STATUS).optional(),
       labels: z.array(z.string()).optional(),
     }),
     async (ctx, a, runtime) => {
       const p = await projectFor(ctx, a.project, EDIT);
-      const body = compact({ ...a, project: p.key, assignee: person(ctx, a.assignee), description: (a.description || '') + footer(ctx) });
+      const body = compact({
+        ...a,
+        project: p.key,
+        assignee: person(ctx, a.assignee),
+        due: await dueArg(ctx, a.due),
+        description: (a.description || '') + footer(ctx),
+      });
       // The same tool call is never created twice, even if the run is replayed after a crash.
       const t = await ctx.api.post('/tasks', body, { idempotencyKey: `slack-${runtime.toolCallId}` });
       if (ctx.slack.threadTs) ctx.store.linkThread({ task: t.key, channel: ctx.slack.channel, threadTs: ctx.slack.threadTs, permalink: ctx.slack.permalink });
@@ -209,16 +236,19 @@ export const TRACKER_TOOLS = [
       title: z.string().min(1).max(200).optional(),
       status: z.enum(STATUS).optional(),
       priority: z.enum(PRIORITY).optional(),
-      due: z.string().optional().describe('YYYY-MM-DD, or "" to clear'),
+      due: z
+        .string()
+        .optional()
+        .describe(DUE + '; "" clears'),
       description: z.string().optional().describe('Replaces the whole description'),
       project: z.string().optional().describe('Move to this project'),
     }),
     async (ctx, { key, due, project, ...rest }) => {
       const { task } = await taskFor(ctx, key, EDIT);
       if (project) await projectFor(ctx, project, EDIT);
-      const t = await ctx.api.patch(`/tasks/${seg(task.key)}`, compact({ ...rest, project, ...(due !== undefined ? { due: due || null } : {}) }));
+      const t = await ctx.api.patch(`/tasks/${seg(task.key)}`, compact({ ...rest, project, ...(due !== undefined ? { due: await dueArg(ctx, due) } : {}) }));
       ctx.touched.push(t.key);
-      return brief(t, await names(ctx));
+      return brief(t, await names(ctx), null, await tzOf(ctx.api));
     },
   ),
 
@@ -233,7 +263,7 @@ export const TRACKER_TOOLS = [
     const { task } = await taskFor(ctx, key, EDIT);
     const t = await ctx.api.patch(`/tasks/${seg(task.key)}`, { assignee: to ? person(ctx, to) : null });
     ctx.touched.push(t.key);
-    return brief(t, await names(ctx));
+    return brief(t, await names(ctx), null, await tzOf(ctx.api));
   }),
 
   make(
@@ -305,6 +335,8 @@ export const TRACKER_TOOLS = [
    asked to confirm something that can't happen. */
 export async function wouldBeAllowed(ctx, name, args = {}) {
   try {
+    // A due it can't read is refused before anyone is asked to confirm it.
+    if (args.due) await dueArg(ctx, args.due);
     if (name === 'create_task') await projectFor(ctx, args.project, EDIT);
     else if (name === 'comment' || name === 'link_thread') await taskFor(ctx, args.key, COMMENT);
     else if (args.key) {

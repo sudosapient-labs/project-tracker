@@ -21,7 +21,7 @@ default. Plans for what comes next: [ROADMAP.md](ROADMAP.md).
 | DM the bot                       | The same agent, privately; flat DMs share one conversation per day, DM threads their own                                       |
 | Follow-up mention in a thread    | Continues that person's conversation, with only the thread's new messages added (each person in a thread has their own)        |
 | Task cards under replies         | **Complete**, **Assign to me** and **Status**, acting as whoever clicks                                                        |
-| Message ⋯ → **Create task**      | A modal prefilled from the message (title, description, project, assignee, priority, due date)                                 |
+| Message ⋯ → **Create task**      | A modal prefilled from the message (title, description, project, assignee, priority, due date and time)                        |
 | `/sudo new <title>`              | The same modal; `/sudo <title>` works too                                                                                      |
 | `/sudo my`, `/sudo search …`     | Your open tasks, or tasks matching words (only you see the answer)                                                             |
 | `/sudo project WEB`              | Links the channel to a project: tasks filed there default to it (`/sudo project none` unlinks); Members who can edit it        |
@@ -165,7 +165,7 @@ Mode, so no public domain is needed.
 | `SLACK_BOT_EFFORT`       | `medium`                    | Anthropic effort: `low` answers faster, `high` thinks harder                                                                                         |
 | `SLACK_BOT_MAX_TOKENS`   | `16000`                     | Per model call                                                                                                                                       |
 | `SLACK_BOT_CONFIRM`      | `edits`                     | What waits for Confirm: `edits` (changes to existing tasks), `all` (every write) or `none`                                                           |
-| `SLACK_BOT_TIMEZONE`     | `Asia/Kolkata`              | For "today", "Friday", "end of month"                                                                                                                |
+| `SLACK_BOT_TIMEZONE`     | `Asia/Kolkata`              | The team's clock: "today", "Friday", "by 6pm", and the due times the bot sets and shows                                                              |
 | `SLACK_BOT_MCP_SERVERS`  | (none)                      | Read-only knowledge sources over MCP, as JSON: `{"sudopedia":{"url":"http://<tailnet-ip>:8765/mcp","tools":["get_context","search","read"]}}`        |
 | `SLACK_BOT_UNFURL_HOSTS` | `SUDO_URL`'s host           | Comma list of hosts whose task and project links get previews                                                                                        |
 | `SLACK_BOT_DATA_DIR`     | `./data`                    | Where `slack-bot.db` (mappings, links, confirmations) and `slack-bot-checkpoints.db` (conversations) live                                            |

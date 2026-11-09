@@ -13,7 +13,8 @@
 
    Handlers take Bolt's listener arguments but only use plain fields and the Web API client, so tests
    drive them with a fake client. app.js wires them to Bolt and acks. */
-import { createClient } from '@sudosapient/client';
+import { compareDue, dayOf, fromWallClock, label as dateLabel } from '@sudosapient/client/dates';
+import { trackerClient } from '../tracker.js';
 import { EDIT, VIEW, isAdmin, level, shownHere, unmatchedText } from '../people.js';
 import { requestMessage } from '../prompt.js';
 import { renderCard } from './cards.js';
@@ -32,7 +33,8 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
      Every call gives up after TRACKER_TIMEOUT, so a hung tracker can't hold a conversation. */
   const base = fetch || globalThis.fetch;
   const timed = (url, init = {}) => base(url, { ...init, signal: init.signal || AbortSignal.timeout(TRACKER_TIMEOUT) });
-  const trackerAs = member => createClient({ url: config.tracker.url, key: config.tracker.key, client: `Slack (${member.name})`, fetch: timed });
+  const trackerAs = member => trackerClient(config, { client: `Slack (${member.name})`, fetch: timed });
+  const tz = config.timezone;
 
   /* Hosts the bot may link to in its own words: the tracker's and Slack's. */
   const trackerHosts = () => new Set([...(config.unfurlHosts || []), ...(config.tracker.url ? [new URL(config.tracker.url).host] : [])]);
@@ -77,7 +79,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
         const t = await api.get(`/tasks/${seg(key)}`);
         const p = await dir.projectById(t.project);
         if (p && !shownHere(p, where)) continue;
-        out.push(...taskCard(t, { assignee: who.get(t.assignee), project: p?.name }));
+        out.push(...taskCard(t, { assignee: who.get(t.assignee), project: p?.name, tz }));
       } catch {
         /* deleted or no longer visible: no card */
       }
@@ -271,7 +273,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     }
     if (!message) return;
     const assignee = (await dir.member(t.assignee))?.name;
-    const card = taskCard(t, { assignee, project: p?.name });
+    const card = taskCard(t, { assignee, project: p?.name, tz });
     const blocks = [...(message.blocks || [])];
     const at = blocks.findIndex(b => b.block_id === `task:${key}`);
     const done = name === 'task_complete' ? 'completed' : name === 'task_assign_me' ? 'took' : `moved to ${statusName(status)}:`;
@@ -344,7 +346,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     const api = trackerAs(me);
     const names = new Map((await dir.members()).map(m => [m.id, m.name]));
     const line = t =>
-      `• <${t.url}|${esc(t.key)}> ${esc(t.title)}  ·  ${statusName(t.status)}${t.due ? `  ·  📅 ${t.due.slice(0, 10)}` : ''}${t.assignee && t.assignee !== me.id ? `  ·  ${esc(names.get(t.assignee) || '')}` : ''}`;
+      `• <${t.url}|${esc(t.key)}> ${esc(t.title)}  ·  ${statusName(t.status)}${t.due ? `  ·  📅 ${dateLabel(t.due, tz, { time: '12' })}` : ''}${t.assignee && t.assignee !== me.id ? `  ·  ${esc(names.get(t.assignee) || '')}` : ''}`;
     // Only the person sees these answers, so everything they can open is included.
     const visibleIds = async () => new Set((await dir.visible(me)).map(p => p.id));
 
@@ -356,7 +358,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
       const tasks = read
         .slice(0, MY_CAP)
         .filter(t => ids.has(t.project))
-        .sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'));
+        .sort((a, b) => compareDue(a.due, b.due, tz));
       const plus = read.length > MY_CAP ? '+' : '';
       return say(
         tasks.length
@@ -484,7 +486,8 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
           description,
           ...(v.assignee ? { assignee: v.assignee } : {}),
           ...(v.priority ? { priority: v.priority } : {}),
-          ...(v.due ? { due: v.due } : {}),
+          // A time needs a day: on its own it's today's, on the team's clock.
+          ...(v.due || v.dueTime ? { due: v.dueTime ? fromWallClock(v.due || dayOf(Date.now(), tz), v.dueTime, tz) : v.due } : {}),
         },
         { idempotencyKey: `modal-${view.id}` },
       );
@@ -498,7 +501,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
         const assignee = (await dir.member(t.assignee))?.name;
         const payload = {
           text: `<@${user}> created ${t.key}`,
-          blocks: [{ type: 'context', elements: [{ type: 'mrkdwn', text: `<@${user}> created a task` }] }, ...taskCard(t, { assignee, project: p.name })],
+          blocks: [{ type: 'context', elements: [{ type: 'mrkdwn', text: `<@${user}> created a task` }] }, ...taskCard(t, { assignee, project: p.name, tz })],
         };
         // Into the thread it came from, unless the channel may not see a private project's task, or
         // the bot isn't in that channel: then to the person.
@@ -537,7 +540,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
           const t = await api.get(`/tasks/${seg(l.ref)}`);
           const p = await dir.projectById(t.project);
           if (level(p, who.member) < VIEW || !shownHere(p, where)) continue;
-          unfurls[l.url] = { blocks: taskCard(t, { assignee: (await dir.member(t.assignee))?.name, project: p.name, actions: false }) };
+          unfurls[l.url] = { blocks: taskCard(t, { assignee: (await dir.member(t.assignee))?.name, project: p.name, actions: false, tz }) };
         } else {
           const p = await dir.project(l.ref);
           if (!p || level(p, who.member) < VIEW || !shownHere(p, where)) continue;
@@ -546,7 +549,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
             p.status,
             lead ? `Lead: ${esc(lead)}` : null,
             `${p.openTasks} open · ${p.doneTasks} done`,
-            p.due ? `📅 ${p.due.slice(0, 10)}` : null,
+            p.due ? `📅 ${dateLabel(p.due, tz, { time: '12' })}` : null,
           ].filter(Boolean);
           unfurls[l.url] = {
             blocks: [

@@ -63,6 +63,15 @@ describe('arguments', () => {
     expect(parseDue('2027-01-31', fri)).toBe('2027-01-31');
   });
 
+  it('reads a time with the day, on the given clock, as the moment in UTC', () => {
+    const fri = Date.parse('2026-11-06T09:30:00Z'); // Friday 6 November 2026, 3:00 PM in India
+    expect(parseDue('today 11:59pm', fri, 'Asia/Kolkata')).toBe('2026-11-06T18:29:00.000Z');
+    expect(parseDue('mon 9am', fri, 'Asia/Kolkata')).toBe('2026-11-09T03:30:00.000Z');
+    expect(parseDue('2026-11-20 17:00', fri, 'Europe/London')).toBe('2026-11-20T17:00:00.000Z');
+    expect(parseDue('2026-11-20T17:00+05:30', fri, 'Europe/London')).toBe('2026-11-20T11:30:00.000Z');
+    expect(() => parseDue('fri 25:00', fri, 'Asia/Kolkata')).toThrow(/Can't read the date/);
+  });
+
   it('treats only plain http to another machine as insecure', () => {
     for (const u of ['http://app.test', 'http://10.0.0.5:8787', 'http://sudo.example.com/']) expect(plainHttpRemote(u), u).toBe(true);
     for (const u of ['https://sudo.example.com', 'http://localhost:5173', 'http://127.0.0.1:8787', 'http://[::1]:8787', 'http://app.localhost'])
@@ -116,7 +125,7 @@ describe('against a workspace', () => {
     await c('tasks', 'new', 'Second', '-p', 'WEB');
 
     const mine = await c('tasks');
-    expect(mine.out.trim().split('\n')).toEqual([expect.stringMatching(/^WEB-201\s+todo\s+high\s+Ada Owner\s+2026-11-20 Fix login bug$/)]);
+    expect(mine.out.trim().split('\n')).toEqual([expect.stringMatching(/^WEB-201\s+todo\s+high\s+Ada Owner\s+2026-11-20\s+Fix login bug$/)]);
     const all = JSON.parse((await c('tasks', 'list', '-p', 'WEB', '--json')).out);
     expect(all.map(x => x.key)).toEqual(['WEB-202', 'WEB-201']);
 
@@ -150,6 +159,11 @@ describe('against a workspace', () => {
     expect(commented).toContain('Sneaky]52;c;cHduZWQ= note[2J');
     expect(commented).not.toContain('\x1b');
     expect(commented).not.toContain('\x07');
+
+    // A time typed on this computer's clock is shown back on it, and stored in UTC.
+    await c('tasks', 'edit', 'WEB-201', '--due', '2026-11-20 17:00');
+    expect((await c('show', 'WEB-201')).out).toContain('· due 2026-11-20 17:00');
+    expect(JSON.parse((await c('show', 'WEB-201', '--json')).out).due).toMatch(/^2026-11-2\dT\d\d:\d\d:00\.000Z$/);
 
     const missing = await c('done', 'WEB-999', '--json');
     expect(missing.code).toBe(1);

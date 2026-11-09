@@ -10,7 +10,12 @@
    instruct the assistant, so every result is fenced as untrusted (fence() below) and read tools
    say so in their descriptions.
 
-   `api` is a client from @sudosapient/client (get/post/patch/put/del/all/upload). */
+   `api` is a client from @sudosapient/client (get/post/patch/put/del/all/upload).
+
+   Starts, dues and times are on the person's clock (their time zone setting) both ways: results
+   say '2026-11-20' or '2026-11-20 17:00', and dates sent in that form (or 'fri 5pm') are read on
+   it, so a model never works out UTC offsets. The rules are @sudosapient/client/dates'. */
+import { compareDue, isOverdue, label, parseWhen } from '@sudosapient/client/dates';
 
 const seg = ref => encodeURIComponent(String(ref).trim());
 const str = (description, extra = {}) => ({ type: 'string', ...(description ? { description } : {}), ...extra });
@@ -22,7 +27,9 @@ const enm = (values, description) => ({ enum: values, ...(description ? { descri
 // Keys, project keys and people are explained once, in the server's instructions (protocol.js),
 // not on every property that takes one.
 const KEY = str();
-const DATE = str('YYYY-MM-DD, or "" to clear');
+// What a start or due argument takes (read by dateArg below; the instructions say whose clock).
+const WHEN = 'YYYY-MM-DD, or YYYY-MM-DD HH:MM for a time';
+const DATE = str(WHEN + '; "" clears');
 const STATUS = ['backlog', 'todo', 'progress', 'review', 'done'];
 const PRIORITY = ['urgent', 'high', 'medium', 'low', 'none'];
 const RECUR = ['Daily', 'Weekly', 'Every 2 weeks', 'Monthly', 'none'];
@@ -33,7 +40,43 @@ const MAX_UPLOAD = 700 * 1024;
 
 /* Drop null, '', [] and false so results carry only what's set. */
 const compact = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null && v !== '' && v !== false && !(Array.isArray(v) && !v.length)));
-const when = ms => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : null);
+/* The person's time zone (Settings → time zone), read once per client; their computer's if the
+   server won't say. */
+const clocks = new WeakMap();
+const localTz = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+export function tzOf(api) {
+  if (!clocks.has(api))
+    clocks.set(
+      api,
+      Promise.resolve()
+        .then(() => api.get('/me/preferences'))
+        .then(
+          r => r?.preferences?.tz || localTz(),
+          () => localTz(),
+        ),
+    );
+  return clocks.get(api);
+}
+/* Use this time zone for `api` instead of asking the server (the Slack bot's, for a whole team). */
+export function useTimeZone(api, tz) {
+  clocks.set(api, Promise.resolve(tz));
+  return api;
+}
+/* A moment (Unix ms) or a start/due on the person's clock: '2026-11-20 17:00', '2026-11-20'. */
+const when = (ms, tz) => (ms ? label(new Date(ms).toISOString(), tz) : null);
+const day = (v, tz) => (v ? label(v, tz) : v);
+/* A start or due argument for the API: "" clears; anything else is read on the person's clock. */
+async function dateArg(api, v) {
+  if (v === '' || v === null) return null;
+  const out = parseWhen(v, await tzOf(api));
+  if (!out) throw bad(`Can’t read the date “${v}”. Use YYYY-MM-DD, or YYYY-MM-DD HH:MM for a time.`);
+  return out;
+}
+const dateArgs = async (api, a, keys) => {
+  const out = { ...a };
+  for (const k of keys) if (a[k] !== undefined) out[k] = await dateArg(api, a[k]);
+  return out;
+};
 const names = async api => new Map((await api.all('/members')).map(m => [m.id, m.name]));
 const projectKeys = async api => new Map((await api.all('/projects', { includeArchived: 'true' })).map(p => [p.id, p.key]));
 /* Task keys for task ids (dependencies and favourites name tasks by id; activity, notifications and
@@ -123,14 +166,14 @@ const after = p => p.catch(() => null);
 /* Instead of people's names when they can't be read then: their ids, so an assignee doesn't vanish. */
 const byId = { get: id => id };
 
-const brief = (t, who) =>
+const brief = (t, who, tz) =>
   compact({
     key: t.key,
     title: t.title,
     status: t.status,
     priority: t.priority === 'none' ? null : t.priority,
     assignee: who.get(t.assignee),
-    due: t.due,
+    due: day(t.due, tz),
     archived: t.archived,
   });
 /* MCP tool annotations (spec 2025-06-18). Every tool sets all four, since the spec's defaults for a
@@ -148,32 +191,33 @@ export const isWrite = t => !t.annotations.readOnlyHint;
 /* Admin tools (workspace settings, bots) are for Owners and Admins; nobody else is offered them. */
 export const isAdmin = t => !!t.admin;
 
-const byDue = (a, b) => (a.due || '9999').localeCompare(b.due || '9999');
+const byDue = tz => (a, b) => compareDue(a.due, b.due, tz);
 
 async function taskDetail(api, ref) {
-  const [t, comments, activity, who] = await Promise.all([
+  const [t, comments, activity, who, tz] = await Promise.all([
     api.get(`/tasks/${seg(ref)}`),
     // The newest of each, so a long discussion shows its latest turns rather than its first.
     api.latest(`/tasks/${seg(ref)}/comments`, 20, c => c.createdAt),
     api.latest(`/tasks/${seg(ref)}/activity`, 10, a => a.at),
     names(api),
+    tzOf(api),
   ]);
   const deps = await taskKeys(api, t.dependsOn || [], 20);
   return compact({
-    ...brief(t, who),
-    start: t.start,
+    ...brief(t, who, tz),
+    start: day(t.start, tz),
     labels: t.labels,
     estimate: t.estimate,
     recurrence: t.recurrence,
     favorite: t.favorite,
     dependsOn: (t.dependsOn || []).map(deps).filter(Boolean),
     description: t.description.length > 2000 ? t.description.slice(0, 2000) + '…' : t.description,
-    subtasks: t.subtasks.map(s => compact({ id: s.id, title: s.title, done: s.done, assignee: who.get(s.assignee), due: s.due })),
+    subtasks: t.subtasks.map(s => compact({ id: s.id, title: s.title, done: s.done, assignee: who.get(s.assignee), due: day(s.due, tz) })),
     attachments: (t.attachments || []).map(a => compact({ id: a.id, name: a.name, size: a.size })),
     comments: comments.data.map(c =>
       compact({
         id: c.id,
-        at: when(c.createdAt),
+        at: when(c.createdAt, tz),
         by: who.get(c.author) || '?',
         text: c.text,
         reactions: Object.fromEntries(Object.entries(c.reactions || {}).map(([e, ids]) => [e, ids.map(i => who.get(i) || '?')])),
@@ -183,7 +227,7 @@ async function taskDetail(api, ref) {
     // Newest first, as before.
     activity: activity.data
       .toReversed()
-      .map(a => `${when(a.at)} ${who.get(a.by) || '?'}${a.via ? ` via ${a.via}` : ''} ${a.verb}${a.extra ? ' ' + a.extra : ''}`),
+      .map(a => `${when(a.at, tz)} ${who.get(a.by) || '?'}${a.via ? ` via ${a.via}` : ''} ${a.verb}${a.extra ? ' ' + a.extra : ''}`),
     olderActivityNotShown: activity.older || null,
     url: t.url,
   });
@@ -196,14 +240,14 @@ export const MY_WORK_CAP = 500;
 async function myWork(api, { status = 'open', limit = 30 } = {}) {
   const n = Math.min(Math.max(Number(limit) || 30, 1), 100);
   const query = { assignee: 'me', status: status === 'all' ? undefined : status };
-  const [page, who] = await Promise.all([api.get('/tasks', { ...query, sort: 'due', limit: n }), names(api)]);
-  if (page.sort === 'due') return page.data.map(t => brief(t, who));
+  const [page, who, tz] = await Promise.all([api.get('/tasks', { ...query, sort: 'due', limit: n }), names(api), tzOf(api)]);
+  if (page.sort === 'due') return page.data.map(t => brief(t, who, tz));
   const tasks = await api.all('/tasks', query, MY_WORK_CAP + 1);
   const soonest = tasks
     .slice(0, MY_WORK_CAP)
-    .sort(byDue)
+    .sort(byDue(tz))
     .slice(0, n)
-    .map(t => brief(t, who));
+    .map(t => brief(t, who, tz));
   if (tasks.length <= MY_WORK_CAP) return soonest;
   return {
     tasks: soonest,
@@ -212,9 +256,8 @@ async function myWork(api, { status = 'open', limit = 30 } = {}) {
 }
 
 async function projectSummary(api, ref) {
-  const [p, tasks, who] = await Promise.all([api.get(`/projects/${seg(ref)}`), api.all('/tasks', { project: ref }, 500), names(api)]);
+  const [p, tasks, who, tz] = await Promise.all([api.get(`/projects/${seg(ref)}`), api.all('/tasks', { project: ref }, 500), names(api), tzOf(api)]);
   const team = p.team ? (await api.get('/teams')).data.find(t => t.id === p.team)?.name : null;
-  const today = new Date().toISOString().slice(0, 10);
   const open = tasks.filter(t => t.status !== 'done');
   const byStatus = Object.fromEntries(STATUS.map(s => [s, tasks.filter(t => t.status === s).length]).filter(([, n]) => n));
   return compact({
@@ -223,25 +266,25 @@ async function projectSummary(api, ref) {
     status: p.status,
     lead: who.get(p.lead),
     team,
-    start: p.start,
-    due: p.due,
+    start: day(p.start, tz),
+    due: day(p.due, tz),
     private: p.private,
     archived: p.archived,
     myAccess: p.access,
     members: (p.members || []).map(id => compact({ name: who.get(id) || id, permission: p.permissions?.[id] })),
-    milestones: p.milestones?.map(m => compact(m)),
+    milestones: p.milestones?.map(m => compact({ ...m, date: day(m.date, tz) })),
     tasks: byStatus,
     overdue: open
-      .filter(t => t.due && t.due.slice(0, 10) < today)
-      .sort(byDue)
+      .filter(t => isOverdue(t.due, tz))
+      .sort(byDue(tz))
       .slice(0, 10)
-      .map(t => brief(t, who)),
+      .map(t => brief(t, who, tz)),
     unassigned: open.filter(t => !t.assignee).length,
     next: open
-      .filter(t => !(t.due && t.due.slice(0, 10) < today))
-      .sort(byDue)
+      .filter(t => !isOverdue(t.due, tz))
+      .sort(byDue(tz))
       .slice(0, 10)
-      .map(t => brief(t, who)),
+      .map(t => brief(t, who, tz)),
     url: p.url,
   });
 }
@@ -272,9 +315,9 @@ export const TOOLS = {
     annotations: READ,
     inputSchema: obj({ q: str() }, ['q']),
     async run(api, { q }) {
-      const [r, who] = await Promise.all([api.get('/search', { q, limit: 10 }), names(api)]);
+      const [r, who, tz] = await Promise.all([api.get('/search', { q, limit: 10 }), names(api), tzOf(api)]);
       return compact({
-        tasks: r.tasks.map(t => brief(t, who)),
+        tasks: r.tasks.map(t => brief(t, who, tz)),
         projects: r.projects.map(p => compact({ key: p.key, name: p.name })),
         people: r.members.map(m => compact({ name: m.name, email: m.email })),
       });
@@ -297,11 +340,12 @@ export const TOOLS = {
     annotations: READ,
     inputSchema: obj({ project: KEY, status: str(), assignee: str(), q: str(), includeArchived: BOOL, limit: INT }),
     async run(api, { includeArchived, limit = 50, ...q }) {
-      const [tasks, who] = await Promise.all([
+      const [tasks, who, tz] = await Promise.all([
         api.all('/tasks', { ...q, includeArchived: includeArchived ? 'true' : undefined }, Math.min(Math.max(limit, 1), 200)),
         names(api),
+        tzOf(api),
       ]);
-      return tasks.map(t => brief(t, who));
+      return tasks.map(t => brief(t, who, tz));
     },
   },
   list_projects: {
@@ -353,10 +397,10 @@ export const TOOLS = {
     annotations: READ,
     inputSchema: obj({ project: KEY, limit: INT }),
     async run(api, { project, limit = 20 }) {
-      const [page, who] = await Promise.all([api.get('/activity', { project, limit: Math.min(Math.max(limit, 1), 100) }), names(api)]);
+      const [page, who, tz] = await Promise.all([api.get('/activity', { project, limit: Math.min(Math.max(limit, 1), 100) }), names(api), tzOf(api)]);
       return page.data.map(
         a =>
-          `${when(a.at)} ${who.get(a.by) || '?'}${a.via ? ` via ${a.via}` : ''} ${a.verb}${a.task ? ` ${a.taskKey || '(deleted task)'}` : ''}${a.extra ? ' ' + a.extra : ''}`,
+          `${when(a.at, tz)} ${who.get(a.by) || '?'}${a.via ? ` via ${a.via}` : ''} ${a.verb}${a.task ? ` ${a.taskKey || '(deleted task)'}` : ''}${a.extra ? ' ' + a.extra : ''}`,
       );
     },
   },
@@ -365,11 +409,14 @@ export const TOOLS = {
     annotations: READ,
     inputSchema: obj({ unread: BOOL, limit: INT }),
     async run(api, { unread, limit = 20 }) {
-      const [page, who] = await Promise.all([
+      const [page, who, tz] = await Promise.all([
         api.get('/notifications', { unread: unread ? 'true' : undefined, limit: Math.min(Math.max(limit, 1), 100) }),
         names(api),
+        tzOf(api),
       ]);
-      return page.data.map(n => compact({ id: n.id, at: when(n.at), from: who.get(n.by), text: n.text, task: n.taskKey, snippet: n.snippet, unread: !n.read }));
+      return page.data.map(n =>
+        compact({ id: n.id, at: when(n.at, tz), from: who.get(n.by), text: n.text, task: n.taskKey, snippet: n.snippet, unread: !n.read }),
+      );
     },
   },
   list_files: {
@@ -377,8 +424,8 @@ export const TOOLS = {
     annotations: READ,
     inputSchema: obj({ project: KEY, task: KEY }),
     async run(api, { project, task }) {
-      const files = await api.all('/files', { project, task }, 100);
-      return files.map(f => compact({ id: f.id, name: f.name, size: f.size, task: f.taskKey, uploaded: when(f.uploadedAt) }));
+      const [files, tz] = await Promise.all([api.all('/files', { project, task }, 100), tzOf(api)]);
+      return files.map(f => compact({ id: f.id, name: f.name, size: f.size, task: f.taskKey, uploaded: when(f.uploadedAt, tz) }));
     },
   },
   list_events: {
@@ -428,14 +475,14 @@ export const TOOLS = {
     annotations: READ,
     inputSchema: obj({}),
     async run(api) {
-      const [bots, keys] = await Promise.all([api.get('/bots'), projectKeys(api)]);
+      const [bots, keys, tz] = await Promise.all([api.get('/bots'), projectKeys(api), tzOf(api)]);
       return bots.data.map(b =>
         compact({
           id: b.id,
           name: b.name,
           role: b.role,
           projects: b.projects.map(id => keys.get(id) || id),
-          keys: b.keys.map(k => compact({ id: k.id, name: k.name, scope: k.scope, lastUsed: when(k.lastUsedAt) })),
+          keys: b.keys.map(k => compact({ id: k.id, name: k.name, scope: k.scope, lastUsed: when(k.lastUsedAt, tz) })),
         }),
       );
     },
@@ -453,8 +500,8 @@ export const TOOLS = {
         status: enm(STATUS),
         assignee: str(),
         priority: enm(PRIORITY),
-        due: str('YYYY-MM-DD'),
-        start: str('YYYY-MM-DD'),
+        due: str(WHEN),
+        start: str(WHEN),
         labels: arr(str()),
         estimate: str(),
         recurrence: enm(RECUR),
@@ -465,7 +512,7 @@ export const TOOLS = {
     ),
     async run(api, { recurrence, subtasks, ...a }) {
       const t = await api.post('/tasks', {
-        ...a,
+        ...(await dateArgs(api, a, ['due', 'start'])),
         ...(recurrence ? { recurrence: recurrence === 'none' ? null : recurrence } : {}),
         ...(subtasks ? { subtasks: subtasks.map(title => ({ title })) } : {}),
       });
@@ -496,8 +543,8 @@ export const TOOLS = {
     async run(api, { key, due, start, estimate, recurrence, archived, ...rest }) {
       const body = {
         ...rest,
-        ...(due !== undefined ? { due: clear(due) } : {}),
-        ...(start !== undefined ? { start: clear(start) } : {}),
+        ...(due !== undefined ? { due: await dateArg(api, due) } : {}),
+        ...(start !== undefined ? { start: await dateArg(api, start) } : {}),
         ...(estimate !== undefined ? { estimate: clear(estimate) } : {}),
         ...(recurrence !== undefined ? { recurrence: recurrence === 'none' ? null : recurrence } : {}),
       };
@@ -514,9 +561,10 @@ export const TOOLS = {
           },
         });
       const r = await steps(list);
-      if (!r.ok) incomplete(r, t ? { task: brief(t, (await after(names(api))) || byId) } : {});
+      const tz = await tzOf(api);
+      if (!r.ok) incomplete(r, t ? { task: brief(t, (await after(names(api))) || byId, tz) } : {});
       t ||= await api.get(`/tasks/${seg(key)}`);
-      return brief(t, (await after(names(api))) || byId);
+      return brief(t, (await after(names(api))) || byId, tz);
     },
   },
   complete_task: {
@@ -534,7 +582,7 @@ export const TOOLS = {
     inputSchema: obj({ key: KEY, to: str() }, ['key', 'to']),
     async run(api, { key, to }) {
       const t = await api.patch(`/tasks/${seg(key)}`, { assignee: to ? to : null });
-      return brief(t, await names(api));
+      return brief(t, await names(api), await tzOf(api));
     },
   },
   edit_subtasks: {
@@ -560,7 +608,7 @@ export const TOOLS = {
           run: async () =>
             void (await api.patch(`${base}/${seg(id)}`, {
               ...u,
-              ...(due !== undefined ? { due: clear(due) } : {}),
+              ...(due !== undefined ? { due: await dateArg(api, due) } : {}),
               ...(assignee !== undefined ? { assignee: clear(assignee) } : {}),
             })),
         })),
@@ -571,10 +619,10 @@ export const TOOLS = {
       // Nothing asked for: just the subtasks, failing as any read does (an unknown key). Otherwise a
       // failed read mustn't hide what the run did.
       const read = r.ok && !r.done.length ? x => x : after;
-      const [t, who] = await Promise.all([read(api.get(`/tasks/${seg(key)}`)), read(names(api))]);
+      const [t, who, tz] = await Promise.all([read(api.get(`/tasks/${seg(key)}`)), read(names(api)), tzOf(api)]);
       const now = t && {
         key: t.key,
-        subtasks: t.subtasks.map(s => compact({ id: s.id, title: s.title, done: s.done, assignee: (who || byId).get(s.assignee), due: s.due })),
+        subtasks: t.subtasks.map(s => compact({ id: s.id, title: s.title, done: s.done, assignee: (who || byId).get(s.assignee), due: day(s.due, tz) })),
       };
       if (!r.ok) incomplete(r, now ? { now } : {});
       // Everything went through; if the task can't be read back now, say what was done instead.
@@ -598,7 +646,7 @@ export const TOOLS = {
       const p = `/comments/${seg(a.id)}`;
       if (a.action === 'delete') {
         const d = await api.del(p);
-        return { deleted: d.id, undoUntil: when(d.restoreUntil) };
+        return { deleted: d.id, undoUntil: when(d.restoreUntil, await tzOf(api)) };
       }
       let c;
       if (a.action === 'edit') (need(a, 'text'), (c = await api.patch(p, { text: a.text })));
@@ -614,7 +662,7 @@ export const TOOLS = {
     inputSchema: obj({ kind: enm(['task', 'project']), ref: KEY }, ['kind', 'ref']),
     async run(api, { kind, ref }) {
       const d = await api.del(`/${kind === 'task' ? 'tasks' : 'projects'}/${seg(ref)}`);
-      return compact({ deleted: d.id, undoUntil: when(d.restoreUntil) });
+      return compact({ deleted: d.id, undoUntil: when(d.restoreUntil, await tzOf(api)) });
     },
   },
   undelete: {
@@ -648,8 +696,8 @@ export const TOOLS = {
         status: enm(PSTATUS),
         lead: str(),
         team: str(),
-        start: str('YYYY-MM-DD'),
-        due: str('YYYY-MM-DD'),
+        start: str(WHEN),
+        due: str(WHEN),
         private: BOOL,
         members: arr(obj({ who: str(), permission: enm(PERMS) }, ['who'])),
       },
@@ -657,7 +705,7 @@ export const TOOLS = {
     ),
     async run(api, { team, members, ...a }) {
       const p = await api.post('/projects', {
-        ...a,
+        ...(await dateArgs(api, a, ['start', 'due'])),
         ...(team ? { team: await teamId(api, team) } : {}),
         ...(members ? { members: members.map(m => compact({ member: m.who, permission: m.permission })) } : {}),
       });
@@ -678,18 +726,21 @@ export const TOOLS = {
         start: DATE,
         due: DATE,
         private: BOOL,
-        milestones: arr(obj({ name: str(), date: str('YYYY-MM-DD') }, ['name']), 'Replaces the list'),
+        milestones: arr(obj({ name: str(), date: str(WHEN) }, ['name']), 'Replaces the list'),
         archived: BOOL,
       },
       ['project'],
     ),
-    async run(api, { project, lead, team, start, due, archived, ...rest }) {
+    async run(api, { project, lead, team, start, due, archived, milestones, ...rest }) {
       const body = {
         ...rest,
+        ...(milestones
+          ? { milestones: await Promise.all(milestones.map(async m => ({ ...m, ...(m.date !== undefined ? { date: await dateArg(api, m.date) } : {}) }))) }
+          : {}),
         ...(lead !== undefined ? { lead: clear(lead) } : {}),
         ...(team !== undefined ? { team: team ? await teamId(api, team) : null } : {}),
-        ...(start !== undefined ? { start: clear(start) } : {}),
-        ...(due !== undefined ? { due: clear(due) } : {}),
+        ...(start !== undefined ? { start: await dateArg(api, start) } : {}),
+        ...(due !== undefined ? { due: await dateArg(api, due) } : {}),
       };
       let p;
       const list = [];
