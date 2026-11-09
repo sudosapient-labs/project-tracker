@@ -232,3 +232,26 @@ describe('latest', () => {
     expect(loop.calls).toHaveLength(2);
   });
 });
+
+describe('Sudo-Time-Zone', () => {
+  const sent = calls => calls.map(c => c.headers['sudo-time-zone'] ?? null);
+  it('is sent when the client is given a zone, and changes with setTimeZone', async () => {
+    const { api, calls } = client([ok({})], { timeZone: 'Asia/Dubai' });
+    expect(api.timeZone).toBe('Asia/Dubai');
+    await api.get('/me');
+    api.setTimeZone('Asia/Kolkata');
+    await api.post('/tasks', { title: 'x' });
+    api.setTimeZone(null);
+    await api.get('/me');
+    expect(sent(calls)).toEqual(['Asia/Dubai', 'Asia/Kolkata', null]);
+  });
+  it('isn’t sent without one, or for a value that isn’t a zone', async () => {
+    const { api, calls } = client([ok({})]);
+    await api.get('/me');
+    api.setTimeZone('+04:00');
+    await api.get('/me');
+    const bad = client([ok({})], { timeZone: 'Mars/Base' });
+    await bad.api.get('/me');
+    expect([...sent(calls), ...sent(bad.calls)]).toEqual([null, null, null]);
+  });
+});

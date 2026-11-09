@@ -58,9 +58,13 @@ export function tzOf(api) {
     );
   return clocks.get(api);
 }
-/* Use this time zone for `api` instead of asking the server (the Slack bot's, for a whole team). */
+/* Read and write `api`'s dates on this time zone instead of the one the server has for the key's
+   person: a client acting for someone else (the Slack bot, one key for a whole team, makes one per
+   asker). The tools read on it, and the client sends it as Sudo-Time-Zone, so what the server words
+   (history, events) and reads as a day (sort=due, "today") is on that clock too. */
 export function useTimeZone(api, tz) {
   clocks.set(api, Promise.resolve(tz));
+  api.setTimeZone?.(tz);
   return api;
 }
 /* A moment (Unix ms) or a start/due on the person's clock: '2026-11-20 17:00', '2026-11-20'. */

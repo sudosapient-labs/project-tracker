@@ -11,7 +11,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { afterEach, describe, expect, it } from 'vitest';
 import { account, apiKey, bot, keyClient, setup } from '../../../test/server/helpers.js';
 import { createClient } from '@sudosapient/client';
-import { FENCE_CLOSE, FENCE_NOTE, FENCE_OPEN, MY_WORK_CAP, TOOLS, checkArgs, toolsFor, unfence } from '../src/tools.js';
+import { FENCE_CLOSE, FENCE_NOTE, FENCE_OPEN, MY_WORK_CAP, TOOLS, checkArgs, toolsFor, unfence, useTimeZone } from '../src/tools.js';
 import { clientLabel, createMcp } from '../src/protocol.js';
 
 // What each connection is offered: reads (no admin ones), plus writes (no admin ones), plus the
@@ -363,6 +363,34 @@ describe('dates and times on the person’s clock', () => {
     // His change is read on his clock too: 09:00 in Dubai is 10:30 in India.
     await call(dubai, 'manage_event', { action: 'update', id: ev.id, time: '09:00' });
     expect((await call(india, 'list_events', {})).data[0]).toMatchObject({ date: '2026-11-20', time: '10:30' });
+  });
+});
+
+describe('a client acting for someone on another clock (useTimeZone)', () => {
+  it('reads history and events from the server on that clock, not the key’s person’s', async () => {
+    const { t, ada } = await workspace();
+    await ada.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata' } });
+    const india = await hosted(t, await apiKey(ada));
+    const task = (await call(india, 'create_task', { project: 'WEB', title: 'Ship it' })).data;
+    await call(india, 'update_task', { key: task.key, due: '2026-11-10 18:30' });
+    await call(india, 'manage_event', { action: 'create', title: 'Standup', date: '2026-11-20', time: '10:00', project: 'WEB' });
+
+    // One bot key (the bot's clock is the workspace's: UTC here), a client per person it acts for.
+    const b = await bot(ada, { name: 'Team Bot', projects: ['pweb'] });
+    const asking = tz => {
+      const api = useTimeZone(createClient({ url: '', key: b.token, client: 'Team', fetch: (u, i) => t.app.request(u, i) }), tz);
+      const mcp = createMcp({ connect: () => ({ api, scope: 'write' }) });
+      return async (name, args) => {
+        const r = await mcp.handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, {});
+        expect(r.result.isError, JSON.stringify(r.result)).toBeFalsy();
+        return unfence(r.result.content[0].text);
+      };
+    };
+    const dueLine = async tz => (await asking(tz)('get_task', { key: task.key })).activity.find(l => l.includes('changed due date of'));
+    expect(await dueLine('Asia/Dubai')).toMatch(/to Nov 10, 5:00 PM$/);
+    expect(await dueLine('Asia/Kolkata')).toMatch(/to Nov 10, 6:30 PM$/);
+    expect(await dueLine('UTC')).toMatch(/to Nov 10, 1:00 PM$/);
+    expect((await asking('Asia/Dubai')('list_events', {}))[0]).toMatchObject({ date: '2026-11-20', time: '08:30' });
   });
 });
 

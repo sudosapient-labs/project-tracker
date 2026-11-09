@@ -223,7 +223,9 @@ Slack (Socket Mode / HTTP)
   profiles for five, so a changed zone is used within minutes) and used for "today", the due times
   the model sends and reads, the "Today is …" line of the request, `/sudo my`, the create modal
   (the time picker shows the zone), and for a task card button the clicker's. Each request gets its
-  own tracker client on that zone, so people asking at the same time never share one. A change
+  own tracker client on that zone, so people asking at the same time never share one; it sends the
+  zone as `Sudo-Time-Zone`, so what the tracker words itself (history like "to Nov 10, 5:00 PM",
+  calendar events) is on the asker's clock too, not the bot member's. A change
   waiting for Confirm keeps the asker's zone, so Confirm, whenever it's pressed and after a restart,
   makes the change they asked for.
   - Messages in a channel are read by everyone, each on their own clock, so a timed due on a task

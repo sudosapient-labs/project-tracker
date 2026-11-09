@@ -1,5 +1,6 @@
 /* A minimal client for the Sudo Sapient public API (/api/v1), shared by the CLI and the MCP server.
    No dependencies: it runs on any fetch (Node 22+, or an in-process `app.request`). */
+import { validZone } from './dates.js';
 
 export class ApiError extends Error {
   constructor(status, body, retryAfter = null) {
@@ -33,10 +34,14 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 /* `url`: the workspace's base URL (https://sudo.example.com). `client`: a label for activity, e.g.
    "CLI" or "Claude", shown as "Ada via Claude". `retry`: { retries, maxDelay, maxTotal } for rate limits (see
    RETRY; `{ retries: 0 }` turns retrying off). `onRetry({ attempt, delay, method, path })` is called
-   before each wait, e.g. to tell someone at a terminal why it paused. */
-export function createClient({ url, key, client = 'API', fetch: doFetch = globalThis.fetch, retry = {}, onRetry, sleep = wait }) {
+   before each wait, e.g. to tell someone at a terminal why it paused. `timeZone`: for a client acting
+   for someone on another clock than the key's person's (a bot with one key for a team), their IANA
+   zone, sent as Sudo-Time-Zone so the server words history and reads days on it (docs/api.md);
+   `setTimeZone` changes it. Left out, the server uses the key's person's own clock. */
+export function createClient({ url, key, client = 'API', fetch: doFetch = globalThis.fetch, retry = {}, onRetry, sleep = wait, timeZone = null }) {
   const base = String(url || '').replace(/\/+$/, '') + '/api/v1';
   const { retries, maxDelay, maxTotal } = { ...RETRY, ...retry };
+  let zone = validZone(timeZone);
   /* `raw`: { body, type } sent as is instead of JSON (a file upload). `binary`: answer with the bytes
      ({ bytes, type, name }) instead of parsed JSON (a file download). */
   async function request(method, path, { query, body, idempotencyKey, raw, binary = false } = {}) {
@@ -50,6 +55,7 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
         accept: 'application/json',
         ...(raw ? { 'content-type': raw.type || 'application/octet-stream' } : body !== undefined ? { 'content-type': 'application/json' } : {}),
         ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}),
+        ...(zone ? { 'sudo-time-zone': zone } : {}),
       },
       body: raw ? raw.body : body !== undefined ? JSON.stringify(body) : undefined,
     };
@@ -112,6 +118,14 @@ export function createClient({ url, key, client = 'API', fetch: doFetch = global
   }
   return {
     request,
+    /* The zone sent as Sudo-Time-Zone from now on (null: none, the key's person's clock). A value
+       that isn't a zone sends none. */
+    setTimeZone(tz) {
+      zone = validZone(tz);
+    },
+    get timeZone() {
+      return zone;
+    },
     get: (path, query) => request('GET', path, { query }),
     post: (path, body = {}, opts) => request('POST', path, { body, ...opts }),
     patch: (path, body, opts) => request('PATCH', path, { body, ...opts }),

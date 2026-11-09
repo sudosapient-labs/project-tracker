@@ -4,6 +4,7 @@
    pressed later, even after a restart, uses the clock the change was asked on. Cards carry Slack date
    tokens, so everyone in the channel sees their own time. */
 import { describe, expect, it, vi } from 'vitest';
+import { apiKey, keyClient } from '../../../test/server/helpers.js';
 import { PerPerson, SLACK_USERS, call, fakeSlack, harness, saveZone, tracker, workspaceZone } from './helpers.js';
 
 const unix = iso => Date.parse(iso) / 1000;
@@ -79,6 +80,29 @@ describe('each person’s own clock', () => {
     expect(results.find(r => r.startsWith('list_tasks'))).toContain('"due":"2026-11-10 15:30"');
     expect(results.find(r => r.startsWith('get_task'))).toContain('2026-11-10 15:30');
     expect(results.join('\n')).not.toContain('17:00');
+  });
+
+  it('history the tracker words itself reads on the asker’s clock, not the bot’s', async () => {
+    const { w, ada } = await team();
+    // The bot member has no zone of its own: the workspace's, India's. Ada sets 18:30 in India herself.
+    await workspaceZone(w, 'Asia/Kolkata');
+    expect((await keyClient(w.t.app, await apiKey(w.ada)).patch(`/tasks/${ada.key}`, { due: '2026-11-10T18:30:00+05:30' })).status).toBe(200);
+    const historyFor = async (user, slack) => {
+      const h = await harness(w, { confirm: 'none', slack, model: new PerPerson(() => [call('get_task', { key: ada.key })]) });
+      const results = toolResults(h);
+      await mention(h, user, `${user}.1`);
+      await h.handlers.idle();
+      // The tool result the model reads (fenced as workspace data): the due change's line.
+      return /"[^"]*changed due date of[^"]*"/.exec(results.find(r => r.startsWith('get_task')))?.[0];
+    };
+    // Bea saved Dubai.
+    expect(await historyFor('UBEA')).toMatch(/changed due date of to Nov 10, 5:00 PM"$/);
+    // Like Siddharth: nothing saved, Dubai only on his Slack profile.
+    await saveZone(w, 'bea', '');
+    const dubaiOnSlack = fakeSlack({ users: { ...SLACK_USERS, UBEA: { ...SLACK_USERS.UBEA, tz: 'Asia/Dubai' } } });
+    expect(await historyFor('UBEA', dubaiOnSlack)).toMatch(/changed due date of to Nov 10, 5:00 PM"$/);
+    // Ada, in India, reads her own words.
+    expect(await historyFor('UADA')).toMatch(/changed due date of to Nov 10, 6:30 PM"$/);
   });
 
   it('requests from India and Dubai at the same time keep their own clocks', async () => {
