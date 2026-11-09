@@ -8,7 +8,7 @@
 import { Hono } from 'hono';
 import { PR, ST, validTz } from '../../src/core/constants.js';
 import { clockOf as memberClock } from '../lib/clock.js';
-import { dayOf, instant, isCanonical, label, timeOf } from '../../packages/client/dates.js';
+import { checkWhen, dayOf, instant, isAllDay, isCanonical, label, timeOf } from '../../packages/client/dates.js';
 import { actExtra, whenAct } from '../../src/core/activity.js';
 import { textToHtml } from '../../src/core/rich-text.js';
 import { newId } from '../lib/crypto.js';
@@ -513,8 +513,15 @@ export function v1Routes({ limit, uploads }) {
         args.push(q.q.toLowerCase(), q.q.toUpperCase());
       }
       if (q.updatedSince) {
-        const since = /^\d+$/.test(q.updatedSince) ? Number(q.updatedSince) : Date.parse(q.updatedSince);
-        if (!Number.isFinite(since)) throw new ApiFail(400, 'updatedSince must be an ISO date-time or Unix milliseconds.', 'invalid_request', 'updatedSince');
+        // Unix ms; a day, from its start on the caller's clock; or a date-time with its zone (one
+        // without is refused, as everywhere in the API: it would be a different moment for each reader).
+        let since = NaN;
+        if (/^\d+$/.test(q.updatedSince)) since = Number(q.updatedSince);
+        else {
+          const c = checkWhen(q.updatedSince);
+          if (!c.ok) throw new ApiFail(400, `updatedSince: ${c.error}, or Unix milliseconds.`, 'invalid_request', 'updatedSince');
+          since = isAllDay(c.value) ? instant(c.value, clockOf(x).tz) : Date.parse(c.value);
+        }
         where.push('updated_at >= ?');
         args.push(since);
       }

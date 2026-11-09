@@ -154,7 +154,8 @@ can name the person it's asking for: send `Sudo-Time-Zone: <IANA zone>` (`Asia/D
 that request only, everything the API words or reads as a day for the caller uses that zone instead
 of the key's person's. That is Activity `extra` (for reading, and the words written with a change),
 an event's `date` and `time` (in answers, and as sent to `POST` and `PATCH /events`), `from` and `to`
-on `GET /events`, `sort=due` on `GET /tasks`, and "today" (a new project's start). The time format
+on `GET /events`, `sort=due` and a day given as `updatedSince` on `GET /tasks`, and "today" (a new
+project's start). The time format
 (12 or 24 hours) stays the key's person's. It changes nothing else: no zone is saved, Member,
 `GET /me` and `GET /me/preferences` still show the person's own `timeZone`, stored values are the
 same UTC moments and days, and what the server does for other people keeps their clocks
@@ -185,6 +186,9 @@ list it fetched long ago; the app sends what it edited from, and the server merg
   Anything in a project the key can't open answers `404`, so nothing reveals what exists.
 - **Pagination:** lists return `{ data, nextCursor }`; pass `cursor=<nextCursor>` for the next page
   (`limit` 1–100, default 50). Cursors are opaque.
+- **Changed since:** `updatedSince` on `GET /tasks` is Unix milliseconds, an ISO date-time with its
+  zone (`2026-11-10T09:00:00+05:30`, `…Z`), or a day (`2026-11-10`: from the start of that day on
+  the key's person's clock). A date-time without a zone is refused (`400`), as for dates you send.
 - **Order:** `GET /tasks` is newest first. With `sort=due` it's soonest due first across every
   matching task (an all-day due counts as the end of its day in the key's person's time zone, as in
   the app; no due date last, ties newest first), and the answer carries `"sort": "due"`; a

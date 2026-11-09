@@ -265,7 +265,11 @@ export const TaskQuery = z.object({
     .describe('Comma-separated statuses, or "open" for everything not done'),
   assignee: ref.optional().describe('Member id, email, or "me"'),
   q: z.string().max(200).optional().describe('Text in the title, or an exact key'),
-  updatedSince: z.string().max(40).optional().describe('Only tasks changed since this ISO date-time or Unix ms'),
+  updatedSince: z
+    .string()
+    .max(40)
+    .optional()
+    .describe('Only tasks changed since then: an ISO date-time with its zone (Z or ±HH:MM), Unix ms, or YYYY-MM-DD (from the start of that day on your clock)'),
   includeArchived: bool,
   sort: z
     .enum(['created', 'due'])

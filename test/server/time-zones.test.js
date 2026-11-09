@@ -1,7 +1,7 @@
 /* Whose clock: a person's saved time zone, else the workspace's, else UTC; never the server
    machine's (server/lib/clock.js). The suite runs with the machine on Pacific time to prove it. */
 import { DatabaseSync } from 'node:sqlite';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { account, apiKey, bot, keyClient, setup } from './helpers.js';
 import { clockOf, workspaceClock } from '../../server/lib/clock.js';
 import { runReminders } from '../../server/jobs.js';
@@ -190,6 +190,50 @@ describe('the effective zone in the API', () => {
     const s = spec.components.schemas;
     for (const name of ['Member', 'Me', 'Preferences']) expect(Object.keys(s[name].properties)).toEqual(expect.arrayContaining(['timeZone', 'timeZoneSource']));
     expect(s.Workspace.properties.timeZone).toBeTruthy();
+  });
+});
+
+describe('updatedSince on the caller’s clock', () => {
+  it('reads a day from its start on the caller’s clock, takes a moment with its zone, and refuses one without', async () => {
+    const { ada, api } = await workspace();
+    await ada.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata' } });
+    const at = async (iso, title) => {
+      vi.useFakeTimers({ now: Date.parse(iso), toFake: ['Date'] });
+      try {
+        return (await api.post('/tasks', { project: 'WEB', title })).body;
+      } finally {
+        vi.useRealTimers();
+      }
+    };
+    // 23:30 on Nov 9 and 00:30 on Nov 10 in India (both Nov 9 in UTC).
+    await at('2026-11-09T18:00:00Z', 'Late Monday');
+    await at('2026-11-09T19:00:00Z', 'Early Tuesday');
+    const titles = async (since, h) => {
+      const r = await api.get(`/tasks?updatedSince=${encodeURIComponent(since)}`, h);
+      return r.status === 200 ? r.body.data.map(t => t.title).filter(t => t !== 'Task t1') : r;
+    };
+    expect(await titles('2026-11-10')).toEqual(['Early Tuesday']);
+    expect(await titles('2026-11-09')).toEqual(['Early Tuesday', 'Late Monday']);
+    expect(await titles('2026-11-09T18:30:00Z')).toEqual(['Early Tuesday']);
+    expect(await titles('2026-11-10T00:00:00+05:30')).toEqual(['Early Tuesday']);
+    expect(await titles(String(Date.parse('2026-11-09T18:30:00Z')))).toEqual(['Early Tuesday']);
+    // On the clock the client names: Nov 10 starts later in Dubai.
+    expect(await titles('2026-11-10', { 'sudo-time-zone': 'Asia/Dubai' })).toEqual([]);
+    // Without a zone it's a different moment for each reader: refused, like dates sent to the API.
+    const noZone = await titles('2026-11-10T00:00:00');
+    expect(noZone.status).toBe(400);
+    expect(noZone.body).toMatchObject({ code: 'invalid_request', field: 'updatedSince' });
+    expect(noZone.body.error).toMatch(/time zone/);
+    expect((await titles('2026-02-31')).status).toBe(400);
+    expect((await titles('yesterday')).status).toBe(400);
+  });
+
+  it('says so in the OpenAPI spec', async () => {
+    const { api } = await workspace();
+    const spec = (await api.get('/openapi.json')).body;
+    const p = spec.paths['/tasks'].get.parameters.find(x => x.name === 'updatedSince');
+    expect(p.description).toMatch(/with its zone/);
+    expect(p.description).toMatch(/start of that day on your clock/);
   });
 });
 
