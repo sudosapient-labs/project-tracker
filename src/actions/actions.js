@@ -1,7 +1,7 @@
 /* =====================================================================
    ACTIONS · INPUT HANDLERS · DRAG & DROP · KEYBOARD · INIT
    ===================================================================== */
-import { $, $$, addD, dOff, esc, fmtDateTime, fmtTime, instant, iso, parse, parseTime, shiftD, today, uid, withDay, withTime } from '../core/utils.js';
+import { $, $$, addD, dOff, dayKey, esc, fmtDateTime, fmtTime, instant, iso, parse, parseTime, shiftD, today, uid, withDay, withTime } from '../core/utils.js';
 import { PR, PSTAT, RECUR_DAYS, ST, tzCity } from '../core/constants.js';
 import { whenAct } from '../core/activity.js';
 import { D, S, allTasks, canSee, commentsOf, logAct, me, mem, memName, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
@@ -1374,7 +1374,11 @@ A.editProject = el => {
   openModal({ type: 'project', edit: p.id });
 };
 IN.pform = el => {
-  S.ui.pform[el.dataset.f] = el.value;
+  const f = S.ui.pform;
+  // The date input shows a due's day on this person's clock. The same day again keeps the due as it
+  // is (a time it has stays); another day is that day, all day, as a date input gives.
+  if (el.dataset.f === 'due' && f.due && el.value === dayKey(f.due)) return;
+  f[el.dataset.f] = el.value;
   if (el.dataset.f === 'name' && S.ui.errors.pname && el.value.trim()) {
     S.ui.errors.pname = null;
     render();

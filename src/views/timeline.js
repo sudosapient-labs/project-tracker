@@ -1,5 +1,5 @@
 /* ---------- TIMELINE ---------- */
-import { $, MON, MONL, addD, diffD, esc, fmtDate, fmtDateTime, instant, parse, today } from '../core/utils.js';
+import { $, MON, MONL, addD, dayKey, diffD, esc, fmtDate, fmtDateTime, instant, parse, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { S, allTasks, canSee, pColor, proj, task, taskProg, visibleProjects } from '../core/store.js';
 import { av, empty, stIcon } from '../ui/helpers.js';
@@ -145,12 +145,13 @@ export function timelineHtml(ts, key, p) {
     </div>
   </div>`;
 }
-/* Milestone lane: one diamond per date (same-day milestones merge), and each label may only use
+/* Milestone lane: one diamond per day on the reader's clock (same-day milestones merge, a timed one
+   by the day it falls on there), and each label may only use
    the room up to the next diamond. Long names are cut with an ellipsis, cramped ones show just the
    diamond; the full name and date are always in the hover tooltip. Labels never overlap. */
 export function msLane(ms, X, dw, y) {
   const byDate = {};
-  ms.forEach(m => (byDate[m.date] ||= []).push(m));
+  ms.forEach(m => (byDate[dayKey(m.date)] ||= []).push(m));
   const pts = Object.entries(byDate)
     .sort(([a], [b]) => (a > b ? 1 : -1))
     .map(([date, list]) => ({ date, list, x: X(date) + dw / 2 }));

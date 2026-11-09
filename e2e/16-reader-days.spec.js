@@ -88,3 +88,35 @@ test('projects sort by due as moments on the reader’s clock', async ({ page })
   expect(order[0]).toBeLessThan(order[1]);
   expect(await errors()).toEqual([]);
 });
+
+test('a project’s timed target shows its day on the reader’s clock, and a new day is all day', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signIn(page, MARY);
+  await expect(page.locator('.side')).toBeVisible();
+  await page.goto('/#project/gld/list');
+  await page.locator('[data-a="editProject"]').first().click();
+  await expect(page.locator('#p-due')).toHaveValue('2026-12-01');
+  // Saved without touching it: still the same moment.
+  await page.locator('#p-name').fill('Glide Test 2');
+  await page.locator('[data-a="submitProject"]').click();
+  await synced(page);
+  expect((await (await rest(page.request, 'GET', '/projects/GLD')).json()).due).toBe('2026-11-30T20:00:00.000Z');
+  // Another day from the date input is that day, all day.
+  await page.locator('[data-a="editProject"]').first().click();
+  await page.locator('#p-due').fill('2026-12-03');
+  await page.locator('[data-a="submitProject"]').click();
+  await synced(page);
+  expect((await (await rest(page.request, 'GET', '/projects/GLD')).json()).due).toBe('2026-12-03');
+  expect(await errors()).toEqual([]);
+});
+
+test('milestones on one day on the reader’s clock share a diamond on the timeline', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signIn(page, MARY);
+  await expect(page.locator('.side')).toBeVisible();
+  await page.goto('/#project/gld/timeline');
+  const diamonds = page.locator('.ms-w');
+  await expect(diamonds).toHaveCount(1);
+  await expect(diamonds.first()).toHaveAttribute('data-tip', /Wind tunnel · First flight|First flight · Wind tunnel/);
+  expect(await errors()).toEqual([]);
+});
