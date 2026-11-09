@@ -56,9 +56,9 @@ export function dataRoutes({ limit }) {
       if (expected && expected !== c.var.auth.user?.id) return c.json({ error: 'Someone else is signed in now.', code: 'other_user' }, 409);
       const b = await parseBody(c, z.object({ ops: z.array(z.looseObject({ c: z.string(), k: z.string() })).max(MAX_OPS) }));
       if (b.error) return b.error;
-      const { results, links, gone } = c.var.engine.apply(c.var.auth, b.data.ops, c.req.header('x-client-id'));
+      const { results, links, changes, gone } = c.var.engine.apply(c.var.auth, b.data.ops, c.req.header('x-client-id'));
       if (gone) return c.json(GONE, 401);
-      return c.json({ results, ...(c.var.config.exposeEmailLinks && links.length ? { links } : {}) });
+      return c.json({ results, ...(changes.length ? { changes } : {}), ...(c.var.config.exposeEmailLinks && links.length ? { links } : {}) });
     },
   );
 

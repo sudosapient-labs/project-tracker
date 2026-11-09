@@ -6,7 +6,9 @@
                `restore`: a put that undoes this person's recent delete of the record (rules.js `restore`).
                `base`: for list and map fields in a patch, the values the client edited from (merge.js).
    Result:     { ok: true, v: canonical } | { ok: false, error, v: canonical-or-null }
-   A rejected op is rolled back alone (savepoint) and the client resets that record to `v`. */
+   A rejected op is rolled back alone (savepoint) and the client resets that record to `v`.
+   Records the batch changed besides its own (e.g. the next occurrence of a repeating task) come
+   back as `changes`, since the live stream skips the tab that sent it. */
 import fs from 'node:fs';
 import path from 'node:path';
 import { COLLS } from '../repo.js';
@@ -255,10 +257,33 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
       });
     } catch (e) {
       if (!failed || e !== failed) throw e;
-      return { results, links: [], failed, ...(failed.gone ? { gone: true } : {}) };
+      return { results, links: [], changes: [], failed, ...(failed.gone ? { gone: true } : {}) };
     }
     afterCommit(ctx, clientId);
-    return { results, links: ctx.links, failed };
+    return { results, links: ctx.links, changes: sideEffects(ctx, ops, favs), failed };
+  }
+
+  /* What the batch changed beyond the records its ops name, as the sender may see it (their last
+     state), for the tab that sent it: publish() leaves that tab out. */
+  function sideEffects(ctx, ops, favs) {
+    const named = new Set(ops.map(op => `${op?.c}:${op?.id}`));
+    const last = new Map();
+    for (const ch of ctx.changes) {
+      const k = `${ch.c}:${ch.id}`;
+      if (DOCS.has(ch.c) || ch.c === 'notifs' || named.has(k) || (ch.onlyUser && ch.onlyUser !== ctx.uid)) continue;
+      last.delete(k);
+      last.set(k, ch);
+    }
+    const out = [];
+    for (const ch of last.values()) {
+      if (!ch.v) {
+        if (!ch.pid || !PROJECT_SCOPED.has(ch.c) || canSee(repo.get('projects', ch.pid) || ch.proj, ctx.me)) out.push({ c: ch.c, id: ch.id, v: null });
+        continue;
+      }
+      const v = visible(ch.c, ch.v, ctx.me);
+      if (v) out.push({ c: ch.c, id: ch.id, v: project(ch.c, v, favs) });
+    }
+    return out;
   }
 
   function current(op, favs, me) {

@@ -74,41 +74,20 @@ export function applyPatch(t, patch) {
     t[k] = nv;
     if (k === 'status') {
       if (nv === 'done') {
-        t.completedAt = Date.now();
-        t.prevStatus = old;
         logAct('completed', t);
         fxSet({ done: t.id });
       } else logAct('moved', t, `from ${ST[old].name} to ${ST[nv].name}`);
-      // Reopened (or the completion undone): the next occurrence it scheduled goes again, unless
-      // someone has worked on it since. A kept one stays linked, so completing again adds no other.
-      if (old === 'done' && nv !== 'done' && t.nextId) {
-        const n = task(t.nextId);
-        if (!n) delete t.nextId;
-        else if (untouchedOccurrence(n)) {
-          deleteTasks([n.id]);
-          delete t.nextId;
-        }
+      // The rest is the server's (server/sync/task-status.js): when it was finished, and for a
+      // repeating task the next occurrence, made once however many tabs finish it, and removed
+      // again on reopen if nobody has worked on it. Its answer brings them; meanwhile the task
+      // shows as finished now, and the toast says what the server will schedule.
+      if (nv === 'done') Object.assign(t, { completedAt: Date.now(), prevStatus: old });
+      else if (old === 'done') {
+        delete t.completedAt;
+        delete t.prevStatus;
       }
-      if (nv === 'done' && t.recur && t.due && !(t.nextId && task(t.nextId))) {
-        const nd = shiftD(t.due, RECUR_DAYS[t.recur] || 7);
-        const n = createTask({
-          ...JSON.parse(JSON.stringify(t)),
-          id: undefined,
-          key: undefined,
-          status: 'todo',
-          due: nd,
-          start: nd,
-          subtasks: t.subtasks.map(s => ({ ...s, done: false })),
-          completedAt: null,
-          attachments: [],
-        });
-        delete n.prevStatus;
-        delete n.nextId;
-        // Fresh times: `updated` still equal to `created` is how a reopen knows it's untouched.
-        n.created = n.updated = Date.now();
-        t.nextId = n.id;
-        msgs.push(`Next “${t.title}” scheduled for ${fmtDateTime(nd)}`);
-      }
+      if (nv === 'done' && t.recur && t.due && !(t.nextId && task(t.nextId)))
+        msgs.push(`Next “${t.title}” scheduled for ${fmtDateTime(shiftD(t.due, RECUR_DAYS[t.recur] || 7))}`);
     } else if (k === 'assignee') logAct('assigned', t, nv ? `to ${mem(nv)?.name}` : '(unassigned)');
     else if (k === 'priority') logAct('changed priority of', t, `to ${PR[nv].name}`);
     else if (k === 'due') logAct('changed due date of', t, nv ? `to ${fmtDateTime(nv)}` : '(cleared)');
@@ -126,8 +105,6 @@ export function applyPatch(t, patch) {
   }
   return msgs;
 }
-/* A scheduled next occurrence nobody has changed or commented on since it was made. */
-const untouchedOccurrence = n => n.updated === n.created && n.status === 'todo' && !commentsOf(n.id).length;
 export function updateTask(id, patch) {
   if (id === '__form') {
     Object.assign(S.ui.form, patch);

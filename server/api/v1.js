@@ -6,9 +6,9 @@
 
    Routes are declared once in ROUTES; registration and the OpenAPI document both read them. */
 import { Hono } from 'hono';
-import { PR, RECUR_DAYS, ST } from '../../src/core/constants.js';
+import { PR, ST } from '../../src/core/constants.js';
 import { clockOf as memberClock } from '../lib/clock.js';
-import { instant, label, shiftDays } from '../../packages/client/dates.js';
+import { instant, label } from '../../packages/client/dates.js';
 import { textToHtml } from '../../src/core/rich-text.js';
 import { newId } from '../lib/crypto.js';
 import { PERMS, isAdminRole, projectLevel } from '../../src/core/access.js';
@@ -348,7 +348,6 @@ export function v1Routes({ limit, uploads }) {
       updated: now,
       order: order ?? nextOrder(x),
       recur: f.recur ?? null,
-      ...(f.status === 'done' ? { completedAt: now } : {}),
     };
   }
 
@@ -382,13 +381,10 @@ export function v1Routes({ limit, uploads }) {
     if (b.title !== undefined && set('title', b.title)) acts.push(['renamed', `to “${b.title}”`]);
     const desc = descOf(b);
     if (desc !== undefined) set('desc', desc);
-    if (b.status !== undefined && set('status', b.status)) {
-      if (b.status === 'done') {
-        patch.completedAt = Date.now();
-        patch.prevStatus = t.status;
-        acts.push(['completed', '']);
-      } else acts.push(['moved', `from ${ST[t.status]?.name} to ${ST[b.status].name}`]);
-    }
+    // When it was finished and the next occurrence of a repeating task are the server's
+    // (sync/task-status.js), as for the app.
+    if (b.status !== undefined && set('status', b.status))
+      acts.push(b.status === 'done' ? ['completed', ''] : ['moved', `from ${ST[t.status]?.name} to ${ST[b.status].name}`]);
     if (b.priority !== undefined && set('priority', b.priority)) acts.push(['changed priority of', `to ${PR[b.priority].name}`]);
     if (b.assignee !== undefined) {
       const m = b.assignee === null ? null : findMember(x, b.assignee, 'assignee');
@@ -406,25 +402,6 @@ export function v1Routes({ limit, uploads }) {
     if (!Object.keys(patch).length) return t;
     patch.updated = Date.now();
     const ops = [{ c: 'tasks', id: t.id, k: 'patch', v: patch }, ...acts.map(([verb, extra]) => actOp(x, after, verb, extra))];
-    // Completing a repeating task schedules the next one, as in the app, unless the one it scheduled
-    // before is still there; the original remembers it (`nextId`).
-    const next = t.nextId ? x.repo.get('tasks', t.nextId) : null;
-    if (patch.status === 'done' && after.recur && after.due && !next) {
-      const due = shiftDays(after.due, RECUR_DAYS[after.recur] || 7, clockOf(x).tz);
-      const n = newTask(x, { ...after, due, start: due, status: 'todo', subtasks: (after.subtasks || []).map(s => ({ ...s, done: false })) });
-      patch.nextId = n.id;
-      ops.push({ c: 'tasks', id: n.id, k: 'put', v: n }, actOp(x, n, 'created'));
-    }
-    // Reopened: the next occurrence it scheduled goes again, unless someone has worked on it since.
-    if (t.status === 'done' && patch.status && patch.status !== 'done' && t.nextId) {
-      const untouched =
-        next &&
-        next.updated === next.created &&
-        next.status === 'todo' &&
-        !x.db.get("SELECT 1 FROM comments WHERE json_extract(data, '$.task') = ? LIMIT 1", next.id);
-      if (!next || untouched) patch.nextId = null;
-      if (untouched) ops.push({ c: 'tasks', id: next.id, k: 'del' });
-    }
     return write(x, ops, descField(b))[0];
   }
 

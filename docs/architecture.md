@@ -12,8 +12,9 @@ proxies `/api` to the API on :8787.
 - **Writes.** Actions keep mutating `S.data` and calling `save()`. `shell/sync.js` diffs `S.data`
   against what the server last confirmed and sends field-level operations to `POST /api/sync` (up to
   500 per batch). The server (`server/sync/`) validates each one, checks permissions, applies side
-  effects (task keys, cascading deletes, notifications, invite emails) and returns the canonical
-  record; a rejected change is rolled back on the client with a toast. Each batch runs in one SQLite
+  effects (task keys, cascading deletes, notifications, invite emails, a task's status lifecycle)
+  and returns the canonical record, plus any other record the batch changed (`changes`, which the
+  live stream doesn't send that tab); a rejected change is rolled back on the client with a toast. Each batch runs in one SQLite
   transaction. `<html data-sync>` shows `saving` / `saved` / `offline`; changes made while offline
   are retried. Consecutive changes to the same record are folded into one queued operation (the
   later value of each field wins), and each request stays within the server's limits (500 ops,
@@ -26,6 +27,14 @@ proxies `/api` to the API on :8787.
   change: a person taken off a project stays off. Entries are matched by id (milestones by name),
   and reactions emoji by emoji, so two people reacting at once both count. A patch without `base` (the REST API, which
   reads and writes in one request) replaces the whole value.
+- **Task status.** The server owns what follows from a task's status
+  (`server/sync/task-status.js`, for sync and the REST API alike); clients only change `status`, and
+  what they send for the other fields is ignored. Finishing sets `completedAt` and `prevStatus`
+  (where it was, for Reopen and Undo); reopening clears both. A repeating task finished with a due
+  date gets one next occurrence, made in the same transaction, so concurrent completions make one;
+  the original names it (`nextId`) and it names the original (`repeatOf`, with a fingerprint of how
+  the server made it). Reopening removes it only if it still matches that fingerprint (nobody has
+  worked on it, whatever its timestamps say) and has no comments; otherwise it stays linked.
 - **Undo.** Undo puts back only the records the action changed. A record it deleted is re-sent
   with `restore: true`; the server then restores its own copy, kept in `recent_deletes` for 10
   minutes and only for the person who deleted it, so a comment keeps its author, time and

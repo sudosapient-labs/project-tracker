@@ -409,6 +409,9 @@ export async function flush() {
     // rather than undone. Queued back before adopting the rest, so their fields count as pending.
     queue.unshift(...ops.filter((op, i) => !res.results[i].ok && res.results[i].retry));
     const changed = settle(ops, res.results);
+    // What the batch changed besides its own records (the next occurrence of a repeating task, or
+    // its removal on reopen): the live stream doesn't send this tab its own changes.
+    if (res.changes?.length) applyRemote(res.changes);
     if (res.links?.length) S.ui.devLinks = res.links;
     if (changed) refresh();
   } catch (e) {
