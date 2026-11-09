@@ -133,7 +133,8 @@ this computer's only with an older server that doesn't say): results say `2026-1
 `2026-11-20 17:00` for a time of day, and `due`, `start` and milestone dates take the same (or `today`,
 `fri`, `+3d`, `fri 5pm`). The tracker stores times in UTC; the server converts. What others did is
 on your clock too: a due someone in India set for 6:30 PM reads 5:00 PM in activity for someone in
-Dubai, and their 10:00 calendar event is at 08:30 (`manage_event` reads `date` and `time` on yours).
+Dubai, and their 10:00 calendar event is at 08:30 (`manage_event` reads `date` and `time` on yours;
+`date` takes `fri 10am` too, and `list_events` takes `from` and `to` like `today` and `+7d`).
 A program that runs the tools for other people with one key (the Slack bot) gives each person's
 client their zone with `useTimeZone(api, tz)` from `@sudosapient/mcp/tools`: the tools read and show
 dates on it, and the client sends it as `Sudo-Time-Zone`, so the server words history and events on

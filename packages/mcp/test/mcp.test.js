@@ -11,6 +11,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { afterEach, describe, expect, it } from 'vitest';
 import { account, apiKey, bot, keyClient, setup } from '../../../test/server/helpers.js';
 import { createClient } from '@sudosapient/client';
+import { dayOf, parseWhen } from '@sudosapient/client/dates';
 import { FENCE_CLOSE, FENCE_NOTE, FENCE_OPEN, MY_WORK_CAP, TOOLS, checkArgs, toolsFor, unfence, useTimeZone } from '../src/tools.js';
 import { clientLabel, createMcp } from '../src/protocol.js';
 
@@ -363,6 +364,42 @@ describe('dates and times on the person’s clock', () => {
     // His change is read on his clock too: 09:00 in Dubai is 10:30 in India.
     await call(dubai, 'manage_event', { action: 'update', id: ev.id, time: '09:00' });
     expect((await call(india, 'list_events', {})).data[0]).toMatchObject({ date: '2026-11-20', time: '10:30' });
+  });
+});
+
+describe('calendar events in the person’s words', () => {
+  it('reads an event’s date and the days to list on the person’s clock, with a time when one is given', async () => {
+    const { t, ada } = await workspace();
+    await ada.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata' } });
+    const mcp = await hosted(t, await apiKey(ada));
+    const when = id => JSON.parse(t.db.get('SELECT data FROM events WHERE id = ?', id).data).when;
+    const IST = 'Asia/Kolkata';
+    // 01:00 on Nov 21 in India is still Nov 20 in UTC.
+    const deploy = (await call(mcp, 'manage_event', { action: 'create', title: 'Deploy', date: '2026-11-21 01:00', project: 'WEB' })).data;
+    expect(deploy).toMatchObject({ date: '2026-11-21', time: '01:00' });
+    expect(when(deploy.id)).toBe('2026-11-20T19:30:00.000Z');
+    // Everyday words, as the instructions promise.
+    const fri = parseWhen('fri 10am', IST);
+    const standup = (await call(mcp, 'manage_event', { action: 'create', title: 'Standup', date: 'fri 10am' })).data;
+    expect(standup).toMatchObject({ date: dayOf(fri, IST), time: '10:00' });
+    expect(when(standup.id)).toBe(fri);
+    const offsite = (await call(mcp, 'manage_event', { action: 'create', title: 'Offsite', date: 'tomorrow', project: 'WEB' })).data;
+    expect(offsite).toEqual({ id: offsite.id, title: 'Offsite', date: parseWhen('tomorrow', IST) });
+    // A new day alone keeps the time; one with a time sets both.
+    expect((await call(mcp, 'manage_event', { action: 'update', id: deploy.id, date: '2026-11-22' })).data).toMatchObject({
+      date: '2026-11-22',
+      time: '01:00',
+    });
+    expect((await call(mcp, 'manage_event', { action: 'update', id: deploy.id, date: '2026-11-23 09:15' })).data).toMatchObject({
+      date: '2026-11-23',
+      time: '09:15',
+    });
+    expect((await call(mcp, 'manage_event', { action: 'create', title: 'x', date: 'someday' })).text).toContain('Can’t read the date “someday”');
+    // Days to list, in words too.
+    const listed = (await call(mcp, 'list_events', { from: 'today', to: '+7d' })).data.map(e => e.title);
+    expect(listed).toEqual(expect.arrayContaining(['Standup', 'Offsite']));
+    expect(listed).not.toContain('Deploy');
+    expect((await call(mcp, 'list_events', { from: '2026-11-23', to: '2026-11-23' })).data.map(e => e.title)).toEqual(['Deploy']);
   });
 });
 

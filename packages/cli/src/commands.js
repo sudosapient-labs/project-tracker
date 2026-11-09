@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ApiError, seg } from '@sudosapient/client';
+import { dayOf, timeOf } from '@sudosapient/client/dates';
 import { showDate } from './clock.js';
 
 export const STATUSES = ['backlog', 'todo', 'progress', 'review', 'done'];
@@ -175,6 +176,14 @@ const taskLine = (x, t) => `${x.bold(t.key)} ${t.title}`;
 const projLine = (x, p) => `${x.bold(x.pad(p.key, 8))} ${p.name}${p.archived ? x.dim(' · archived') : ''}`;
 
 /* ---------- the table ---------- */
+/* An event's --date ('2026-12-01', 'fri', 'fri 10am') on the person's clock, as the day and the
+   time ('' for all day) the API takes: it reads `date` and `time` on that clock, not a UTC moment. */
+async function eventWhen(x, v) {
+  const when = x.need(x.date(v), 'An event needs a day.');
+  const tz = await x.tz();
+  return { date: dayOf(when, tz), time: timeOf(when, tz) };
+}
+
 /* noun → { about, verbs: { verb: { usage, run } }, default? } */
 export const NOUNS = {
   tasks: {
@@ -827,13 +836,15 @@ export const NOUNS = {
   },
 
   events: {
-    about: 'Calendar events (days and times on your clock)',
+    about: 'Calendar events (days and times on your clock: --date fri, --date "fri 10am")',
     default: 'list',
     verbs: {
       list: {
         usage: 'events [list] [-p <project>] [--from <date>] [--to <date>]',
         async run(x) {
-          const es = await x.api().all('/events', { project: x.o.project, from: x.o.from && x.date(x.o.from), to: x.o.to && x.date(x.o.to) });
+          const tz = await x.tz();
+          const day = v => v && dayOf(x.need(x.date(v), 'Give a day, e.g. today or 2026-12-01.'), tz);
+          const es = await x.api().all('/events', { project: x.o.project, from: day(x.o.from), to: day(x.o.to) });
           x.emit(es, () => {
             if (!es.length) x.print(x.dim('No events.'));
             for (const e of es) x.print(`${x.pad(e.date, 10)} ${x.pad(e.time || 'all day', 7)} ${e.title} ${x.dim(e.id)}`);
@@ -844,8 +855,9 @@ export const NOUNS = {
         usage: 'events new "<title>" --date <date> [--time HH:MM] [-p <project>]   (no -p: workspace-wide, Owners and Admins)',
         async run(x) {
           const title = x.need(x.args.join(' ').trim(), 'sudo-cli events new "Launch" --date 2026-12-01 -p WEB');
-          const date = x.date(x.need(x.o.date, 'Give a --date.'));
-          const e = await x.api().post('/events', { title, date, ...(x.o.time ? { time: x.o.time } : {}), ...(x.o.project ? { project: x.o.project } : {}) });
+          const { date, time } = await eventWhen(x, x.need(x.o.date, 'Give a --date.'));
+          const at = x.o.time || time;
+          const e = await x.api().post('/events', { title, date, ...(at ? { time: at } : {}), ...(x.o.project ? { project: x.o.project } : {}) });
           x.emit(e, () => x.print(`Added ${e.title} on ${e.date}${e.time ? ` at ${e.time}` : ''} ${x.dim(e.id)}`));
         },
       },
@@ -855,7 +867,12 @@ export const NOUNS = {
           const id = x.need(x.args[0], 'Which event id?');
           const b = {};
           if (x.o.title != null) b.title = x.o.title;
-          if (x.o.date != null) b.date = x.date(x.o.date);
+          if (x.o.date != null) {
+            // A new day alone keeps the event's time (the API's rule); one with a time sets both.
+            const { date, time } = await eventWhen(x, x.o.date);
+            b.date = date;
+            if (time) b.time = time;
+          }
           if (x.o.time != null) b.time = /^none$/i.test(x.o.time) ? '' : x.o.time;
           if (x.o.project != null) b.project = orNone(x.o.project);
           const e = await x.api().patch(`/events/${seg(id)}`, nonEmpty(x, b, 'Pass --title, --date, --time or -p.'));

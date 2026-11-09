@@ -15,7 +15,7 @@
    Starts, dues and times are on the person's clock (their time zone setting) both ways: results
    say '2026-11-20' or '2026-11-20 17:00', and dates sent in that form (or 'fri 5pm') are read on
    it, so a model never works out UTC offsets. The rules are @sudosapient/client/dates'. */
-import { compareDue, isOverdue, label, modernZone, parseWhen, validZone } from '@sudosapient/client/dates';
+import { compareDue, dayOf, isOverdue, label, modernZone, parseWhen, timeOf, validZone } from '@sudosapient/client/dates';
 
 const seg = ref => encodeURIComponent(String(ref).trim());
 const str = (description, extra = {}) => ({ type: 'string', ...(description ? { description } : {}), ...extra });
@@ -81,6 +81,23 @@ async function dateArg(api, v) {
   const out = parseWhen(v, await tzOf(api));
   if (!out) throw bad(`Can’t read the date “${v}”. Use YYYY-MM-DD, or YYYY-MM-DD HH:MM for a time.`);
   return out;
+}
+/* A calendar event's `date` ('fri', 'fri 10am', '2026-11-20 10:00'), on the person's clock, as the
+   day and the time the API takes ('' for none); a `time` given on its own wins. */
+async function eventArgs(api, a) {
+  if (!a.date) return a;
+  const tz = await tzOf(api);
+  const v = parseWhen(a.date, tz);
+  if (!v) throw bad(`Can’t read the date “${a.date}”. Use YYYY-MM-DD, or YYYY-MM-DD HH:MM for a time.`);
+  return { ...a, date: dayOf(v, tz), ...(a.time === undefined && timeOf(v, tz) ? { time: timeOf(v, tz) } : {}) };
+}
+/* A day to list from or to ('today', 'fri'), on the person's clock. */
+async function dayArg(api, v) {
+  if (!v) return v;
+  const tz = await tzOf(api);
+  const out = parseWhen(v, tz);
+  if (!out) throw bad(`Can’t read the date “${v}”. Use YYYY-MM-DD.`);
+  return dayOf(out, tz);
 }
 const dateArgs = async (api, a, keys) => {
   const out = { ...a };
@@ -442,8 +459,9 @@ export const TOOLS = {
     description: 'Calendar events by date, on the person’s clock.' + UNTRUSTED,
     annotations: READ,
     inputSchema: obj({ project: KEY, from: str('YYYY-MM-DD'), to: str('YYYY-MM-DD') }),
-    async run(api, q) {
-      const [events, keys] = await Promise.all([api.all('/events', q, 200), projectKeys(api)]);
+    async run(api, { from, to, ...q }) {
+      const [f, t] = await Promise.all([dayArg(api, from), dayArg(api, to)]);
+      const [events, keys] = await Promise.all([api.all('/events', { ...q, from: f, to: t }, 200), projectKeys(api)]);
       return events.map(e => compact({ id: e.id, title: e.title, date: e.date, time: e.time, project: keys.get(e.project) }));
     },
   },
@@ -964,16 +982,16 @@ export const TOOLS = {
   manage_event: {
     annotations: writes({ destructive: true, idempotent: false }),
     description: 'Create, change or delete a calendar event (no project: workspace-wide), on the person’s clock.',
-    inputSchema: obj(
-      { action: enm(['create', 'update', 'delete']), id: str(), title: str(), date: str('YYYY-MM-DD'), time: str('HH:MM, "" all day'), project: KEY },
-      ['action'],
-    ),
+    inputSchema: obj({ action: enm(['create', 'update', 'delete']), id: str(), title: str(), date: str(WHEN), time: str('HH:MM, "" all day'), project: KEY }, [
+      'action',
+    ]),
     async run(api, { action, id, ...a }) {
       const view = e => compact({ id: e.id, title: e.title, date: e.date, time: e.time });
-      if (action === 'create') return (need({ action, ...a }, 'title', 'date'), view(await api.post('/events', a)));
+      if (action === 'create') return (need({ action, ...a }, 'title', 'date'), view(await api.post('/events', await eventArgs(api, a))));
       need({ action, id }, 'id');
       if (action === 'delete') return { deleted: (await api.del(`/events/${seg(id)}`)).id };
-      return view(await api.patch(`/events/${seg(id)}`, a));
+      // A new day alone keeps the event's time (the API's rule); one with a time sets both.
+      return view(await api.patch(`/events/${seg(id)}`, await eventArgs(api, a)));
     },
   },
   manage_view: {

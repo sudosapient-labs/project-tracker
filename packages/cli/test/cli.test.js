@@ -7,6 +7,7 @@ import { account, apiKey, bot, setup } from '../../../test/server/helpers.js';
 import { parseDue, run, sameOrigin } from '../src/cli.js';
 import { safeFileName } from '../src/commands.js';
 import { plainHttpRemote } from '@sudosapient/client';
+import { dayOf, parseWhen } from '@sudosapient/client/dates';
 import { saveConfig } from '@sudosapient/client/config';
 
 /* Runs the CLI with captured output and its own config directory. */
@@ -342,6 +343,34 @@ describe('whose clock', () => {
     expect((await dubai('events')).out).toMatch(/^2026-11-20 08:30 {3}Standup/);
     // --json keeps the stored moment alongside.
     expect(JSON.parse((await dubai('events', '--json')).out)[0]).toMatchObject({ date: '2026-11-20', time: '08:30', when: '2026-11-20T04:30:00.000Z' });
+  });
+
+  it('reads an event’s --date, with its time, and --from/--to on the person’s clock', async () => {
+    process.env.TZ = 'America/Los_Angeles';
+    const t = setup();
+    const ada = await account(t);
+    await ada.c.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata' } });
+    const india = cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: await apiKey(ada.c) });
+    const IST = 'Asia/Kolkata';
+    // 01:00 on Nov 21 in India is still Nov 20 in UTC (and Nov 20 on this computer).
+    expect((await india('events', 'new', 'Deploy', '--date', '2026-11-21 01:00')).out).toMatch(/^Added Deploy on 2026-11-21 at 01:00/);
+    const fri = parseWhen('fri 10am', IST);
+    expect((await india('events', 'new', 'Standup', '--date', 'fri 10am')).out).toMatch(new RegExp(`^Added Standup on ${dayOf(fri, IST)} at 10:00`));
+    expect((await india('events', 'new', 'Offsite', '--date', 'tomorrow')).out).toMatch(new RegExp(`^Added Offsite on ${parseWhen('tomorrow', IST)} \\S+\\n$`));
+    const all = JSON.parse((await india('events', '--json')).out);
+    expect(all.find(e => e.title === 'Deploy')).toMatchObject({ date: '2026-11-21', time: '01:00', when: '2026-11-20T19:30:00.000Z' });
+    expect(all.find(e => e.title === 'Standup').when).toBe(fri);
+    const deploy = all.find(e => e.title === 'Deploy').id;
+    // A new day alone keeps the time; with a time, both.
+    await india('events', 'edit', deploy, '--date', '2026-11-22');
+    await india('events', 'edit', all.find(e => e.title === 'Standup').id, '--date', '2026-11-23 09:15');
+    const now = JSON.parse((await india('events', '--json')).out);
+    expect(now.find(e => e.title === 'Deploy')).toMatchObject({ date: '2026-11-22', time: '01:00' });
+    expect(now.find(e => e.title === 'Standup')).toMatchObject({ date: '2026-11-23', time: '09:15' });
+    expect((await india('events', '--from', '2026-11-22', '--to', '2026-11-22')).out).toMatch(/^2026-11-22 01:00 {3}Deploy/);
+    const soon = (await india('events', '--from', 'today', '--to', '+1d')).out;
+    expect(soon).toContain('Offsite');
+    expect(soon).not.toContain('Deploy');
   });
 });
 
