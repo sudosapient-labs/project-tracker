@@ -7,6 +7,8 @@
    Routes are declared once in ROUTES; registration and the OpenAPI document both read them. */
 import { Hono } from 'hono';
 import { PR, RECUR_DAYS, ST } from '../../src/core/constants.js';
+import { clockOf as memberClock } from '../lib/clock.js';
+import { instant, label, shiftDays } from '../../packages/client/dates.js';
 import { textToHtml } from '../../src/core/rich-text.js';
 import { newId } from '../lib/crypto.js';
 import { PERMS, isAdminRole, projectLevel } from '../../src/core/access.js';
@@ -35,8 +37,13 @@ export const htmlToText = html =>
     .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, e) => ENT[e])
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-const shortDate = v => new Date(v.slice(0, 10) + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-const shiftDate = (v, days) => new Date(Date.parse(v.slice(0, 10) + 'T00:00:00Z') + days * 86_400_000).toISOString().slice(0, 10) + v.slice(10);
+/* The key's person's time zone and clock: activity reads a start or due as they'd see it in the app
+   ("to Nov 9, 11:59 PM"), and repeats keep a task's time of day on their clock. */
+const clockOf = x => memberClock(x.repo, x.me.id);
+const shortDate = (x, v) => {
+  const { tz, time } = clockOf(x);
+  return label(v, tz, { style: 'short', time });
+};
 
 /* ---------- public views of synced records ---------- */
 const LEVEL = ['none', 'view', 'comment', 'edit', 'full'];
@@ -193,22 +200,26 @@ function decodeCursor(s) {
   }
   throw new ApiFail(400, 'That cursor isn’t valid.', 'invalid_request', 'cursor');
 }
-/* sort=due pages resume after [created_at, id, due]; due is null for tasks without one, which
-   come last. */
-const encodeDueCursor = (at, id, due) => Buffer.from(JSON.stringify([at, id, due])).toString('base64url');
-function decodeDueCursor(s) {
+/* sort=due pages resume after [created_at, id, due moment]: the moment (Unix ms) its due stands for,
+   null for tasks without one, which come last. Cursors from before held the due value itself. */
+const encodeDueCursor = (at, id, key) => Buffer.from(JSON.stringify([at, id, key])).toString('base64url');
+function decodeDueCursor(s, tz) {
   try {
     const k = JSON.parse(Buffer.from(s, 'base64url').toString());
-    if (Array.isArray(k) && k.length === 3 && Number.isFinite(k[0]) && typeof k[1] === 'string' && (k[2] === null || typeof k[2] === 'string'))
-      return { at: k[0], id: k[1], due: k[2] };
+    if (Array.isArray(k) && k.length === 3 && Number.isFinite(k[0]) && typeof k[1] === 'string') {
+      if (k[2] === null || Number.isFinite(k[2])) return { at: k[0], id: k[1], key: k[2] };
+      if (typeof k[2] === 'string' && Number.isFinite(dueKey(k[2], tz))) return { at: k[0], id: k[1], key: dueKey(k[2], tz) };
+    }
   } catch {
     /* fall through */
   }
   throw new ApiFail(400, 'That cursor isn’t valid.', 'invalid_request', 'cursor');
 }
-// A task's due date for sorting: '' counts as none.
-const DUE = "NULLIF(json_extract(data, '$.due'), '')";
-
+/* Where a task sorts by due: the moment it's due, an all-day due counting as the end of its day in
+   the reader's time zone, as the app's lists do; null (last) for none. */
+const dueKey = (due, tz) => (due ? instant(due, tz, true) : null);
+const byDueOrder = (a, b) =>
+  a.key === b.key ? b.at - a.at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0) : a.key === null ? 1 : b.key === null ? -1 : a.key - b.key;
 export function v1Routes({ limit, uploads }) {
   /* ---------- lookups, all within what the key's person can see ---------- */
   const ctxOf = c => {
@@ -383,8 +394,8 @@ export function v1Routes({ limit, uploads }) {
       const m = b.assignee === null ? null : findMember(x, b.assignee, 'assignee');
       if (set('assignee', m?.id ?? null)) acts.push(['assigned', m ? `to ${m.name}` : '(unassigned)']);
     }
-    if (b.due !== undefined && set('due', b.due)) acts.push(['changed due date of', b.due ? `to ${shortDate(b.due)}` : '(cleared)']);
-    if (b.start !== undefined && set('start', b.start)) acts.push(['changed start date of', b.start ? `to ${shortDate(b.start)}` : '(cleared)']);
+    if (b.due !== undefined && set('due', b.due)) acts.push(['changed due date of', b.due ? `to ${shortDate(x, b.due)}` : '(cleared)']);
+    if (b.start !== undefined && set('start', b.start)) acts.push(['changed start date of', b.start ? `to ${shortDate(x, b.start)}` : '(cleared)']);
     if (b.labels !== undefined && set('labels', b.labels)) acts.push(['updated labels on', '']);
     if (b.estimate !== undefined && set('estimate', b.estimate)) acts.push(['estimated', b.estimate || 'none']);
     if (b.recurrence !== undefined && set('recur', b.recurrence)) acts.push(['set repeat on', b.recurrence ? b.recurrence.toLowerCase() : 'off']);
@@ -399,7 +410,7 @@ export function v1Routes({ limit, uploads }) {
     // before is still there; the original remembers it (`nextId`).
     const next = t.nextId ? x.repo.get('tasks', t.nextId) : null;
     if (patch.status === 'done' && after.recur && after.due && !next) {
-      const due = shiftDate(after.due, RECUR_DAYS[after.recur] || 7);
+      const due = shiftDays(after.due, RECUR_DAYS[after.recur] || 7, clockOf(x).tz);
       const n = newTask(x, { ...after, due, start: due, status: 'todo', subtasks: (after.subtasks || []).map(s => ({ ...s, done: false })) });
       patch.nextId = n.id;
       ops.push({ c: 'tasks', id: n.id, k: 'put', v: n }, actOp(x, n, 'created'));
@@ -487,30 +498,43 @@ export function v1Routes({ limit, uploads }) {
       }
       if (q.includeArchived !== 'true') where.push("COALESCE(json_extract(data, '$.archived'), 0) = 0");
       const byDue = q.sort === 'due';
-      if (q.cursor && byDue) {
-        // After the cursor's task in (no due date last, due, created_at DESC, id DESC) order.
-        const k = decodeDueCursor(q.cursor);
-        const newer = '(created_at < ? OR (created_at = ? AND id < ?))';
-        if (k.due === null) where.push(`(${DUE} IS NULL AND ${newer})`);
-        else {
-          where.push(`(${DUE} IS NULL OR ${DUE} > ? OR (${DUE} = ? AND ${newer}))`);
-          args.push(k.due, k.due);
-        }
-        args.push(k.at, k.at, k.id);
-      } else if (q.cursor) {
+      const n = q.limit || 50;
+      if (byDue) {
+        // Ordered here rather than in SQL: the two shapes of a due ('YYYY-MM-DD' and a UTC instant)
+        // don't sort as text, and where an all-day due falls depends on the reader's time zone.
+        const { tz } = clockOf(x);
+        const after = q.cursor ? decodeDueCursor(q.cursor, tz) : null;
+        const all = x.db
+          .all(`SELECT id, created_at AS at, json_extract(data, '$.due') AS due FROM tasks WHERE ${where.join(' AND ')}`, ...args)
+          .map(r => ({ id: r.id, at: r.at, key: dueKey(r.due, tz) }))
+          .sort(byDueOrder);
+        const from = after ? all.findIndex(r => byDueOrder(r, after) > 0) : 0;
+        const picked = from < 0 ? [] : all.slice(from, from + n + 1);
+        const more = picked.length > n;
+        const page = picked.slice(0, n);
+        const data = new Map(
+          x.db.all('SELECT id, data FROM tasks WHERE id IN (SELECT value FROM json_each(?))', JSON.stringify(page.map(r => r.id))).map(r => [r.id, r.data]),
+        );
+        const last = page.at(-1);
+        return {
+          data: page.map(r => x.V.task(JSON.parse(data.get(r.id)))),
+          nextCursor: more ? encodeDueCursor(last.at, last.id, last.key) : null,
+          // Echoed so a client can tell this server sorted by due (an older one ignores sort).
+          sort: 'due',
+        };
+      }
+      if (q.cursor) {
         const k = decodeCursor(q.cursor);
         where.push('(created_at < ? OR (created_at = ? AND id < ?))');
         args.push(k.at, k.at, k.id);
       }
-      const n = q.limit || 50;
-      const order = byDue ? `${DUE} IS NULL, ${DUE}, created_at DESC, id DESC` : 'created_at DESC, id DESC';
-      const rows = x.db.all(`SELECT id, data, created_at, ${DUE} AS due FROM tasks WHERE ${where.join(' AND ')} ORDER BY ${order} LIMIT ?`, ...args, n + 1);
+      const rows = x.db.all(`SELECT id, data, created_at FROM tasks WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ?`, ...args, n + 1);
       const more = rows.length > n;
       const page = rows.slice(0, n);
       const last = page.at(-1);
-      const nextCursor = !more ? null : byDue ? encodeDueCursor(last.created_at, last.id, last.due) : encodeCursor(last.created_at, last.id);
+      const nextCursor = more ? encodeCursor(last.created_at, last.id) : null;
       // Echoed so a client can tell this server sorted by due (an older one ignores sort).
-      return { data: page.map(r => x.V.task(JSON.parse(r.data))), nextCursor, ...(byDue ? { sort: 'due' } : {}) };
+      return { data: page.map(r => x.V.task(JSON.parse(r.data))), nextCursor };
     },
   });
 
@@ -720,6 +744,7 @@ export function v1Routes({ limit, uploads }) {
     limit,
     uploads,
     shortDate,
+    clockOf,
   });
 
   /* ---------- wiring ---------- */

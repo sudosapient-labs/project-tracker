@@ -58,6 +58,25 @@ proxies `/api` to the API on :8787.
   belongs to the session that made it and is deleted when that session ends (sign out, revoked,
   password change or reset, expiry, removal); the browser subscribes again after its next sign-in.
 
+## Dates and times
+
+A start or due (task start and due, subtask due, project start and due, milestone date) is one of
+two shapes, defined once in `packages/client/dates.js` and used by the app, the server, the CLI, the
+MCP server and the Slack bot:
+
+| Shape   | Example                    | Means                                                         |
+| ------- | -------------------------- | ------------------------------------------------------------- |
+| All day | `2026-11-09`               | That calendar day wherever it's read; overdue once it's over. |
+| Timed   | `2026-11-09T18:29:00.000Z` | One moment, stored in UTC; shown in the reader's time zone.   |
+
+The sync schema accepts only these two; the API also takes a date-time with an offset and stores it
+in UTC, and refuses one without a zone. A timed value's day depends on the reader (`2026-11-09T20:30Z`
+is Nov 10, 2:00 AM in India), so code reads values with `dayOf`, `timeOf`, `label`, `instant`,
+`isOverdue` and `compareDue` and the reader's time zone (Settings → time zone; on the server,
+`server/lib/clock.js`), never with `value.slice(0, 10)` or string comparison. What people type
+("fri 5pm") becomes a value through `parseWhen`. Calendar events are a separate model (a day plus
+an optional `HH:MM`).
+
 ## Public API, MCP and CLI
 
 - **`/api/v1`** (`server/api/`) is the public REST API for personal API keys (Settings → API).

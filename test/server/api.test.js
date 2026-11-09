@@ -431,7 +431,7 @@ describe('API conventions', () => {
       ['d', 'SEC', '2026-12-01'],
       ['e', 'WEB', '2027-03-01'],
       ['f', 'WEB', null],
-      ['g', 'WEB', '2027-01-01T09:00'],
+      ['g', 'WEB', '2027-01-01T09:00+05:30'],
       ['h', 'WEB', '2027-03-01'],
     ];
     const ids = {};
@@ -453,11 +453,12 @@ describe('API conventions', () => {
       } while (cursor);
       return seen;
     };
-    // Soonest first; the same due date newest first; no due date last, newest first.
-    for (const n of [1, 2, 3, 50]) expect(await walk(api, n)).toEqual(['d', 'c', 'g', eh1, eh2, 'a', 'f', 'b']);
+    // Soonest first, an all-day due counting as the end of its day (so after g, due at 9:00 that
+    // day), as the app's lists order them; the same due newest first; no due date last, newest first.
+    for (const n of [1, 2, 3, 50]) expect(await walk(api, n)).toEqual(['d', 'g', 'c', eh1, eh2, 'a', 'f', 'b']);
     // Bob can't open SEC, so its task isn't in his list on any page.
     const asBob = await as(t, bob);
-    expect(await walk(asBob, 1)).toEqual(['c', 'g', eh1, eh2, 'a', 'f', 'b']);
+    expect(await walk(asBob, 1)).toEqual(['g', 'c', eh1, eh2, 'a', 'f', 'b']);
     // Without sort the order and the answer are as before.
     expect((await api.get('/tasks')).body).toEqual({ data: expect.any(Array), nextCursor: null });
     // A cursor from one order isn't taken for the other.

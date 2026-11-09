@@ -7,6 +7,12 @@ import { PCOLORS, PICONS, PRIOS, PSTAT, REACTIONS, RECUR, ROLES, STATUSES, TIMEZ
 import { PERMS } from '../../src/core/access.js';
 import { FILE_TYPES } from '../../src/core/file-types.js';
 import { DEFAULT_NOTIF_PREFS } from '../notify.js';
+import { checkWhen } from '../../packages/client/dates.js';
+
+const WHEN =
+  'YYYY-MM-DD for all day, or an ISO 8601 date-time with a zone (Z or an offset like +05:30) for a time of day; times are stored and returned in UTC';
+// How a stored start or due reads, on records.
+const WHEN_OUT = 'YYYY-MM-DD (all day), or a UTC date-time like 2026-11-09T18:29:00.000Z (a time of day; show it in the reader’s time zone)';
 
 export const registry = z.registry();
 const named = (id, schema, description) => {
@@ -16,14 +22,22 @@ const named = (id, schema, description) => {
 
 const STATUS = z.enum(STATUSES.map(s => s.id));
 const PRIORITY = z.enum(PRIOS.map(p => p.id));
-// 'YYYY-MM-DD' (all day) or an ISO instant (timed), as in the app. The day must exist: 2026-02-31
-// would read as "Invalid Date" in activity and break scheduling the next repeat.
-const realDate = v => !Number.isNaN(Date.parse(v)) && new Date(v.slice(0, 10) + 'T00:00:00Z').toISOString().startsWith(v.slice(0, 10));
+// A start or due (packages/client/dates.js): 'YYYY-MM-DD' (all day), or an ISO date-time with a zone
+// (timed), stored and returned as UTC ('2026-11-09T18:29:00.000Z'). A date-time without a zone is
+// refused: it would be a different moment depending on whose clock read it. The day must exist:
+// 2026-02-31 would read as "Invalid Date" in activity and break scheduling the next repeat.
 const date = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/, 'Use YYYY-MM-DD or an ISO date-time')
-  .refine(realDate, 'That date doesn’t exist')
-  .describe('YYYY-MM-DD, or an ISO 8601 date-time for a timed due date');
+  .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/, { message: 'Use YYYY-MM-DD or an ISO date-time', abort: true })
+  .superRefine((v, ctx) => {
+    const c = checkWhen(v);
+    if ('error' in c) ctx.addIssue({ code: 'custom', message: c.error });
+  })
+  .overwrite(v => {
+    const c = checkWhen(v);
+    return c.ok ? c.value : v;
+  })
+  .describe(WHEN);
 const ms = z.number().int().describe('Unix time in milliseconds');
 const ref = z.string().min(1).max(254);
 
@@ -87,7 +101,7 @@ export const Revoked = named(
 
 export const Subtask = named(
   'Subtask',
-  z.object({ id: z.string(), title: z.string(), done: z.boolean(), assignee: z.string().nullable(), due: z.string().nullable() }),
+  z.object({ id: z.string(), title: z.string(), done: z.boolean(), assignee: z.string().nullable(), due: z.string().nullable().describe(WHEN_OUT) }),
   'A checklist item of a task.',
 );
 
@@ -104,8 +118,8 @@ export const Task = named(
     status: STATUS,
     priority: PRIORITY,
     assignee: z.string().nullable().describe('Member id'),
-    due: z.string().nullable(),
-    start: z.string().nullable(),
+    due: z.string().nullable().describe(WHEN_OUT),
+    start: z.string().nullable().describe(WHEN_OUT),
     labels: z.array(z.string()),
     estimate: z.string().nullable(),
     subtasks: z.array(Subtask),
@@ -137,12 +151,12 @@ export const Project = named(
       .describe('Member id → permission set in the share dialog (listed people without one: Guests comment, others edit)'),
     private: z.boolean(),
     archived: z.boolean(),
-    start: z.string().nullable(),
-    due: z.string().nullable(),
+    start: z.string().nullable().describe(WHEN_OUT),
+    due: z.string().nullable().describe(WHEN_OUT),
     icon: z.string(),
     color: z.string(),
     team: z.string().describe('Team id, or empty'),
-    milestones: z.array(z.object({ name: z.string(), date: z.string().nullable() })),
+    milestones: z.array(z.object({ name: z.string(), date: z.string().nullable().describe(WHEN_OUT) })),
     favorite: z.boolean(),
     access: z
       .enum(['view', 'comment', 'edit', 'full', 'none'])
@@ -559,7 +573,7 @@ const time = z
 const day = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')
-  .refine(realDate, 'That date doesn’t exist');
+  .refine(v => checkWhen(v).ok, 'That date doesn’t exist');
 export const EventQuery = z.object({
   project: ref.optional().describe('Project id or key'),
   from: day.optional().describe('From this day (YYYY-MM-DD)'),

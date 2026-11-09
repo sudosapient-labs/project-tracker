@@ -5,20 +5,16 @@
 import { z } from 'zod';
 import { FILTER_FIELDS, PCOLORS, PRIOS, PSTAT, REACTIONS, RECUR, ROLES, STATUSES } from '../../src/core/constants.js';
 import { FILE_TYPES } from '../../src/core/file-types.js';
+import { isCanonical } from '../../packages/client/dates.js';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Invalid id');
 const ref = id.nullable().optional();
 const text = (max = 500) => z.string().max(max);
 const ts = z.number().finite().nonnegative();
-// Dates are 'YYYY-MM-DD' (all day) or an ISO instant like '2026-11-02T09:30:00.000Z' (timed). The day
-// must exist: 2026-02-31 would break scheduling the next repeat (as api/schemas.js checks for the API).
-const realDate = v => !Number.isNaN(Date.parse(v)) && new Date(v.slice(0, 10) + 'T00:00:00Z').toISOString().startsWith(v.slice(0, 10));
-const date = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/, 'Invalid date')
-  .refine(realDate, 'Invalid date')
-  .nullable()
-  .optional();
+// Starts and dues are exactly one of the two stored shapes (packages/client/dates.js): 'YYYY-MM-DD'
+// (all day, a day that exists) or a UTC instant as Date#toISOString writes it (timed). Nothing else,
+// so every reader can rely on the shape.
+const date = z.string().refine(isCanonical, 'Invalid date').nullable().optional();
 const color = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid colour');
 // A team reference: a team id, or '' for none.
 const teamRef = z.string().regex(/^[A-Za-z0-9_-]{0,64}$/, 'Invalid team');
