@@ -1,7 +1,7 @@
 /* =====================================================================
    SETTINGS · AUTH · ONBOARDING · DESIGN SYSTEM · SYSTEM STATES
    ===================================================================== */
-import { ago, dOff, esc, fmtDate } from '../core/utils.js';
+import { ago, dOff, dayKey, esc, fmtDate } from '../core/utils.js';
 import { ic, wsLogo } from '../core/icons.js';
 import { timeZones, tzCity } from '../core/constants.js';
 import { isAdminRole } from '../core/access.js';
@@ -10,6 +10,9 @@ import { av, pIcon } from '../ui/helpers.js';
 import { permsTable, teamsGrid } from './members.js';
 import { page404 } from './errors.js';
 import { SHORTCUTS } from '../overlays/modals.js';
+
+/* The day a moment (Unix ms: a key made, a key that expires) falls on, on the reader's clock. */
+const when = ms => (ms ? fmtDate(dayKey(ms)) : '');
 
 export const SET_NAV = [
   [
@@ -441,7 +444,6 @@ function apiSection() {
   const fresh = S.ui.newApiKey;
   const err = S.ui.errors.apiName;
   const origin = location.origin;
-  const when = ms => (ms ? fmtDate(new Date(ms).toISOString().slice(0, 10)) : '');
   const mcp = JSON.stringify(
     { mcpServers: { 'sudo-sapient': { url: `${origin}/api/mcp`, headers: { Authorization: `Bearer ${fresh?.token || 'ssk_…'}` } } } },
     null,
@@ -495,7 +497,6 @@ function botsSection() {
   const roleSel = (id, v = 'Member') =>
     `<select class="select" id="${id}" style="width:auto;min-width:120px" aria-label="Role">${['Member', 'Guest'].map(r => `<option ${r === v ? 'selected' : ''}>${r}</option>`).join('')}</select>`;
   const who = id => (id ? esc(D().members.find(m => m.id === id)?.name || 'Former member') : 'Former member');
-  const when = ms => (ms ? fmtDate(new Date(ms).toISOString().slice(0, 10)) : '');
   const err = k => (e[k] ? `<span class="err">${ic('circle-alert', 12)}${esc(e[k])}</span>` : '');
   const row = b => {
     const m = b.id === open;
