@@ -875,8 +875,8 @@ export function registerMore(h) {
     run: (x, { body: b }) => {
       if (b.notifications && Object.keys(b.notifications).length) write(x, [{ c: 'notifPrefs', k: 'patch', v: b.notifications }]);
       if (b.preferences && Object.keys(b.preferences).length) {
-        const cur = x.repo.userState(x.me.id).prefs;
-        saveState(x.c.var, x.me.id, { prefs: { ...cur, ...b.preferences } });
+        // Only the ones sent change (saveState merges them into what's saved).
+        saveState(x.c.var, x.me.id, { prefs: b.preferences });
         x.c.set('committed', true);
       }
       return prefsOf(x);

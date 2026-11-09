@@ -22,12 +22,15 @@ export const SYNCS_PER_MINUTE = 600;
 
 /* Save a person's display preferences, view settings and sidebar state (each optional; `prefs`
    replaces theirs whole). Shared with the public API's PATCH /me/preferences. */
+/* `prefs` are merged key by key into what's saved: each client sends only what it changed, so a tab
+   left open can't put back a setting (a time zone) changed since elsewhere (the CLI, MCP, the API,
+   another device). `views` and `collapsed` are replaced. */
 export function saveState({ repo, engine }, uid, { prefs, views, collapsed }) {
   const patch = {};
   if (prefs) {
     // Name and title live on the member record; prefs only mirrors them.
     const { name, title, ...rest } = prefs;
-    patch.prefs = rest;
+    patch.prefs = { ...repo.userState(uid).prefs, ...rest };
   }
   if (views) patch.views = views;
   if (collapsed != null) patch.collapsed = collapsed;

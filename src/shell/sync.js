@@ -95,6 +95,7 @@ export function prime(data, kept = []) {
   // shadow, as already sent), so reloading while some are still on their way loses none.
   for (const op of [...inflight, ...queue]) replay(data, op);
   stateSent = JSON.stringify(stateBody());
+  knowPrefs();
   syncState();
 }
 /* While a reload's bootstrap is loading, what the server saved meanwhile (as ops), for prime. */
@@ -799,7 +800,21 @@ export async function takeKept(user) {
 }
 
 /* ---------- per-person UI state (prefs, view settings, sidebar) ---------- */
-const stateBody = () => ({ prefs: S.prefs, views: S.views, collapsed: !!S.ui.collapsed });
+const stateBody = () => ({ views: S.views, collapsed: !!S.ui.collapsed });
+/* Each preference as the server has it, as far as this tab knows: as loaded, or as last sent. Only
+   the ones changed here since are sent (the server merges them into what it has), so a setting
+   changed elsewhere meanwhile (a time zone set with the CLI) isn't put back by this tab saving
+   another. */
+let prefsKnown = new Map();
+const knowPrefs = () => (prefsKnown = new Map(Object.entries(S.prefs).map(([k, v]) => [k, JSON.stringify(v)])));
+function prefsChanged() {
+  /** @type {Record<string, unknown>} */
+  const out = {};
+  for (const [k, v] of Object.entries(S.prefs))
+    // Name and title are the member record's, saved on their own.
+    if (k !== 'name' && k !== 'title' && prefsKnown.get(k) !== JSON.stringify(v)) out[k] = v;
+  return out;
+}
 /* Send the person's state now if it changed since it was last sent (save() does this after a pause). */
 export function saveState() {
   try {
@@ -811,10 +826,18 @@ export function saveState() {
   }
   if (!shadow) return;
   const body = stateBody();
+  const prefs = prefsChanged();
+  const sent = Object.keys(prefs);
   const j = JSON.stringify(body);
-  if (j === stateSent) return;
+  if (j === stateSent && !sent.length) return;
   stateSent = j;
-  api('PUT', '/api/me/state', body).catch(() => (stateSent = ''));
+  const before = new Map(sent.map(k => [k, prefsKnown.get(k)]));
+  for (const k of sent) prefsKnown.set(k, JSON.stringify(prefs[k]));
+  api('PUT', '/api/me/state', sent.length ? { ...body, prefs } : body).catch(() => {
+    stateSent = '';
+    // Not saved: send them again next time, unless changed again since.
+    for (const k of sent) if (prefsKnown.get(k) === JSON.stringify(prefs[k])) prefsKnown.set(k, before.get(k));
+  });
 }
 
 saveHooks.onSave = () => {

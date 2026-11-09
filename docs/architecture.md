@@ -58,7 +58,9 @@ proxies `/api` to the API on :8787.
   (`x-client-id`). When the stream drops, the client reconnects and bootstraps again; a
   bootstrap that fails is retried with backoff (the tab shows offline meanwhile).
 - **Per-person data** (preferences, view settings, favourites, sidebar order, notification
-  preferences) is stored per account (`PUT /api/me/state`), not in the browser.
+  preferences) is stored per account (`PUT /api/me/state`), not in the browser. Preferences are
+  merged key by key, and the app sends only the ones changed in that tab, so a tab left open never
+  puts back one changed elsewhere (a time zone set with the CLI).
 - **Files** stream to `POST /api/files` as the raw request body, are written under `UPLOAD_DIR` with a
   random storage key, and are served (`GET /api/files/<id>/<name>`) only to people who can see the
   project.

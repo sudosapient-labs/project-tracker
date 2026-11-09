@@ -77,12 +77,13 @@ describe('whose clock', () => {
     await ada.put('/api/me/state', { prefs: { tz: 'India Standard Time (GMT+05:30)', timeFmt: '24' } });
     expect(clockOf(t.repo, adaId)).toEqual({ tz: 'Asia/Dubai', time: '24', source: 'workspace' });
 
-    await ada.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata' } });
+    // (Preferences are saved key by key: each one changed is sent.)
+    await ada.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata', timeFmt: '12' } });
     expect(clockOf(t.repo, adaId)).toEqual({ tz: 'Asia/Kolkata', time: '12', source: 'person' });
 
     // Unset again, the workspace's has no zone: UTC, not Pacific time.
     await api.patch('/workspace', { timeZone: null });
-    await ada.put('/api/me/state', { prefs: {} });
+    await ada.put('/api/me/state', { prefs: { tz: '' } });
     expect(clockOf(t.repo, adaId).tz).toBe('UTC');
   });
 
@@ -182,6 +183,27 @@ describe('the effective zone in the API', () => {
     p = (await api.patch('/me/preferences', { preferences: { tz: 'Nowhere/Special' } })).body;
     expect(p).toMatchObject({ code: 'invalid_request', field: 'preferences' });
     expect(p.error).toMatch(/IANA time zone/);
+  });
+
+  it('a zone set through the API stays when an open tab saves another setting', async () => {
+    const { ada, api } = await workspace();
+    // The tab loaded with India, and saved it (and its theme) as the app does.
+    await ada.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata', theme: 'light', dateFmt: 'MMM d' } });
+    // Elsewhere (the CLI, MCP): Dubai.
+    expect((await api.patch('/me/preferences', { preferences: { tz: 'Asia/Dubai' } })).status).toBe(200);
+    // The tab changes its theme, sending only that, with its views.
+    expect((await ada.put('/api/me/state', { prefs: { theme: 'dark' }, views: {} })).status).toBe(200);
+    expect((await api.get('/me/preferences')).body).toMatchObject({
+      preferences: { tz: 'Asia/Dubai', theme: 'dark', dateFmt: 'MMM d' },
+      timeZone: 'Asia/Dubai',
+      timeZoneSource: 'person',
+    });
+    // The REST PATCH still changes only what it's sent.
+    await api.patch('/me/preferences', { preferences: { dateFmt: 'yyyy-MM-dd' } });
+    expect((await api.get('/me/preferences')).body.preferences).toMatchObject({ tz: 'Asia/Dubai', theme: 'dark', dateFmt: 'yyyy-MM-dd' });
+    // Clearing the zone is sending it empty.
+    await ada.put('/api/me/state', { prefs: { tz: '' } });
+    expect((await api.get('/me/preferences')).body).toMatchObject({ timeZone: 'UTC', timeZoneSource: 'default' });
   });
 
   it('documents the fields in the OpenAPI spec', async () => {

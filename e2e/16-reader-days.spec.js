@@ -120,3 +120,20 @@ test('milestones on one day on the reader’s clock share a diamond on the timel
   await expect(diamonds.first()).toHaveAttribute('data-tip', /Wind tunnel · First flight|First flight · Wind tunnel/);
   expect(await errors()).toEqual([]);
 });
+
+test('a time zone set elsewhere stays when an open tab saves another setting', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signIn(page, MARY);
+  await expect(page.locator('.side')).toBeVisible();
+  await page.goto('/#settings/appearance');
+  await synced(page);
+  // Set from the CLI (or MCP, or the API) while the tab is open.
+  expect((await rest(page.request, 'PATCH', '/me/preferences', { preferences: { tz: 'Asia/Dubai' } })).ok()).toBe(true);
+  // The tab saves its theme.
+  await page.locator('[data-a="setTheme"][data-v="dark"]').first().click();
+  await synced(page);
+  const prefs = async () => (await (await rest(page.request, 'GET', '/me/preferences')).json()).preferences;
+  await expect.poll(async () => (await prefs()).theme).toBe('dark');
+  expect((await prefs()).tz).toBe('Asia/Dubai');
+  expect(await errors()).toEqual([]);
+});
