@@ -95,8 +95,8 @@ The sync schema accepts only these two; the API also takes a date-time with an o
 in UTC, and refuses one without a zone. A timed value's day depends on the reader (`2026-11-09T20:30Z`
 is Nov 10, 2:00 AM in India), so code reads values with `dayOf`, `timeOf`, `label`, `instant`,
 `isOverdue` and `compareDue` and the reader's time zone, never with `value.slice(0, 10)` or string
-comparison. What people type ("fri 5pm") becomes a value through `parseWhen`. Calendar events are a
-separate model (a day plus an optional `HH:MM`).
+comparison. What people type ("fri 5pm") becomes a value through `parseWhen`. A calendar event's
+start (`when`) has the same two shapes: an all-day event is a day, a timed one the moment it starts.
 
 ### Whose clock
 
@@ -126,6 +126,26 @@ the app, it saves the browser's as theirs, once, and says so ("Time zone set to 
 browser"), so the server and the app agree. A zone they chose is never replaced. A new workspace
 takes the Owner's zone when setup finishes; migration 014 gave existing ones the zone most of their
 people had saved.
+
+### History and events on the reader's clock
+
+What is stored is the value; words are made when someone reads it, on their clock.
+
+- **History.** An activity entry that sets a start or due (a task's start or due, a subtask's due)
+  also keeps the value it was set to, `when` (`null` when cleared), next to `extra`, the words on
+  the writer's clock. Every reader words `when` on their own clock: the app in task history and
+  the activity feeds, and the REST API in `extra` for the key's person, which is what the MCP
+  server, the CLI and the Slack bot show. The rule lives in `src/core/activity.js` (`whenAct` to
+  write, `actExtra` to read). Entries saved before `when` existed, and those written by apps from
+  before it, only have `extra`, and show it as written. Nothing is rewritten.
+- **Calendar events.** `when` is the event: a day for an all-day one, the UTC moment it starts for
+  a timed one (a 10:00 standup set in India is 8:30 in Dubai). The calendar places it on the
+  viewer's day and shows its time on their clock; the API gives `date` and `time` on the key's
+  person's clock and reads them that way when given. The sync rules (`settleEventWhen` in
+  `server/sync/rules.js`) also store `date` and `time` as the day and time on the saver's clock,
+  for apps from before `when`, which show those. An app that sends only `date` and `time` has them
+  read on its person's clock; one that can't be read is refused. Migration 015 read the events
+  saved before on the workspace's clock, else UTC.
 
 ## Public API, MCP and CLI
 

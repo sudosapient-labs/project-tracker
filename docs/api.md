@@ -138,6 +138,16 @@ none; set it with `PATCH /me/preferences` (any IANA zone, like `Australia/Sydney
 is `timeZone` on `GET /workspace` (`null` when unset); Owners and Admins change it with
 `PATCH /workspace` (`null` unsets it).
 
+**History and events on your clock.** An Activity entry's `extra` ("to Nov 10, 5:00 PM") is worded
+on the key's person's clock, whoever made the change. An entry that set a start or due also has
+`when`, the value it was set to as stored (`null` when it was cleared); entries saved before it was
+kept have no `when`, and their `extra` is in the words of whoever wrote them. A calendar event's
+`date` and `time` are its day and start on the key's person's clock, and `when` is the event as
+stored: `YYYY-MM-DD` for all day, or the UTC moment it starts, the same for everyone. A 10:00 event
+added by someone in India is `time: "08:30"` for someone in Dubai. `POST` and `PATCH /events` take
+`date` and `time` on the key's person's clock (a new day keeps the time, a new time keeps the day),
+and `from` and `to` are their days.
+
 Finishing a task (`status: done`, or `…/complete`) sets `completedAt` from the server's clock;
 moving it to any other status clears it. A repeating task finished with a due date gets one next
 occurrence (due moved on by the repeat, in the key's person's time zone), however many people

@@ -80,10 +80,10 @@ events, views, notifications, teams, bots).
 | `summarise_project`  | Counts, overdue, unassigned, next due, members and permissions, milestones   |
 | `list_members`       | People and bots                                                              |
 | `list_teams`         | Teams and who is on them                                                     |
-| `list_activity`      | Recent activity, workspace-wide or in a project                              |
+| `list_activity`      | Recent activity, workspace-wide or in a project (dates on your clock)        |
 | `list_notifications` | My inbox                                                                     |
 | `list_files`         | Files in a project or on a task                                              |
-| `list_events`        | Calendar events                                                              |
+| `list_events`        | Calendar events, with days and times on your clock                           |
 | `list_views`         | Saved views                                                                  |
 | `get_settings`       | Workspace, my profile, preferences, notification settings and favourites     |
 
@@ -131,7 +131,9 @@ Dates and times are on your clock in the workspace, both ways: your time zone (S
 time), else the workspace's, else UTC, as the server reports it (`timeZone` on `/me/preferences`;
 this computer's only with an older server that doesn't say): results say `2026-11-20`, or
 `2026-11-20 17:00` for a time of day, and `due`, `start` and milestone dates take the same (or `today`,
-`fri`, `+3d`, `fri 5pm`). The tracker stores times in UTC; the server converts.
+`fri`, `+3d`, `fri 5pm`). The tracker stores times in UTC; the server converts. What others did is
+on your clock too: a due someone in India set for 6:30 PM reads 5:00 PM in activity for someone in
+Dubai, and their 10:00 calendar event is at 08:30 (`manage_event` reads `date` and `time` on yours).
 
 Arguments are checked against each tool's `inputSchema` before it runs: a missing, unknown or
 mistyped one is an `isError` result naming it (`invalid_arguments: Missing required argument:
