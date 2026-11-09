@@ -77,7 +77,7 @@ export function prime(data, kept = []) {
   // made from what they saw then, so it's sent as their queue would have been had they stayed: a
   // field they changed is set again over the fresh data, as any edit made offline is. List and map
   // fields keep the `base` they were edited from, not the fresh value: the server then applies only
-  // this person's additions and removals (server/sync/merge.js), so nothing someone else added or
+  // this person's additions and removals (src/core/merge.js), so nothing someone else added or
   // removed since is undone (re-based on the fresh data, the old list would read as this person
   // removing what others added). The server may already have some of them (the page went while
   // they were on their way): a patch then sets the same values again, a merged field finds its
