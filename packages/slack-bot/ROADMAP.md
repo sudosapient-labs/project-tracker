@@ -80,12 +80,18 @@ reminders off`) and limits ("never nudge the same task twice in 2 days").
 
 ## Phase 4: charts
 
-- A `make_chart` tool: the agent builds a Vega-Lite spec from tracker data, and the bot renders
-  it to PNG server-side (`vega` + `@resvg/resvg-js`, both pure JS or WASM) and uploads it to the
-  thread with `files.uploadV2`. This needs the `files:write` scope.
-- A charts skill covering burn-down for a project or milestone, status breakdown, workload per
-  person, overdue trend, and throughput per week (from `completedAt`).
-- Charts in the weekly digest (phase 3).
+- **Native charts (started).** The agent's `show_card` tool draws Slack's own
+  `data_visualization` charts (pie, bar, line, area) and `data_table` tables in a card under the
+  reply, through json-render (see the README's "Cards"). That covers status breakdown and workload
+  per person today, with no image rendering, uploads or `files:write`. Slack's limits are 2 charts
+  per message, 20 points, 12 series or segments, 20-character labels and 50-character titles.
+- **What's left:** the data for the time-based charts: burn-down for a project or milestone,
+  overdue trend, and throughput per week (from `completedAt`). Each needs a tool that returns
+  counts per day or week, plus a charts skill covering when to use which chart.
+- **Images only if needed.** The earlier plan (a `make_chart` tool rendering Vega-Lite to PNG with
+  `vega` + `@resvg/resvg-js`, uploaded with `files.uploadV2`) is only worth it for charts Slack's
+  block can't draw, such as more than 20 points or annotations.
+- Charts in the weekly digest (phase 3), as cards.
 
 ## Phase 5: Sudopedia, the team's memory
 

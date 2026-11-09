@@ -10,7 +10,7 @@ export const esc = s =>
     .replace(/>/g, '&gt;');
 
 /* Whether `url` is on one of `hosts` ("*.slack.com" covers subdomains). */
-function onHost(url, hosts) {
+export function onHost(url, hosts) {
   try {
     const h = new URL(url).host;
     return hosts.some(x => (x.startsWith('*.') ? h.endsWith(x.slice(1)) : h === x));

@@ -14,10 +14,11 @@ import { mcpTools } from './mcp.js';
 import { directory } from './people.js';
 import { requestMessage } from './prompt.js';
 import { openStore } from './store.js';
+import { renderCard } from './slack/cards.js';
 
 const plainAction = ({ name, args }) => `${name.replace(/_/g, ' ')} ${JSON.stringify(args)}`;
 
-/* One conversation: send(text) → { text, pending, touched } after any confirmations. */
+/* One conversation: send(text) → { text, touched, card } after any confirmations. */
 export async function chatSession(config, { as, project = null, decide, log = console, fetch } = {}) {
   const api = createClient({ url: config.tracker.url, key: config.tracker.key, client: 'Slack', ...(fetch ? { fetch } : {}) });
   const dir = directory(api);
@@ -51,14 +52,16 @@ export async function chatSession(config, { as, project = null, decide, log = co
     let c = ctx();
     let out = await agent.run({ threadId, message, ctx: c });
     const touched = [...out.touched];
+    let card = out.card;
     while (out.pending.length) {
       const approve = await decide(out.pending);
       c = ctx();
       out = await agent.resume({ threadId, ids: out.pending.map(p => p.id), approve, ctx: c });
       if (out.stale) break;
       touched.push(...out.touched);
+      card = out.card || card;
     }
-    return { text: out.stale ? '' : out.text || '', touched: [...new Set(touched)] };
+    return { text: out.stale ? '' : out.text || '', touched: [...new Set(touched)], card: out.stale ? null : card };
   }
   return { requester, send, close: () => (store.close(), mcp.close()) };
 }
@@ -82,6 +85,13 @@ export async function runChat(config, { as, project, yes, no, message }) {
   const show = async text => {
     const r = await session.send(text);
     console.log(`\n${r.text}`);
+    // A card prints as the text Slack would fall back to.
+    if (r.card)
+      console.log(
+        `\n${renderCard(r.card)
+          .plain.map(b => b.text.text)
+          .join('\n\n')}`,
+      );
     if (r.touched.length) console.log(`\n(tasks: ${r.touched.join(', ')})`);
   };
   try {

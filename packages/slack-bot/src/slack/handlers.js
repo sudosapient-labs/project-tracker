@@ -16,6 +16,7 @@
 import { createClient } from '@sudosapient/client';
 import { EDIT, VIEW, isAdmin, level, shownHere, unmatchedText } from '../people.js';
 import { requestMessage } from '../prompt.js';
+import { renderCard } from './cards.js';
 import { confirmBlocks, createTaskModal, esc, loadingModal, messageModal, modalValues, mrkdwn, resolvedBlocks, statusName, taskCard } from './format.js';
 
 const seg = ref => encodeURIComponent(String(ref).trim());
@@ -106,7 +107,8 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
         channel,
         threadTs: ctx.slack.threadTs,
         messageTs: ts,
-        data: { pending: out.pending, titles, slack: ctx.slack },
+        // A card the agent made before stopping for Confirm is shown with the reply after it.
+        data: { pending: out.pending, titles, slack: ctx.slack, card: ctx.card || null },
       });
       return slack.chat.update({
         channel,
@@ -115,9 +117,31 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
         blocks: [...prefix, ...confirmBlocks(id, out.pending, requesterSlack, titles)],
       });
     }
-    const text = mrkdwn(out.text, { hosts: linkHosts() }) || (out.touched.length ? 'Done.' : 'I don’t have anything to add.');
-    const blocks = [...prefix, { type: 'section', text: { type: 'mrkdwn', text: text.slice(0, 2900) } }, ...(await cards(ctx.api, out.touched, ctx.slack))];
-    return slack.chat.update({ channel, ts, text: text.slice(0, 3000), blocks });
+    const card = out.card ? cardBlocks(out.card) : null;
+    const text = mrkdwn(out.text, { hosts: linkHosts() }) || (card ? '' : out.touched.length ? 'Done.' : 'I don’t have anything to add.');
+    const head = [...prefix, ...(text ? [{ type: 'section', text: { type: 'mrkdwn', text: text.slice(0, 2900) } }] : [])];
+    const tasks = await cards(ctx.api, out.touched, ctx.slack);
+    const notify = (text || card.text).slice(0, 3000);
+    if (card)
+      try {
+        return await slack.chat.update({ channel, ts, text: notify, blocks: [...head, ...card.blocks, ...tasks] });
+      } catch (e) {
+        // Slack refused the blocks (a block type this workspace doesn't have yet, say): the same
+        // card as plain text, so the answer isn't lost.
+        console.warn('Slack refused a card; posting it as text', e?.data?.error || e?.message);
+        return slack.chat.update({ channel, ts, text: notify, blocks: [...head, ...card.plain, ...tasks] });
+      }
+    return slack.chat.update({ channel, ts, text: notify, blocks: [...head, ...tasks] });
+  }
+
+  /* The agent's card as Block Kit, or null (and the reply goes out as text) if it can't be shown. */
+  function cardBlocks(spec) {
+    try {
+      return renderCard(spec, { hosts: linkHosts() });
+    } catch (e) {
+      console.warn('card not shown', e?.issues || e?.message);
+      return null;
+    }
   }
 
   const failure = e =>
@@ -203,7 +227,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
       blocks: [...prefix, { type: 'context', elements: [{ type: 'mrkdwn', text: WORKING }] }],
     });
     return serial(taken.thread_id.replace(/#\d+$/, ''), async () => {
-      const ctx = { api: trackerAs(who.member), dir, store, requester: who.member, slack: where, touched: [] };
+      const ctx = { api: trackerAs(who.member), dir, store, requester: who.member, slack: where, touched: [], card: taken.data.card || null };
       try {
         const out = await agent.resume({ threadId: taken.thread_id, ids: taken.interrupts, approve, ctx });
         if (out.stale)
