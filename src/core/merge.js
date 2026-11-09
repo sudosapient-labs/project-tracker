@@ -4,7 +4,8 @@
    with the value it started from (`base`); only its own additions, removals and changes relative to
    that base are applied to the value as it is now. So a stale write (an offline queue, a tab that
    hadn't caught up) can't undo what someone else did meanwhile: someone removed from a project by
-   one person can't be put back by another person's unrelated edit. */
+   one person can't be put back by another person's unrelated edit. The server merges what clients
+   send (server/sync/engine.js); the app merges an edit window's changes and an Undo the same way. */
 
 export const MERGED = { projects: ['members', 'perms', 'milestones'], tasks: ['subtasks', 'labels', 'deps'], comments: ['re'] };
 

@@ -11,6 +11,9 @@ import { D, PREFS_KEY, S, saveHooks, task } from '../core/store.js';
 import { CLIENT_ID, api } from '../core/api.js';
 import { toast } from '../ui/toast.js';
 import { render } from './render.js';
+/* List and map fields (MERGED) are sent with the value they were edited from, so the server applies
+   only this tab's changes to them: a stale edit can't undo someone else's. */
+import { MERGED, mergeField } from '../core/merge.js';
 
 export const COLLS = ['members', 'teams', 'projects', 'tasks', 'comments', 'activity', 'notifs', 'files', 'events', 'savedViews'];
 const DOCS = ['ws', 'projOrder', 'recentSearches', 'notifPrefs'];
@@ -41,13 +44,10 @@ const restoring = new Map();
 const gone = new Map();
 /* Records someone else changed while a change of ours to them was on its way (see settle). */
 const crossed = new Set();
-const hooks = { signedOut: () => {}, otherUser: () => {}, stillMe: () => true, resync: () => {} };
+const hooks = { signedOut: () => {}, otherUser: () => {}, stillMe: () => true, resync: () => {}, descConflict: () => false };
 export const onSync = h => Object.assign(hooks, h);
 
 const fields = o => new Map(Object.keys(o).map(k => [k, JSON.stringify(o[k])]));
-/* List and map fields sent with the value they were edited from, so the server applies only this
-   tab's changes to them (server/sync/merge.js): a stale edit can't undo someone else's. */
-const MERGED = { projects: ['members', 'perms', 'milestones'], tasks: ['subtasks', 'labels', 'deps'], comments: ['re'] }; // as server/sync/merge.js
 /* Projects I can't open come as stubs; give them the empty fields pages read, in the record and its
    shadow alike, so nothing is sent back for them. */
 const fill = (c, v) =>
@@ -181,7 +181,9 @@ export function collect(send = true) {
         const j = JSON.stringify(e[k]);
         if (prev.get(k) !== j) {
           set[k] = clone(e[k]);
-          if (MERGED[c]?.includes(k) && prev.has(k)) base[k] = JSON.parse(prev.get(k));
+          // A task's description goes with the one it was edited from too: the server refuses it
+          // if someone else's was saved meanwhile (desc_conflict), rather than replace theirs.
+          if ((MERGED[c]?.includes(k) || (c === 'tasks' && k === 'desc')) && prev.has(k)) base[k] = JSON.parse(prev.get(k));
           prev.set(k, j);
           n++;
         }
@@ -198,8 +200,9 @@ export function collect(send = true) {
       // whole, and a refused description mustn't take a new title with it.
       if ('desc' in set && kind(set) === 'mixed') {
         const { desc, ...rest } = set;
-        enqueue({ c, id: e.id, k: 'patch', v: { desc } });
-        enqueue({ c, id: e.id, k: 'patch', v: rest, ...b });
+        const { desc: from, ...lists } = base;
+        enqueue({ c, id: e.id, k: 'patch', v: { desc }, ...(from !== undefined ? { base: { desc: from } } : {}) });
+        enqueue({ c, id: e.id, k: 'patch', v: rest, ...(Object.keys(lists).length ? { base: lists } : {}) });
       } else enqueue({ c, id: e.id, k: 'patch', v: set, ...b });
     }
     for (const id of [...sh.keys()])
@@ -361,7 +364,9 @@ function settle(ops, results) {
   results.forEach((r, i) => {
     const op = ops[i];
     if (!op || (!r.ok && r.retry)) return;
-    if (!r.ok && !op.read) errs.push(r.error);
+    // A description refused because someone else's was saved meanwhile: the text is handed over
+    // to keep it and let the person choose, instead of only being reported.
+    if (!r.ok && !op.read && !(r.code === 'desc_conflict' && hooks.descConflict(op))) errs.push(r.error);
     land(op.c, op.id, r.v);
     changed = adopt(op.c, op.id, r.v) || changed;
   });
@@ -748,11 +753,27 @@ export function refresh() {
 
 /* ---------- undo that only rewinds what the action changed ---------- */
 /* Take before an action; the matching after-state is captured once the action has run. Restoring
-   puts back only the records that action touched, so other people's edits made in between stay. */
+   puts back only the records that action touched, and in each only the fields it changed, so other
+   people's edits made in between stay. */
 export function takeSnapshot() {
   const snap = { before: JSON.stringify(S.data), after: null };
   setTimeout(() => (snap.after = JSON.stringify(S.data)), 0);
   return snap;
+}
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+/* Put back in `e` the fields that went from `was` to `now`, each only while it still holds what the
+   action left there: a later change to that field (someone else's, or mine) stays. A list or map
+   gets back only the entries the action added, removed or changed. A flag the action added is turned
+   off rather than removed (the server keeps a field it's sent without). */
+function unchange(c, e, was, now) {
+  for (const k of new Set([...Object.keys(was), ...Object.keys(now)])) {
+    if (same(was[k], now[k])) continue;
+    if (MERGED[c]?.includes(k) && was[k] != null && now[k] != null) e[k] = mergeField(now[k], was[k], e[k]);
+    else if (!same(e[k], now[k])) continue;
+    else if (k in was) e[k] = was[k];
+    else if (typeof now[k] === 'boolean') e[k] = false;
+    else delete e[k];
+  }
 }
 export function restoreSnapshot(snap) {
   const before = JSON.parse(snap.before);
@@ -762,12 +783,14 @@ export function restoreSnapshot(snap) {
     const b = new Map((before[c] || []).map(e => [e.id, e]));
     const a = new Map((after[c] || []).map(e => [e.id, e]));
     for (const id of new Set([...b.keys(), ...a.keys()])) {
-      if (JSON.stringify(b.get(id)) === JSON.stringify(a.get(id))) continue;
+      if (same(b.get(id), a.get(id))) continue;
       const i = d[c].findIndex(e => e.id === id);
       if (!b.has(id)) {
         if (i >= 0) d[c].splice(i, 1);
-      } else if (i >= 0) d[c][i] = b.get(id);
-      else {
+      } else if (i >= 0) {
+        if (a.has(id)) unchange(c, d[c][i], b.get(id), a.get(id));
+        else d[c][i] = b.get(id);
+      } else {
         // Put it back where it was relative to its old neighbours.
         const pos = (before[c] || []).findIndex(e => e.id === id);
         d[c].splice(Math.min(pos, d[c].length), 0, b.get(id));

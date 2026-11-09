@@ -4,13 +4,14 @@
 import { $, $$, addD, dOff, esc, fmtDateTime, fmtTime, instant, iso, parse, parseTime, shiftD, today, uid, withDay, withTime } from '../core/utils.js';
 import { PR, PSTAT, RECUR_DAYS, ST } from '../core/constants.js';
 import { D, S, allTasks, canSee, commentsOf, logAct, me, mem, memName, proj, save, task, tasksOf, visibleProjects } from '../core/store.js';
-import { fileType, fsize, richHtml } from '../ui/helpers.js';
+import { descMark, fileType, fsize, richHtml } from '../ui/helpers.js';
 import { plainDescText, textToHtml } from '../core/rich-text.js';
 import { effectiveDark } from '../core/theme.js';
 import { mutate, toast } from '../ui/toast.js';
 import { post, upload } from '../core/api.js';
 import { autosize, focusKey, fxSet, go, render } from '../shell/render.js';
-import { applyRemote, commit, restoreSnapshot, retryNow, takeSnapshot } from '../shell/sync.js';
+import { applyRemote, commit, onSync, restoreSnapshot, retryNow, takeSnapshot } from '../shell/sync.js';
+import { MERGED, mergeField } from '../core/merge.js';
 import { enablePush } from './push.js';
 import { viewOf } from '../shell/view-engine.js';
 import { TEMPLATES, closeModal, openModal } from '../overlays/modals.js';
@@ -615,6 +616,10 @@ A.editTask = el => {
     recur: t.recur,
     more: false,
   };
+  // What the window opened with: saving sends only what was changed here (see submitTask), and the
+  // description it started from, to tell whether someone else changed it meanwhile.
+  S.ui.form.opened = JSON.parse(JSON.stringify(S.ui.form));
+  S.ui.form.descFrom = t.desc;
   S.ui.errors = {};
   openModal({ type: 'task', edit: t.id });
 };
@@ -703,17 +708,27 @@ A.submitTask = () => {
   };
   if (m.edit) {
     const t = task(m.edit);
+    // Only what was changed in this window since it opened: a field someone else changed meanwhile
+    // (a due date set in the task view) keeps their value. Labels and subtasks take only the
+    // additions, removals and changes made here, onto the task as it is now.
+    const patch = {};
+    for (const k of Object.keys(base))
+      if (JSON.stringify(base[k]) !== JSON.stringify(f.opened[k])) patch[k] = MERGED.tasks.includes(k) ? mergeField(f.opened[k], base[k], t[k]) : base[k];
+    // A description someone else saved after the window opened isn't written over: they choose.
+    const desc = f.descOrig != null && f.desc !== f.descOrig ? textToHtml(f.desc) : null;
+    const clash = desc != null && t.desc !== f.descFrom;
     if (
       !mutate(() => {
-        applyPatch(t, base);
-        if (f.descOrig != null && f.desc !== f.descOrig) t.desc = textToHtml(f.desc);
+        applyPatch(t, patch);
+        if (desc != null && !clash) t.desc = desc;
       })
     )
       return;
     attach(t);
     S.ui.modals.pop();
     render();
-    toast('Changes saved');
+    if (clash) descConflict(t, desc);
+    else toast('Changes saved');
     return;
   }
   let t;
@@ -1000,21 +1015,67 @@ document.addEventListener('mousedown', e => {
     else toast('Select a URL starting with https:// to turn it into a link', { kind: 'info' });
   } else document.execCommand(cmd, false, arg ? `<${arg}>` : null);
   const ed = $('#d-desc');
-  if (ed) {
-    const t = task(ed.dataset.rte);
-    t.desc = richHtml(ed.innerHTML);
-    save();
-  }
+  if (ed) writeDesc(ed);
 });
 document.addEventListener('input', e => {
   const ed = e.target.closest?.('[data-rte]');
-  if (!ed) return;
+  if (ed) writeDesc(ed);
+});
+/* Save the editor's text as the task's description, unless someone else's description arrived
+   since the editor last showed or saved one (`data-from`, see drawer.js): it isn't shown while the
+   editor has focus, so writing would silently replace it. Then the person chooses instead. */
+function writeDesc(ed) {
   const t = task(ed.dataset.rte);
-  if (t) {
-    t.desc = richHtml(ed.innerHTML);
-    t.updated = Date.now();
-    save();
+  if (!t) return;
+  const html = richHtml(ed.innerHTML);
+  if (ed.dataset.from !== descMark(t.desc)) return descConflict(t, html);
+  t.desc = html;
+  t.updated = Date.now();
+  ed.dataset.from = descMark(html);
+  save();
+}
+/* Someone else saved a description of `t` while this person was editing theirs (`mine`, not saved).
+   Both are shown; they keep theirs (Cancel) or write `mine` over it, knowingly. One dialog per task:
+   a later clash updates it with the newer text. */
+export function descConflict(t, mine) {
+  const open = S.ui.modals.find(x => x.descConflict === t.id);
+  const box = html =>
+    `<div class="rte-body" style="margin-top:6px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;max-height:160px;overflow:auto">${richHtml(html) || '<i>Empty</i>'}</div>`;
+  const body = () =>
+    `While you were editing <b>${esc(t.title)}</b>, someone else saved a new description. Yours isn't saved.
+    <span style="display:block;margin-top:10px"><b>Theirs</b>${box(t.desc)}</span><span style="display:block;margin-top:10px" tabindex="-1" autofocus><b>Yours</b>${box(mine)}</span>`;
+  if (open) {
+    Object.assign(open, { body: body(), mine });
+    return render();
   }
+  // Out of the editor, which shows theirs once re-rendered; the dialog takes focus on its text, not
+  // a button, so keys still being typed can't choose for them.
+  if (document.activeElement?.closest?.('[data-rte]')) document.activeElement.blur();
+  confirmDlg({
+    title: 'Someone else changed this description',
+    body: body(),
+    descConflict: t.id,
+    mine,
+    icon: 'git-merge',
+    ok: 'Use mine',
+    cancel: 'Keep theirs',
+    run() {
+      const x = task(t.id);
+      if (!x) return;
+      mutate(() => {
+        x.desc = this.mine;
+        x.updated = Date.now();
+      });
+    },
+  });
+}
+// The server refused a description written over one that changed meanwhile (a change crossing
+// ours in flight): the text is kept and the person chooses, once the server's version is in.
+onSync({
+  descConflict(op) {
+    setTimeout(() => task(op.id) && descConflict(task(op.id), op.v.desc), 0);
+    return true;
+  },
 });
 // Pasted HTML is cut down to what the editor itself produces before it reaches the page.
 document.addEventListener('paste', e => {
@@ -1305,6 +1366,8 @@ A.editProject = el => {
   const p = proj(el.dataset.id);
   S.ui.pop = null;
   S.ui.pform = { name: p.name, desc: p.desc, icon: p.icon, color: p.color, team: p.team, lead: p.lead, due: p.due, tmpl: 'blank' };
+  // What the window opened with: saving sends only what was changed here (see submitProject).
+  S.ui.pform.opened = { ...S.ui.pform };
   S.ui.errors = {};
   openModal({ type: 'project', edit: p.id });
 };
@@ -1388,21 +1451,13 @@ A.submitProject = () => {
   }
   if (m.edit) {
     const p = proj(m.edit);
-    if (
-      mutate(() =>
-        Object.assign(p, {
-          name: f.name,
-          desc: f.desc,
-          icon: f.icon,
-          color: f.color,
-          team: f.team,
-          lead: f.lead,
-          due: f.due,
-          // A new lead joins the project; leaving it alone doesn't touch the member list.
-          members: f.lead === p.lead ? p.members : [...new Set([...p.members, f.lead])],
-        }),
-      )
-    ) {
+    // Only what was changed in this window since it opened, so someone else's change saved
+    // meanwhile keeps their value.
+    const patch = {};
+    for (const k of ['name', 'desc', 'icon', 'color', 'team', 'lead', 'due']) if (f[k] !== f.opened[k]) patch[k] = f[k];
+    // A new lead joins the project (added to the members as they are now).
+    if ('lead' in patch && !p.members.includes(f.lead)) patch.members = [...p.members, f.lead];
+    if (mutate(() => Object.assign(p, patch))) {
       S.ui.modals.pop();
       render();
       toast('Project updated');
@@ -1470,8 +1525,8 @@ A.delProject = el => {
     ok: 'Delete project',
     danger: true,
     typeName: p.name,
+    // No Undo: the server keeps no copy of a deleted project or its tasks and files to restore.
     run: () => {
-      const snap = snapshot();
       if (
         mutate(() => {
           const ids = tasksOf(p.id).map(t => t.id);
@@ -1485,7 +1540,7 @@ A.delProject = el => {
         })
       ) {
         if (S.ui.route === 'project' && S.ui.params.id === p.id) go('projects');
-        toast(`Deleted ${p.name}`, { action: 'Undo', onAction: () => restore(snap) });
+        toast(`Deleted ${p.name}`);
       }
     },
   });
@@ -1701,12 +1756,12 @@ A.removeMember = el => {
   const n = allTasks().filter(t => t.assignee === m.id && t.status !== 'done').length;
   confirmDlg({
     title: `Remove ${m.name}?`,
-    body: `${esc(m.name)} will lose access to ${esc(D().ws.name)} immediately.${n ? ` Their <b>${n} open task${n > 1 ? 's' : ''}</b> will become unassigned.` : ''}`,
+    body: `${esc(m.name)} will lose access to ${esc(D().ws.name)} immediately.${n ? ` Their <b>${n} open task${n > 1 ? 's' : ''}</b> will become unassigned.` : ''} This can't be undone: to bring them back, invite them again.`,
     ok: 'Remove member',
     danger: true,
     icon: 'user-minus',
+    // No Undo: their account and sessions end on the server, which can't put them back.
     run: () => {
-      const snap = snapshot();
       if (
         mutate(() => {
           D().members = D().members.filter(x => x !== m);
@@ -1717,7 +1772,7 @@ A.removeMember = el => {
         })
       ) {
         if (S.ui.route === 'member') go('members');
-        toast(`Removed ${m.name}`, { action: 'Undo', onAction: () => restore(snap) });
+        toast(`Removed ${m.name}`);
       }
     },
   });
@@ -1775,18 +1830,18 @@ A.delFile = el => {
   S.ui.pop = null;
   confirmDlg({
     title: 'Delete file?',
-    body: `<b>${esc(f.name)}</b> will be removed from the project${f.task ? ' and its task' : ''}.`,
+    body: `<b>${esc(f.name)}</b> will be removed from the project${f.task ? ' and its task' : ''}. This can't be undone.`,
     ok: 'Delete file',
     danger: true,
+    // No Undo: the server deletes the file's contents, so there is nothing to put back.
     run: () => {
-      const snap = snapshot();
       if (
         mutate(() => {
           D().files = D().files.filter(x => x !== f);
           if (f.task && task(f.task)) task(f.task).attachments = task(f.task).attachments.filter(a => a.name !== f.name);
         })
       )
-        toast(`Deleted ${f.name}`, { action: 'Undo', onAction: () => restore(snap) });
+        toast(`Deleted ${f.name}`);
     },
   });
 };

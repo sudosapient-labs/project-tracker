@@ -4,7 +4,7 @@
 import { MOD, ago, diffD, esc, fmtDateTime, fmtTime, isPast, parse, relDate, today } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { D, S, canEdit, commentsOf, isOver, memName, pColor, people, proj, roAttr, task } from '../core/store.js';
-import { av, botBadge, filePrev, fileType, fmtComment, ftOf, lbl, progBar, richHtml } from '../ui/helpers.js';
+import { av, botBadge, descMark, filePrev, fileType, fmtComment, ftOf, lbl, progBar, richHtml } from '../ui/helpers.js';
 import { fxc } from '../shell/render.js';
 import { cellAssignee, cellDue, cellPrio, cellProject, cellStatus } from '../components/task-list.js';
 import { modalHtml } from './modals.js';
@@ -91,7 +91,7 @@ export function drawerHtml(t) {
             .map(([c, i, n]) => `<button class="ibtn ibtn-xs" data-cmd="${c}" data-tip="${n}" aria-label="${n}">${ic(i, 13)}</button>`)
             .join('')}
         </div></div>
-        <div class="rte"><div class="rte-body" id="d-desc" contenteditable="${!ro}" data-rte="${t.id}" data-ph="Add a description…" role="textbox" aria-multiline="true" aria-labelledby="d-desc-l">${richHtml(t.desc)}</div></div>
+        <div class="rte"><div class="rte-body" id="d-desc" contenteditable="${!ro}" data-rte="${t.id}" data-from="${descMark(t.desc)}" data-ph="Add a description…" role="textbox" aria-multiline="true" aria-labelledby="d-desc-l">${richHtml(t.desc)}</div></div>
       </div>
 
       <div class="dsec"><div class="dsec-h"><h3>Subtasks</h3><span class="cnt num">${sd}/${t.subtasks.length}</span>${t.subtasks.length ? `<span style="width:90px;display:flex">${progBar(Math.round((sd / t.subtasks.length) * 100), sd === t.subtasks.length ? 'green' : '')}</span>` : ''}</div>

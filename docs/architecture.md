@@ -23,7 +23,7 @@ proxies `/api` to the API on :8787.
 - **Lists and maps merge.** A project's `members`, `perms` and `milestones`, a task's `subtasks`,
   `labels` and `deps`, and a comment's reactions (`re`) are whole values, so the client sends each one with the value it edited from (`base`) and
   the server applies only that client's additions, removals and changes onto the current value
-  (`server/sync/merge.js`). A stale write (an offline queue, a tab behind) can't undo someone else's
+  (`src/core/merge.js`). A stale write (an offline queue, a tab behind) can't undo someone else's
   change: a person taken off a project stays off. Entries are matched by id (milestones by name),
   and reactions emoji by emoji, so two people reacting at once both count. A patch without `base` (the REST API, which
   reads and writes in one request) replaces the whole value.
@@ -35,12 +35,20 @@ proxies `/api` to the API on :8787.
   the original names it (`nextId`) and it names the original (`repeatOf`, with a fingerprint of how
   the server made it). Reopening removes it only if it still matches that fingerprint (nobody has
   worked on it, whatever its timestamps say) and has no comments; otherwise it stays linked.
-- **Undo.** Undo puts back only the records the action changed. A record it deleted is re-sent
+- **Edit windows and descriptions.** The task, project and team edit windows save only what was
+  changed in them since they opened (lists merged onto the current value), so a field someone else
+  changed meanwhile keeps their value. A task's description is sent with the one it was edited from
+  (`base.desc`); when someone else's was saved meanwhile, the server refuses it (`desc_conflict`)
+  and the app, which also notices one arriving while the editor has focus, keeps the person's text
+  and asks whether to keep theirs or write it over.
+- **Undo.** Undo puts back only the records the action changed, and in each only the fields it
+  changed that nobody has changed since (lists and maps merged), so later edits stay. A record it deleted is re-sent
   with `restore: true`; the server then restores its own copy, kept in `recent_deletes` for 10
   minutes and only for the person who deleted it, so a comment keeps its author, time and
   reactions, a task its key, and nobody is notified again. When there is no such copy (too late,
-  or someone else deleted it) the Undo is refused (`410`); records of other kinds (projects,
-  files, events, …) are created like anything new.
+  or someone else deleted it) the Undo is refused (`410`); records of other kinds (teams,
+  events, …) are created like anything new. Deleting a project or a file and removing someone from
+  the workspace offer no Undo: the server keeps nothing to restore them from.
 - **Live updates.** Other people's changes arrive over Server-Sent Events (`GET /api/events`) and are
   merged in, filtered to what each person can see. A tab's own changes aren't echoed back to it
   (`x-client-id`). When the stream drops, the client reconnects and bootstraps again.
@@ -179,7 +187,7 @@ they only see its work once they add themselves.
 Dependencies point downward:
 
 1. `core/` depends on nothing else in the app. The server imports parts of it (`access.js`,
-   `rich-text.js`, `constants.js`, `file-types.js`), which is why the Docker image includes `src/core`.
+   `rich-text.js`, `constants.js`, `file-types.js`, `merge.js`), which is why the Docker image includes `src/core`.
 2. `ui/`, `shell/`, `components/`, `pages/`, `views/`, `overlays/` and `features/` render HTML from state.
 3. `actions/` change state and re-render. Each action module registers its handlers on the shared
    action table (`A`) when it loads, so `main.js` imports them after `actions/actions.js`.
