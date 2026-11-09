@@ -1,9 +1,11 @@
 /* Whose clock (src/clock.js): each request is read on the clock of the person asking, never one clock
    for the team. Ada saved India's zone and Bea saved Dubai's (like Siddharth): "5pm" is 5 PM for each
-   of them. Without a saved zone, the Slack profile's; without either, the workspace's. A Confirm
+   of them. Without a saved zone, the workspace's, as the tracker uses for their reminders and
+   digest; the Slack profile's only when the tracker doesn't say (an older server). A Confirm
    pressed later, even after a restart, uses the clock the change was asked on. Cards carry Slack date
    tokens, so everyone in the channel sees their own time. */
 import { describe, expect, it, vi } from 'vitest';
+import { createClient } from '@sudosapient/client';
 import { apiKey, keyClient } from '../../../test/server/helpers.js';
 import { PerPerson, SLACK_USERS, call, fakeSlack, harness, saveZone, tracker, workspaceZone } from './helpers.js';
 
@@ -98,10 +100,11 @@ describe('each person’s own clock', () => {
     };
     // Bea saved Dubai.
     expect(await historyFor('UBEA')).toMatch(/changed due date of to Nov 10, 5:00 PM"$/);
-    // Like Siddharth: nothing saved, Dubai only on his Slack profile.
+    // Like Siddharth: nothing saved, Dubai only on his Slack profile. The tracker reads him on the
+    // workspace's clock (India), so the bot does too.
     await saveZone(w, 'bea', '');
     const dubaiOnSlack = fakeSlack({ users: { ...SLACK_USERS, UBEA: { ...SLACK_USERS.UBEA, tz: 'Asia/Dubai' } } });
-    expect(await historyFor('UBEA', dubaiOnSlack)).toMatch(/changed due date of to Nov 10, 5:00 PM"$/);
+    expect(await historyFor('UBEA', dubaiOnSlack)).toMatch(/changed due date of to Nov 10, 6:30 PM"$/);
     // Ada, in India, reads her own words.
     expect(await historyFor('UADA')).toMatch(/changed due date of to Nov 10, 6:30 PM"$/);
   });
@@ -127,41 +130,92 @@ describe('each person’s own clock', () => {
   });
 });
 
+/* A tracker from before Members said their `timeZone`. */
+function olderTracker(w) {
+  const fetch = async (url, init) => {
+    const r = await w.fetch(url, init);
+    if (!/\/members\b/.test(String(url)) || !r.ok) return r;
+    const body = JSON.stringify(await r.json(), (k, v) => (k === 'timeZone' || k === 'timeZoneSource' ? undefined : v));
+    return new Response(body, { status: r.status, headers: r.headers });
+  };
+  return { ...w, fetch, api: createClient({ url: 'http://app.test', key: w.token, client: 'Slack', fetch }) };
+}
+
 describe('without a saved zone', () => {
-  it('uses the Slack profile’s zone, else the workspace’s; a saved zone beats both', async () => {
+  it('uses the workspace’s, as the tracker does for their reminders, even with another on their Slack profile; a saved zone beats it', async () => {
     const w = await tracker();
     await workspaceZone(w, 'Asia/Kolkata');
     const t = await w.api.post('/tasks', { project: 'WEB', title: 'Whose 5pm' });
     const set = () => [call('update_task', { key: t.key, due: '2026-11-10 17:00' })];
+    const dubaiOnSlack = () => fakeSlack({ users: { ...SLACK_USERS, UBEA: { ...SLACK_USERS.UBEA, tz: 'Asia/Dubai' } } });
 
-    // Bea saved nothing; her Slack profile says Dubai.
-    const dubaiOnSlack = fakeSlack({ users: { ...SLACK_USERS, UBEA: { ...SLACK_USERS.UBEA, tz: 'Asia/Dubai' } } });
+    // Bea saved nothing; her Slack profile says Dubai. The tracker reads her on India's clock.
+    expect((await keyClient(w.t.app, await apiKey(w.bea)).get('/me/preferences')).body).toMatchObject({
+      timeZone: 'Asia/Kolkata',
+      timeZoneSource: 'workspace',
+    });
     let model = new PerPerson(set);
-    let h = await harness(w, { confirm: 'none', model, slack: dubaiOnSlack });
+    let h = await harness(w, { confirm: 'none', model, slack: dubaiOnSlack() });
     await mention(h, 'UBEA', '6.1');
-    await h.handlers.idle();
-    expect((await w.api.get(`/tasks/${t.key}`)).due).toBe(DUBAI);
-    expect(model.seen[0]).toContain("on Bea's clock (Asia/Dubai)");
-
-    // Neither: the workspace's (India).
-    model = new PerPerson(set);
-    h = await harness(w, { confirm: 'none', model });
-    await mention(h, 'UBEA', '7.1');
     await h.handlers.idle();
     expect((await w.api.get(`/tasks/${t.key}`)).due).toBe(INDIA);
     expect(model.seen[0]).toContain("on Bea's clock (Asia/Kolkata)");
 
-    // Her own saved zone wins over Slack's (and the workspace's).
+    // Her own saved zone wins.
     await saveZone(w, 'bea', 'Europe/London');
     model = new PerPerson(set);
-    h = await harness(w, { confirm: 'none', model, slack: fakeSlack({ users: { ...SLACK_USERS, UBEA: { ...SLACK_USERS.UBEA, tz: 'Asia/Dubai' } } }) });
+    h = await harness(w, { confirm: 'none', model, slack: dubaiOnSlack() });
     await mention(h, 'UBEA', '8.1');
     await h.handlers.idle();
     expect((await w.api.get(`/tasks/${t.key}`)).due).toBe('2026-11-10T17:00:00.000Z');
   });
 
-  it('a Slack profile zone that changes is used within minutes, not fetched on every request', async () => {
+  it('with no workspace zone either, UTC, as the tracker: not the Slack profile’s or SLACK_BOT_TIMEZONE', async () => {
     const w = await tracker();
+    const t = await w.api.post('/tasks', { project: 'WEB', title: 'Whose 5pm' });
+    const model = new PerPerson(() => [call('update_task', { key: t.key, due: '2026-11-10 17:00' })]);
+    const slack = fakeSlack({ users: { ...SLACK_USERS, UBEA: { ...SLACK_USERS.UBEA, tz: 'Asia/Dubai' } } });
+    const h = await harness(w, { confirm: 'none', model, slack, env: { SLACK_BOT_TIMEZONE: 'Asia/Tokyo' } });
+    await mention(h, 'UBEA', '6.2');
+    await h.handlers.idle();
+    expect(model.seen[0]).toContain("on Bea's clock (UTC)");
+    expect((await w.api.get(`/tasks/${t.key}`)).due).toBe('2026-11-10T17:00:00.000Z');
+  });
+
+  it('only when the tracker doesn’t say: the Slack profile’s, else SLACK_BOT_TIMEZONE', async () => {
+    const w = await tracker();
+    await workspaceZone(w, 'Asia/Kolkata');
+    const old = olderTracker(w);
+    const t = await w.api.post('/tasks', { project: 'WEB', title: 'Whose 5pm' });
+    const set = () => [call('update_task', { key: t.key, due: '2026-11-10 17:00' })];
+
+    let model = new PerPerson(set);
+    let h = await harness(old, { confirm: 'none', model, slack: fakeSlack({ users: { ...SLACK_USERS, UBEA: { ...SLACK_USERS.UBEA, tz: 'Asia/Dubai' } } }) });
+    await mention(h, 'UBEA', '7.1');
+    await h.handlers.idle();
+    expect(model.seen[0]).toContain("on Bea's clock (Asia/Dubai)");
+    expect((await w.api.get(`/tasks/${t.key}`)).due).toBe(DUBAI);
+
+    model = new PerPerson(set);
+    h = await harness(old, { confirm: 'none', model, env: { SLACK_BOT_TIMEZONE: 'Asia/Kolkata' } });
+    await mention(h, 'UBEA', '7.2');
+    await h.handlers.idle();
+    expect(model.seen[0]).toContain("on Bea's clock (Asia/Kolkata)");
+    expect((await w.api.get(`/tasks/${t.key}`)).due).toBe(INDIA);
+  });
+
+  it('doesn’t ask Slack for a profile zone the tracker already gives', async () => {
+    const w = await tracker();
+    const slack = fakeSlack({ users: { ...SLACK_USERS, UBEA: { ...SLACK_USERS.UBEA, tz: 'Asia/Dubai' } } });
+    const h = await harness(w, { model: new PerPerson(() => []), slack });
+    await mention(h, 'UBEA', '9.0');
+    await h.handlers.idle();
+    // Once, to match her email to a member; not again for her zone.
+    expect(h.slack.of('users.info').filter(a => a.user === 'UBEA')).toHaveLength(1);
+  });
+
+  it('a Slack profile zone that changes is used within minutes, not fetched on every request', async () => {
+    const w = olderTracker(await tracker());
     const users = { ...SLACK_USERS, UBEA: { ...SLACK_USERS.UBEA, tz: 'Asia/Dubai' } };
     const slack = fakeSlack({ users });
     const model = new PerPerson(() => []);

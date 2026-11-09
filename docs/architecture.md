@@ -122,8 +122,9 @@ server doesn't say. What the API words or reads as a day for the caller (activit
 `sort=due`, "today") is on the key's person's clock, unless a client acting for someone else sends
 that person's zone in the `Sudo-Time-Zone` header, for that request only (`clockOf` in
 `server/api/v1.js`, [docs/api.md](api.md)); notifications, reminders and repeats never take it.
-The Slack bot reads each request on the asker's clock: their saved zone, else their Slack profile's,
-else the tracker's for them (`packages/slack-bot/src/clock.js`), and sends it as `Sudo-Time-Zone`,
+The Slack bot reads each request on the asker's clock, in the same order (their Member's `timeZone`;
+their Slack profile's only from a server too old to say; `packages/slack-bot/src/clock.js`), and
+sends it as `Sudo-Time-Zone`,
 so history it reads back is worded on that clock too; timed dues in channel messages are Slack date
 tokens, so each reader sees their own time. What the model reads and writes can't hold a token, so
 there a timed due names its zone (`label(v, tz, { zone: true })`: `2026-11-20 17:00 GMT+4`).

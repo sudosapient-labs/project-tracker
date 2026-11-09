@@ -217,10 +217,12 @@ Slack (Socket Mode / HTTP)
   that has no result.
 - **Whose clock** ([`src/clock.js`](src/clock.js)). Every request is read on the clock of the person
   asking, never one clock for the team: "Friday 5pm" from someone in Dubai is 5 PM in Dubai. It's
-  their zone saved in the tracker (a Member's `timeZone` when `timeZoneSource` is `person`), else
-  their Slack profile's, else the tracker's for them (the workspace's, else UTC), else
-  `SLACK_BOT_TIMEZONE`. It's resolved once per request (members are cached for a minute, Slack
-  profiles for five, so a changed zone is used within minutes) and used for "today", the due times
+  the one the tracker uses for them, so the bot and their reminders, digest and notifications agree:
+  their zone saved in the tracker, else the workspace's, else UTC (their Member's `timeZone`,
+  whatever its `timeZoneSource`). Only when the tracker doesn't say (an older server) is it their
+  Slack profile's, else `SLACK_BOT_TIMEZONE`. It's resolved once per request (members are cached
+  for a minute, Slack profiles for five, so a changed zone is used within minutes) and used for
+  "today", the due times
   the model sends and reads, the "Today is …" line of the request, `/sudo my`, the create modal
   (the time picker shows the zone), and for a task card button the clicker's. Each request gets its
   own tracker client on that zone, so people asking at the same time never share one; it sends the
@@ -259,7 +261,7 @@ Slack (Socket Mode / HTTP)
 `pnpm test` from the repo root runs them with the other API tests: a real tracker on an in-memory
 database, a fake Slack Web API, and LangChain's scripted `FakeToolCallingModel`, so they cost
 nothing and need no keys. They cover mentions, the requester's access, each person's clock (India
-and Dubai at once, the Slack profile's and the workspace's zone), Confirm/Cancel (including
+and Dubai at once, the workspace's zone, the Slack profile's with an older tracker), Confirm/Cancel (including
 across a restart), task cards, reply cards (spec → Block Kit, escaping, what a card can't have,
 Slack's limits, the plain-text fallback), `/sudo`, the modal, previews, and MCP tools loaded from the tracker's
 own `/api/mcp` over HTTP.

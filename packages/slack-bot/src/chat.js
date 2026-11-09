@@ -6,8 +6,8 @@
    the bot's key, so they can already act as the bot; `--as` only narrows what it does to what that
    person could do. Changes that would wait for Confirm in Slack are asked about here (y/N), or
    decided up front with --yes / --no. Conversations live in memory and end with the process.
-   Dates are on the requester's clock (clock.js: their saved zone, else the tracker's for them);
-   there's no Slack profile here, and nothing renders Slack's date tokens. */
+   Dates are on the requester's clock (clock.js: the tracker's for them, as in Slack); there's no
+   Slack profile here, and nothing renders Slack's date tokens. */
 import readline from 'node:readline/promises';
 import { MemorySaver } from '@langchain/langgraph';
 import { trackerClient } from './tracker.js';

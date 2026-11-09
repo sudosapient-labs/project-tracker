@@ -17,8 +17,8 @@ import { SLACK_USERS, fakeSlack, harness, tracker } from '../helpers.js';
 const config = loadConfig();
 const model = () => chatModel(config.model);
 
-/* Days on the clock the bot reads Slack user `user` on (src/clock.js: their tracker zone, else their
-   Slack profile's, else the tracker's for them, else SLACK_BOT_TIMEZONE as harness() sets it), so
+/* Days on the clock the bot reads Slack user `user` on (src/clock.js: the tracker's for them, else
+   their Slack profile's, else SLACK_BOT_TIMEZONE as harness() sets it), so
    what a case expects is the day the bot means, even near midnight. Each is a 'YYYY-MM-DD'. */
 async function daysFor(w, user = 'UADA') {
   const u = SLACK_USERS[user];
