@@ -75,3 +75,16 @@ test('API keys show the day they were made and expire on the reader’s clock', 
   await expect(row).toContainText('Expires Feb 8, 2027');
   expect(await errors()).toEqual([]);
 });
+
+test('projects sort by due as moments on the reader’s clock', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signIn(page, MARY);
+  await expect(page.locator('.side')).toBeVisible();
+  await page.goto('/#projects');
+  await page.locator('[data-in="projSort"]').selectOption('due');
+  const names = await page.locator('.page [data-r="project"][data-id]').allInnerTexts();
+  const order = ['Kitty Hawk', 'Mid Atlantic'].map(n => names.findIndex(t => t.includes(n)));
+  expect(order.every(i => i >= 0)).toBe(true);
+  expect(order[0]).toBeLessThan(order[1]);
+  expect(await errors()).toEqual([]);
+});
