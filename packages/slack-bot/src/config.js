@@ -1,6 +1,7 @@
 /* Environment → config for Sudo Tracker. Every variable is listed in the README. Secrets (Slack
    tokens, the tracker bot key, the model provider's key) come only from the environment. */
 import path from 'node:path';
+import { zone } from './clock.js';
 
 const bool = (v, d = false) => (v == null || v === '' ? d : /^(1|true|yes|on)$/i.test(String(v)));
 const list = v =>
@@ -23,6 +24,9 @@ export function loadConfig(env = process.env) {
   const dataDir = env.SLACK_BOT_DATA_DIR || path.resolve('data');
   const confirm = env.SLACK_BOT_CONFIRM || 'edits';
   if (!CONFIRM_POLICIES[confirm]) throw new Error(`SLACK_BOT_CONFIRM is one of ${Object.keys(CONFIRM_POLICIES).join(', ')}.`);
+  // Only the last fallback for whose clock (clock.js): each person's own zone comes first.
+  const timezone = env.SLACK_BOT_TIMEZONE ? zone(env.SLACK_BOT_TIMEZONE) : 'UTC';
+  if (!timezone) throw new Error(`SLACK_BOT_TIMEZONE must be an IANA time zone, like Asia/Kolkata (got "${env.SLACK_BOT_TIMEZONE}").`);
   let mcpServers = {};
   if (env.SLACK_BOT_MCP_SERVERS) {
     try {
@@ -63,7 +67,7 @@ export function loadConfig(env = process.env) {
     // Read-only knowledge sources over MCP (Sudopedia first). Name → { url, headers?, tools? }.
     mcpServers,
     confirm,
-    timezone: env.SLACK_BOT_TIMEZONE || 'Asia/Kolkata',
+    timezone,
     // Tracker task links (APP_URL/#task/WEB-12) are unfurled only for these hosts; default: SUDO_URL's.
     unfurlHosts: list(env.SLACK_BOT_UNFURL_HOSTS),
     db: path.join(dataDir, 'slack-bot.db'),
