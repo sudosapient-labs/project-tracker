@@ -44,7 +44,7 @@ default. Plans for what comes next: [ROADMAP.md](ROADMAP.md).
   Admin can run `/sudo link @person their-tracker-email`. It never links to an Owner or Admin, to
   yourself, or to a member another Slack account already maps to, so it can't be used to take over
   someone's identity. The person is told, and the link stops working if the admin who made it is
-  no longer one.
+  no longer one, or if the linked member becomes an Owner or Admin.
 - **Each person has their own conversation.** In a channel thread, every person who mentions the bot
   has a separate conversation, so nobody inherits what it looked up for someone else; a DM has one
   per day, and DM threads their own.
@@ -219,6 +219,12 @@ Slack (Socket Mode / HTTP)
   tracker call after 20 seconds. Slack redeliveries are recognised and
   handled once. Creating a task uses an idempotency key, so a replayed tool call can't create it
   twice.
+- **Restarts.** On shutdown the bot waits up to 10 seconds for runs already going. Whatever a
+  restart still cuts off is told on the next start, never run again (a write may already have
+  happened): a reply left at "Working on it…" says the bot restarted and to ask again; a Confirm
+  the agent hadn't started on gets its buttons back (nothing was changed); one it had started on
+  says it can't tell whether the change went through, to check first; a Cancel says it was
+  cancelled.
 
 ## Tests
 

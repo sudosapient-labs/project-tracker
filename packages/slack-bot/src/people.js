@@ -92,9 +92,11 @@ export function people({ slack, store, dir, now = () => Date.now() }) {
       const saved = store.person(slackUser);
       if (saved?.member_id && (saved.manual || now() - saved.checked_at < RECHECK)) {
         const member = await dir.member(saved.member_id);
-        // A link made by hand holds only while the admin who made it still is one.
+        // A link made by hand holds only while the admin who made it still is one, and while the
+        // linked member isn't an Owner or Admin: `link` refuses those, and a member promoted since
+        // must not be reachable through a link either.
         const linker = saved.manual ? await dir.member(saved.linked_by) : null;
-        const linkOk = !saved.manual || (linker && linker.status === 'active' && isAdmin(linker));
+        const linkOk = !saved.manual || (linker && linker.status === 'active' && isAdmin(linker) && !isAdmin(member));
         if (member && member.status === 'active' && member.kind !== 'bot' && linkOk) return { member };
         store.forgetPerson(slackUser);
       }

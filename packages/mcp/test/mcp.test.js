@@ -337,6 +337,15 @@ describe('MCP over HTTP without the SDK', () => {
     expect(via).toEqual(['MCP', 'Клод']);
   });
 
+  it('answers a message that isn’t an object with Invalid Request, and still answers the rest of its batch', async () => {
+    const { t, ada } = await workspace();
+    const token = await apiKey(ada);
+    const r = await rpc(t, token, [5, true, 'x', { jsonrpc: '2.0', id: 1, method: 'ping' }]);
+    expect(r.status).toBe(200);
+    const invalid = { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request' } };
+    expect(await r.json()).toEqual([invalid, invalid, invalid, { jsonrpc: '2.0', id: 1, result: {} }]);
+  });
+
   it('limits protocol messages per person too, counting each message in a batch', async () => {
     const { t, ada } = await workspace({ DISABLE_RATE_LIMIT: 'false', API_RATE_LIMIT: '4' });
     const token = await apiKey(ada);
@@ -392,6 +401,23 @@ describe('MCP over stdio (sudo-mcp)', () => {
     expect(task.map(a => [a.verb, a.via])).toEqual([
       ['completed', 'Claude'],
       ['created', 'Claude'],
+    ]);
+  });
+
+  it('a malformed message gets an error and doesn’t stop the messages after it', () => {
+    // ping and initialize don't reach the tracker, so no server is needed.
+    const env = { PATH: process.env.PATH, SUDO_URL: 'http://127.0.0.1:9', SUDO_API_KEY: 'ssk_x', XDG_CONFIG_HOME: '/nonexistent' };
+    const input = ['5', 'true', '"x"', '[7, {"jsonrpc":"2.0","id":1,"method":"ping"}]', '{"jsonrpc":"2.0","id":2,"method":"ping"}', ''].join('\n');
+    const run = spawnSync(process.execPath, [BIN], { env, input, encoding: 'utf8', timeout: 10_000 });
+    expect(run.stderr).toBe('');
+    expect(run.status).toBe(0);
+    const invalid = { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request' } };
+    expect(run.stdout.trim().split('\n').map(JSON.parse)).toEqual([
+      invalid,
+      invalid,
+      invalid,
+      [invalid, { jsonrpc: '2.0', id: 1, result: {} }],
+      { jsonrpc: '2.0', id: 2, result: {} },
     ]);
   });
 

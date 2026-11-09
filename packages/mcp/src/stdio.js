@@ -15,11 +15,15 @@ export function serveStdio(mcp, { input = process.stdin, output = process.stdout
     } catch {
       return send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
     }
-    queue = queue.then(async () => {
-      const msgs = Array.isArray(msg) ? msg : [msg];
-      const out = (await Promise.all(msgs.map(m => mcp.handle(m, s)))).filter(Boolean);
-      if (out.length) send(Array.isArray(msg) ? out : out[0]);
-    });
+    // Each line is caught on its own: a rejected step would skip every later one (they're chained),
+    // and an unhandled rejection stops Node.
+    queue = queue
+      .then(async () => {
+        const msgs = Array.isArray(msg) ? msg : [msg];
+        const out = (await Promise.all(msgs.map(m => mcp.handle(m, s)))).filter(Boolean);
+        if (out.length) send(Array.isArray(msg) ? out : out[0]);
+      })
+      .catch(e => console.error('sudo-mcp: message failed', e));
   });
   return new Promise(resolve => rl.on('close', () => queue.then(resolve)));
 }

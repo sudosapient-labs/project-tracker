@@ -13,6 +13,8 @@ import { slackContext } from './slack/context.js';
 import { createHandlers } from './slack/handlers.js';
 
 const { App, LogLevel } = bolt;
+// On shutdown, how long runs already going get to finish before the process stops.
+const STOP_WAIT = 10_000;
 
 export async function startApp(config, { log = console } = {}) {
   const store = openStore(config.db);
@@ -69,6 +71,10 @@ export async function startApp(config, { log = console } = {}) {
     await later('action', handlers.onAction({ action, body, respond }));
   });
 
+  // Before any new event, so nothing started now is mistaken for something the last process left:
+  // replies it left at "Working on it…" and Confirms it didn't finish are told to the people waiting.
+  await later('recovering after a restart', handlers.recover());
+
   let health = null;
   if (config.slack.socketMode) {
     await app.start();
@@ -85,6 +91,9 @@ export async function startApp(config, { log = console } = {}) {
     async stop() {
       health?.close();
       await app.stop();
+      // No new events now; let runs already going finish, for a while. Whatever is still going
+      // after that is told on the next start (handlers.recover()).
+      await Promise.race([handlers.idle(), new Promise(resolve => setTimeout(resolve, STOP_WAIT).unref())]);
       await mcp.close();
       store.close();
     },

@@ -1,11 +1,15 @@
 /* Edge cases around the Slack surface: failures, concurrency, odd payloads, Slack's limits and
    escaping. Same harness as bot.test.js (real tracker, fake Slack, scripted model). */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { call, fakeSlack, harness, tracker } from './helpers.js';
 
 const mention = (h, { user = 'UADA', channel = 'C1', ts = '100.000001', thread_ts, text = '<@UBOT> hi' } = {}) =>
   h.handlers.onMention({ event: { type: 'app_mention', user, channel, ts, thread_ts, text } });
 const updates = h => h.slack.of('chat.update');
+const allText = blocks => JSON.stringify(blocks || []);
+const cardId = blocks => blocks?.find(b => b.block_id === 'pending')?.elements[0].value;
+const press = (h, id, action_id = 'pending_confirm', user = 'UADA') =>
+  h.handlers.onAction({ action: { action_id, value: id }, body: { user: { id: user }, channel: { id: 'C1' } } });
 
 describe('failures', () => {
   it('when the agent fails, the placeholder says so and the thread keeps working', async () => {
@@ -185,5 +189,113 @@ describe('confirmations land where they were asked', () => {
         .filter(u => u.ts === card.ts)
         .every(u => u.channel === 'C1'),
     ).toBe(true);
+  });
+});
+
+describe('restarts mid-request', () => {
+  // The bot started again: new handlers, agent and Slack connection on the same saved state.
+  const restart = (h, w, opts = {}) => harness(w, { store: h.store, checkpointer: h.checkpointer, ...opts });
+
+  it('a reply left at “Working on it…” by a restart says so when the bot starts again', async () => {
+    const w = await tracker();
+    const h = await harness(w, { turns: [[]] });
+    await mention(h, { ts: '20.1' });
+    await h.handlers.idle();
+    const answered = updates(h).at(-1);
+    // The process stops in the middle of the next run.
+    let started = false;
+    h.agent.run = () => ((started = true), new Promise(() => {}));
+    mention(h, { ts: '20.2', thread_ts: '20.1' });
+    await vi.waitFor(() => expect(started).toBe(true));
+
+    const h2 = await restart(h, w);
+    await h2.handlers.recover?.();
+    const fixed = updates(h2);
+    expect(fixed).toHaveLength(1);
+    expect(fixed[0].channel).toBe('C1');
+    expect(fixed[0].ts).not.toBe(answered.ts);
+    expect(h.slack.message(fixed[0].ts).text).toBe('_Working on it…_');
+    expect(fixed[0].text).toMatch(/restarted before I finished/);
+    // Only once.
+    await h2.handlers.recover();
+    expect(updates(h2)).toHaveLength(1);
+  });
+
+  it('Confirm pressed just before a restart: the card asks again, and Confirm then makes the change', async () => {
+    const w = await tracker();
+    const t = await w.api.post('/tasks', { project: 'WEB', title: 'Close after restart' });
+    const h = await harness(w, { turns: [[call('complete_task', { key: t.key })], []] });
+    await mention(h, { ts: '30.1' });
+    await h.handlers.idle();
+    const card = updates(h).at(-1);
+    const id = cardId(card.blocks);
+    // The process stops while the card is being marked Confirmed, before the change is made.
+    h.slack.chat.update = () => new Promise(() => {});
+    press(h, id);
+    await vi.waitFor(() => expect(h.store.confirmation(id)).toBeNull());
+
+    const h2 = await restart(h, w, { turns: [[]] });
+    await h2.handlers.recover?.();
+    const asked = updates(h2).at(-1);
+    expect(asked).toMatchObject({ channel: 'C1', ts: card.ts });
+    expect(allText(asked?.blocks)).toMatch(/restarted before making/);
+    expect(cardId(asked?.blocks)).toBe(id);
+    expect((await w.api.get(`/tasks/${t.key}`)).status).not.toBe('done');
+
+    await press(h2, id);
+    await h2.handlers.idle();
+    expect((await w.api.get(`/tasks/${t.key}`)).status).toBe('done');
+    expect(allText(updates(h2).at(-1).blocks)).toContain('Confirmed by <@UADA>');
+  });
+
+  it('a restart while a confirmed change is being made: the card says it may not have gone through, and it isn’t run again', async () => {
+    const w = await tracker();
+    const t = await w.api.post('/tasks', { project: 'WEB', title: 'Maybe closed' });
+    const h = await harness(w, { turns: [[call('complete_task', { key: t.key })], []] });
+    await mention(h, { ts: '40.1' });
+    await h.handlers.idle();
+    const card = updates(h).at(-1);
+    let resuming = false;
+    h.agent.resume = () => ((resuming = true), new Promise(() => {}));
+    press(h, cardId(card.blocks));
+    await vi.waitFor(() => expect(resuming).toBe(true));
+    expect(allText(updates(h).at(-1).blocks)).toContain('Confirmed by <@UADA>');
+
+    const h2 = await restart(h, w, { turns: [[], []] });
+    await h2.handlers.recover?.();
+    const said = updates(h2).at(-1);
+    expect(said).toMatchObject({ channel: 'C1', ts: card.ts });
+    expect(allText(said?.blocks)).toMatch(/restarted while making/);
+    expect(allText(said?.blocks)).toContain(t.key);
+    expect(cardId(said?.blocks)).toBeUndefined();
+    expect((await w.api.get(`/tasks/${t.key}`)).status).not.toBe('done');
+
+    // The person's next message starts afresh and leaves that card as it is.
+    await mention(h2, { ts: '40.2', thread_ts: '40.1' });
+    await h2.handlers.idle();
+    expect(updates(h2).filter(u => /newer message/.test(allText(u.blocks)))).toEqual([]);
+    expect(updates(h2).at(-1).text).not.toContain('Sorry');
+    expect((await w.api.get(`/tasks/${t.key}`)).status).not.toBe('done');
+  });
+
+  it('Cancel pressed just before a restart: the card says it was cancelled', async () => {
+    const w = await tracker();
+    const t = await w.api.post('/tasks', { project: 'WEB', title: 'Stay open' });
+    const h = await harness(w, { turns: [[call('complete_task', { key: t.key })], []] });
+    await mention(h, { ts: '50.1' });
+    await h.handlers.idle();
+    const card = updates(h).at(-1);
+    let resuming = false;
+    h.agent.resume = () => ((resuming = true), new Promise(() => {}));
+    press(h, cardId(card.blocks), 'pending_cancel');
+    await vi.waitFor(() => expect(resuming).toBe(true));
+
+    const h2 = await restart(h, w);
+    await h2.handlers.recover?.();
+    const said = updates(h2).at(-1);
+    expect(said).toMatchObject({ channel: 'C1', ts: card.ts, text: 'Cancelled' });
+    expect(allText(said?.blocks)).toContain('Cancelled by <@UADA>');
+    expect(allText(said?.blocks)).not.toContain('Working');
+    expect((await w.api.get(`/tasks/${t.key}`)).status).not.toBe('done');
   });
 });

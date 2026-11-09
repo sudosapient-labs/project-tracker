@@ -47,10 +47,13 @@ export function createMcp({ connect, readOnly = false }) {
     return s.conn;
   }
 
-  /* One message; resolves to a response, or null for notifications and responses. */
+  /* One message; resolves to a response, or null for notifications and responses. Never rejects:
+     the transports handle many messages in one queue or batch, and one bad message (a bare `5`, say)
+     must not stop the others. */
   async function handle(msg, s) {
-    if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') {
-      return msg && ('result' in msg || 'error' in msg) ? null : rpcError(msg?.id, -32600, 'Invalid request');
+    const isObject = msg !== null && typeof msg === 'object' && !Array.isArray(msg);
+    if (!isObject || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') {
+      return isObject && ('result' in msg || 'error' in msg) ? null : rpcError(isObject ? msg.id : null, -32600, 'Invalid request');
     }
     const { id, method, params = {} } = msg;
     const isNote = id === undefined;
@@ -60,7 +63,7 @@ export function createMcp({ connect, readOnly = false }) {
     } catch (e) {
       if (isNote) return null;
       // API errors (e.g. a revoked key) carry a message meant for people; anything else stays generic.
-      return rpcError(id, e.rpc || -32603, e.rpc ? e.message : e.status !== undefined ? `${e.code}: ${e.message}` : 'Internal error');
+      return rpcError(id, e?.rpc || -32603, e?.rpc ? e.message : e?.status !== undefined ? `${e.code}: ${e.message}` : 'Internal error');
     }
   }
 
