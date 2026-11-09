@@ -10,6 +10,8 @@ import { cleanCheckedRich, richTextProblem } from '../lib/rich-text.js';
 import { RICH_MS_PER_REQUEST } from './budget.js';
 import { mentioned, notify } from '../notify.js';
 import { issueToken } from '../routes/auth.js';
+import { label } from '../../packages/client/dates.js';
+import { clockOf } from '../lib/clock.js';
 
 export { projectLevel };
 export const isAdmin = ctx => isAdminRole(ctx.me);
@@ -146,10 +148,12 @@ export const INVITES_PER_HOUR = 50;
 
 /* ---------- notifications ---------- */
 const clip = (s, n = 140) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
-const dueSnippet = t =>
-  [t.due ? `Due ${t.due.slice(0, 10)}` : null, PR[t.priority] && t.priority !== 'none' ? `${PR[t.priority].name} priority` : 'No priority']
-    .filter(Boolean)
-    .join(' · ');
+/* "Due 2026-11-09 11:59 PM · High priority": the due on the clock of the person notified. */
+const dueSnippet = (ctx, t, uid) => {
+  const { tz, time } = clockOf(ctx.repo, uid);
+  const due = t.due ? label(t.due, tz, { time }) : '';
+  return [due ? `Due ${due}` : null, PR[t.priority] && t.priority !== 'none' ? `${PR[t.priority].name} priority` : 'No priority'].filter(Boolean).join(' · ');
+};
 
 /* ---------- task keys ---------- */
 /* Task keys are PROJECT-1234567 at most (schemas.js). The project's counter (`seq`) is the server's:
@@ -276,7 +280,7 @@ export const RULES = {
       t.desc = richDesc(ctx, t.desc, t.project);
       settleAttachments(ctx, t);
       settleKey(ctx, t, p);
-      if (t.assignee) notify(ctx, t.assignee, 'assign', { type: 'assign', task: t.id, text: 'assigned you', snippet: dueSnippet(t) }, t);
+      if (t.assignee) notify(ctx, t.assignee, 'assign', { type: 'assign', task: t.id, text: 'assigned you', snippet: dueSnippet(ctx, t, t.assignee) }, t);
       return t;
     },
     update(ctx, before, t, keys) {
@@ -294,7 +298,7 @@ export const RULES = {
       // Every save re-checks attachments, so older records with foreign links heal too.
       settleAttachments(ctx, t);
       if (keys.includes('assignee')) {
-        if (t.assignee) notify(ctx, t.assignee, 'assign', { type: 'assign', task: t.id, text: 'assigned you', snippet: dueSnippet(t) }, t);
+        if (t.assignee) notify(ctx, t.assignee, 'assign', { type: 'assign', task: t.id, text: 'assigned you', snippet: dueSnippet(ctx, t, t.assignee) }, t);
       }
       if (keys.includes('status') && t.assignee && !keys.includes('assignee')) {
         const done = t.status === 'done';

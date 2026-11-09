@@ -2,6 +2,7 @@
    QUIRE — core: utils, icons, seed data, store, render loop, events
    ===================================================================== */
 import { randomHex } from './random.js';
+import * as D from '../../packages/client/dates.js';
 // Web fonts load without blocking first paint (the link starts as media=print).
 document.querySelectorAll('link[data-font]').forEach(l => {
   l.media = 'all';
@@ -60,88 +61,33 @@ export function setTimeFormat(f) {
 }
 
 /* ---------- times and zones ----------
-   A start/due is either 'YYYY-MM-DD' (all day) or a UTC ISO instant ('2026-10-30T12:00:00.000Z'). */
-export const hasTime = v => typeof v === 'string' && v.length > 10 && v.includes('T');
-const zoneFmts = {};
-function zoneParts(ms, tz = timeZone) {
-  const f = (zoneFmts[tz] ||= new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }));
-  const o = {};
-  for (const p of f.formatToParts(ms)) if (p.type !== 'literal') o[p.type] = +p.value;
-  return o;
-}
-const zoneOffset = (ms, tz) => {
-  const o = zoneParts(ms, tz);
-  return Date.UTC(o.year, o.month - 1, o.day, o.hour % 24, o.minute, o.second) - Math.floor(ms / 1e3) * 1e3;
-};
+   A start/due is either 'YYYY-MM-DD' (all day) or a UTC ISO instant ('2026-10-30T12:00:00.000Z').
+   The rules for both shapes live in packages/client/dates.js (shared with the server, CLI, MCP and
+   Slack bot); these read them in the selected time zone. */
+export const hasTime = D.isTimed;
 /* Wall-clock 'YYYY-MM-DD' + 'HH:MM' in the selected zone → UTC ms. */
-export function zonedMs(day, hm = '00:00', tz = timeZone) {
-  const [y, m, d] = day.split('-').map(Number);
-  const [h, mi] = hm.split(':').map(Number);
-  const guess = Date.UTC(y, m - 1, d, h, mi);
-  const ms = guess - zoneOffset(guess, tz);
-  return guess - zoneOffset(ms, tz);
-}
+export const zonedMs = (day, hm = '00:00', tz = timeZone) => Date.parse(D.fromWallClock(day, hm, tz));
 /* The 'YYYY-MM-DD' a value (string of either shape, Date or ms) falls on in the selected zone. */
-export function dayKey(v) {
-  if (v == null || v === '') return '';
-  if (typeof v === 'string' && !hasTime(v)) return v.slice(0, 10);
-  const o = zoneParts(typeof v === 'string' ? Date.parse(v) : +v);
-  return `${o.year}-${String(o.month).padStart(2, '0')}-${String(o.day).padStart(2, '0')}`;
-}
+export const dayKey = v => (v == null || v === '' ? '' : D.dayOf(v, timeZone));
 /* Today in the selected zone, as a local-midnight Date. Computed on each call, never stale. */
 export const today = () => parse(dayKey(Date.now()));
 /* UTC ms of a value. All-day values count as the start of the day, or its end when `end` is set. */
-export function instant(v, end) {
-  if (!v) return NaN;
-  if (hasTime(v)) return Date.parse(v);
-  return end ? zonedMs(iso(addD(parse(v), 1))) - 1 : zonedMs(v);
-}
+export const instant = (v, end) => D.instant(v, timeZone, end);
 export const toDate = (v, end) => new Date(instant(v, end));
 /* 'HH:MM' (24h) of a timed value in the selected zone; '' for all-day values. */
-export function timeOf(v) {
-  if (!hasTime(v)) return '';
-  const o = zoneParts(Date.parse(v));
-  return `${String(o.hour % 24).padStart(2, '0')}:${String(o.minute).padStart(2, '0')}`;
-}
+export const timeOf = v => D.timeOf(v, timeZone);
 /* Set the wall-clock time of a value; an empty time makes it all day. */
-export const withTime = (v, hm) => (!v ? null : hm ? new Date(zonedMs(dayKey(v), hm)).toISOString() : dayKey(v));
+export const withTime = (v, hm) => (!v ? null : hm ? D.fromWallClock(dayKey(v), hm, timeZone) : dayKey(v));
 /* Move a value to another day, keeping its time of day. */
 export const withDay = (v, day) => (hasTime(v) ? withTime(day, timeOf(v)) : day);
 export const shiftD = (v, n) => withDay(v, iso(addD(parse(v), n)));
-export const isPast = v => !!v && Date.now() > instant(v, true);
+export const isPast = v => D.isOverdue(v, timeZone);
 export const dueSoon = v => hasTime(v) && instant(v) >= Date.now() && instant(v) - Date.now() <= 2 * 36e5;
 /* Display an 'HH:MM' wall-clock time in the selected time format. */
-export function fmtHM(hm) {
-  if (!hm) return '';
-  if (timeFormat === '24') return hm;
-  const [h, m] = hm.split(':').map(Number);
-  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
-}
+export const fmtHM = hm => D.fmtHM(hm, timeFormat === '24' ? '24' : '12');
 export const fmtTime = v => fmtHM(timeOf(v));
 /* Read a typed time ('4', '4p', '4:30 pm', '16:30', '1630') as 'HH:MM'; '' when empty, null when unreadable. */
-export function parseTime(s) {
-  s = (s || '').trim().toLowerCase();
-  if (!s) return '';
-  const m = s.match(/^(\d{1,2})(?:[:.]?(\d{2}))?\s*(?:([ap])\.?m?\.?)?$/);
-  if (!m) return null;
-  let h = +m[1];
-  const min = +(m[2] || 0);
-  if (min > 59) return null;
-  if (m[3]) {
-    if (h < 1 || h > 12) return null;
-    h = (h % 12) + (m[3] === 'p' ? 12 : 0);
-  } else if (h > 23) return null;
-  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
-}
+export const parseTime = D.parseTime;
 export const fmtDateTime = (v, long) => (v ? fmtDate(v, long) + (hasTime(v) ? ', ' + fmtTime(v) : '') : '');
 export function fmtDate(s, long) {
   const d = typeof s === 'string' ? parse(s) : s;

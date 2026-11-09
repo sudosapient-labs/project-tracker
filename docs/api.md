@@ -121,8 +121,12 @@ by id, email, full name, a unique first name, or `me`. 🔑 Owners and Admins on
 |               | `GET /activity`                                                                         | The activity feed (`project`), newest first                                                      |
 | Search        | `GET /search?q=`                                                                        | Tasks, projects and people                                                                       |
 
-People can be given as an id, an email, a full name, a unique first name, or `me`. Dates are
-`YYYY-MM-DD` or ISO 8601 date-times.
+People can be given as an id, an email, a full name, a unique first name, or `me`. A start or due
+is `YYYY-MM-DD` for all day, or an ISO 8601 date-time **with a zone** for a time of day
+(`2026-11-09T23:59+05:30` or `…Z`); a date-time without a zone is refused, since it would be a
+different moment on different clocks. Times are stored and returned in UTC
+(`2026-11-09T18:29:00.000Z`): show them in the reader's time zone (`GET /me/preferences` → `tz`),
+not by cutting the string. See [dates and times](architecture.md#dates-and-times).
 
 `labels`, `dependsOn` and a project's `milestones` in a `PATCH` replace the whole list with the one sent (read the task, change the
 list, send it back). The API reads and writes in one request, so unlike the app it never sends a
@@ -139,7 +143,8 @@ list it fetched long ago; the app sends what it edited from, and the server merg
 - **Pagination:** lists return `{ data, nextCursor }`; pass `cursor=<nextCursor>` for the next page
   (`limit` 1–100, default 50). Cursors are opaque.
 - **Order:** `GET /tasks` is newest first. With `sort=due` it's soonest due first across every
-  matching task (no due date last, ties newest first), and the answer carries `"sort": "due"`; a
+  matching task (an all-day due counts as the end of its day in the key's person's time zone, as in
+  the app; no due date last, ties newest first), and the answer carries `"sort": "due"`; a
   server without it ignores `sort` and leaves that out. Pass the same `sort` with each `cursor`.
 - **Idempotency:** send `Idempotency-Key: <uuid>` on a POST or PATCH and a retry with the same key
   and body gets the first response back (header `Idempotent-Replayed: true`) for 24 hours. The same

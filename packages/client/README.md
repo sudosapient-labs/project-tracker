@@ -41,6 +41,13 @@ try {
   `$XDG_CONFIG_HOME/sudo-sapient/config.json`, the file `sudo-cli login` writes (readable only by
   you; `SUDO_URL` and `SUDO_API_KEY` override it).
 
+- `@sudosapient/client/dates`: the one definition of a start or due, shared with the app and the
+  server. A value is `'YYYY-MM-DD'` (all day) or a UTC instant (`'2026-11-09T18:29:00.000Z'`); read
+  it in a time zone with `dayOf`, `timeOf`, `label`, `instant`, `isOverdue` and `compareDue`, move it
+  with `shiftDays`, and turn what people type (`'fri 5pm'`, `'2026-11-20 17:00'`) into one with
+  `parseWhen` or `fromWallClock`. `checkWhen` is the API's input check. Don't take a timed value's day
+  with `slice(0, 10)`: that's its UTC day.
+
 Endpoints, fields and errors are in the workspace's API reference (`/api/docs`) and in
 [docs/api.md](../../docs/api.md).
 

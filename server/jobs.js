@@ -1,23 +1,15 @@
 // @ts-check
 /* Scheduled work, run every few minutes by server/index.js: due-date reminders, overdue alerts and
    the weekday morning email digest. Each takes `now` so tests can run it at any moment. */
-import { validTz } from '../src/core/constants.js';
 import { canSeeProject } from '../src/core/access.js';
+import { dayOf, isOverdue, zoneParts } from '../packages/client/dates.js';
+import { clockOf } from './lib/clock.js';
 import { notify, notifPrefs } from './notify.js';
 import { MAX_ATTEMPTS } from './lib/mailer.js';
 import { RESTORE_MS } from './sync/engine.js';
 
 const DAY = 86_400_000;
-/* The calendar date ('YYYY-MM-DD') and local wall clock of an instant in a time zone. */
-function local(tz, ms) {
-  const p = Object.fromEntries(
-    new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23', weekday: 'short' })
-      .formatToParts(ms)
-      .map(x => [x.type, x.value]),
-  );
-  return { date: `${p.year}-${p.month}-${p.day}`, hour: +p.hour, weekday: p.weekday };
-}
-const tzOf = (repo, uid) => validTz(repo.userState(uid).prefs.tz);
+const tzOf = (repo, uid) => clockOf(repo, uid).tz;
 
 /* "Due tomorrow" (Push → Due date reminders) and "overdue" (Assignments → overdue) for assignees,
    once per task, due date and assignee (someone it's reassigned to is reminded too), judged by the
@@ -33,9 +25,8 @@ export function runReminders({ db, repo, engine, mailer, config }, now = Date.no
     for (const t of tasks) {
       if (!tzs.has(t.assignee)) tzs.set(t.assignee, tzOf(repo, t.assignee));
       const tz = tzs.get(t.assignee);
-      const today = local(tz, now).date;
-      const due = t.due.length === 10 ? t.due : local(tz, Date.parse(t.due)).date;
-      const kind = due === local(tz, now + DAY).date ? 'due_soon' : due < today ? 'overdue' : null;
+      // Overdue once its time has passed (an all-day one, once its day has), as the app shows it.
+      const kind = dayOf(t.due, tz) === dayOf(now + DAY, tz) ? 'due_soon' : isOverdue(t.due, tz, now) ? 'overdue' : null;
       if (!kind || db.get('SELECT 1 FROM reminders WHERE task_id = ? AND kind = ? AND due = ? AND assignee = ?', t.id, kind, t.due, t.assignee)) continue;
       db.run('INSERT INTO reminders (task_id, kind, due, assignee, sent_at) VALUES (?, ?, ?, ?, ?)', t.id, kind, t.due, t.assignee, now);
       notify(ctx, t.assignee, kind === 'due_soon' ? 'due' : 'overdue', {
@@ -60,17 +51,17 @@ export function runDigests({ db, repo, mailer, config }, now = Date.now()) {
   for (const m of repo.all('members')) {
     if (m.status !== 'active' || m.kind === 'bot' || !db.get('SELECT 1 FROM users WHERE id = ?', m.id)) continue;
     if (!notifPrefs(repo, m.id).email_digest) continue;
-    const l = local(tzOf(repo, m.id), now);
-    if (l.weekday === 'Sat' || l.weekday === 'Sun' || l.hour < 8) continue;
+    const l = zoneParts(now, tzOf(repo, m.id));
+    if (l.weekday === 6 || l.weekday === 0 || l.hour < 8) continue;
     const last = db.get('SELECT last_digest, last_digest_at FROM user_state WHERE user_id = ?', m.id);
-    if (last?.last_digest === l.date) continue;
+    if (last?.last_digest === l.day) continue;
     const since = Math.max(last?.last_digest_at ?? now - DAY, now - DIGEST_MAX_DAYS * DAY);
     const unread = db
       .all('SELECT data FROM notifications WHERE user_id = ? AND created_at > ? ORDER BY created_at DESC', m.id, since)
       .map(r => JSON.parse(r.data))
       .filter(n => !n.read);
     repo.saveUserState(m.id, {});
-    db.run('UPDATE user_state SET last_digest = ?, last_digest_at = ? WHERE user_id = ?', l.date, now, m.id);
+    db.run('UPDATE user_state SET last_digest = ?, last_digest_at = ? WHERE user_id = ?', l.day, now, m.id);
     if (!unread.length) continue;
     // Tasks are read as they are now: one that has since moved somewhere this person can't see is
     // mentioned without its key, title or what happened to it.

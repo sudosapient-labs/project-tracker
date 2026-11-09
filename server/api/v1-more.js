@@ -18,11 +18,29 @@ import { makeInviteLink, requestAccess, resendInvite } from '../routes/workspace
 import { MAX_BOTS, createBot, getBot, listBots, updateBot } from './bots.js';
 import { revokeKey } from './keys.js';
 import * as S from './schemas.js';
-
-const today = () => new Date().toISOString().slice(0, 10);
+import { dayOf } from '../../packages/client/dates.js';
 
 export function registerMore(h) {
-  const { route, ok, ApiFail, notFound, findProject, findTask, findMember, counts, write, actOp, pageOf, needAdmin, encodeCursor, decodeCursor, shortDate } = h;
+  const {
+    route,
+    ok,
+    ApiFail,
+    notFound,
+    findProject,
+    findTask,
+    findMember,
+    counts,
+    write,
+    actOp,
+    pageOf,
+    needAdmin,
+    encodeCursor,
+    decodeCursor,
+    shortDate,
+    clockOf,
+  } = h;
+  // Today on the key's person's calendar, not UTC's.
+  const today = x => dayOf(Date.now(), clockOf(x).tz);
   /* One use of a budget the app's own routes share (same key, size and message), refused with
      Retry-After as the app's limiter does. */
   const spend = (key, n, message) => {
@@ -136,7 +154,7 @@ export function registerMore(h) {
         status: 'planning',
         team: '',
         due: null,
-        start: today(),
+        start: today(x),
         desc: '',
         milestones: [],
         ...f,
@@ -237,7 +255,7 @@ export function registerMore(h) {
         team: src.team || '',
         lead: src.lead ?? null,
         due: src.due ?? null,
-        start: today(),
+        start: today(x),
         members: [...new Set([x.me.id, src.lead].filter(Boolean))],
         desc: src.desc || '',
         milestones: [],
@@ -471,7 +489,7 @@ export function registerMore(h) {
     }
     if (b.due !== undefined && (s.due ?? null) !== b.due) {
       next.due = b.due;
-      acts.push(['set a subtask due date on', b.due ? shortDate(b.due) : '(cleared)']);
+      acts.push(['set a subtask due date on', b.due ? shortDate(x, b.due) : '(cleared)']);
     }
     return { next, acts };
   };
