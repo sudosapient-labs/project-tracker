@@ -38,9 +38,10 @@ export function registerMore(h) {
     decodeCursor,
     whenFields,
     clockOf,
+    memberClock,
     zoneView,
   } = h;
-  // Today on the key's person's calendar, not UTC's.
+  // Today on the caller's calendar (clockOf in v1.js), not UTC's.
   const today = x => dayOf(Date.now(), clockOf(x).tz);
   /* One use of a budget the app's own routes share (same key, size and message), refused with
      Retry-After as the app's limiter does. */
@@ -848,13 +849,14 @@ export function registerMore(h) {
   });
 
   /* ---------- preferences, favourites, sidebar order ---------- */
-  // `preferences.tz` is the zone the person saved (when it is one); timeZone the one in use.
+  // `preferences.tz` is the zone the person saved (when it is one); timeZone the one in use for them
+  // (their own, else the workspace's: never a Sudo-Time-Zone sent with this request).
   const prefsOf = x => {
     const st = x.repo.userState(x.me.id);
     return {
       preferences: Object.fromEntries(Object.entries(st.prefs).filter(([k, v]) => S.PREF_KEYS.includes(k) && (k !== 'tz' || validTz(v)))),
       notifications: { ...DEFAULT_NOTIF_PREFS, ...st.notifPrefs },
-      ...zoneView(clockOf(x)),
+      ...zoneView(memberClock(x.repo, x.me.id)),
     };
   };
   route('get', '/me/preferences', {
@@ -1181,7 +1183,7 @@ export function registerMore(h) {
     return e;
   };
   const eventProject = (x, ref) => (ref == null ? null : findProject(x, ref).id);
-  /* An event's `when` from a day and an 'HH:MM' ('' for all day) on the key's person's clock. */
+  /* An event's `when` from a day and an 'HH:MM' ('' for all day) on the caller's clock. */
   const eventWhen = (x, day, hm) => (hm ? fromWallClock(day, hm, clockOf(x).tz) : day);
   /* When an event (as x.V.event shows it) starts, to order by: an all-day one at the start of its day. */
   const eventMs = (v, tz) => instant(v.when || (v.time ? fromWallClock(v.date, v.time, tz) : v.date), tz);
@@ -1194,7 +1196,7 @@ export function registerMore(h) {
     run: (x, { query: q }) => {
       const pid = q.project ? findProject(x, q.project).id : null;
       const { tz } = clockOf(x);
-      // Days and order on the key's person's clock (`date` in each view is that day).
+      // Days and order on the caller's clock (`date` in each view is that day).
       const all = x.repo
         .all('events', 'WHERE project_id IS NULL OR project_id IN (SELECT value FROM json_each(?)) ORDER BY created_at, rowid', visibleIds(x))
         .filter(e => !pid || e.project === pid)

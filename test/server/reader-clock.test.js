@@ -5,6 +5,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { account, apiKey, keyClient, setup } from './helpers.js';
+import { dayOf } from '../../packages/client/dates.js';
 import migrate from '../../server/migrations/015_event_moments.js';
 
 const machineTz = process.env.TZ;
@@ -197,6 +198,90 @@ describe('calendar events on the reader’s clock', () => {
       { c: 'events', id: 'e_bad4', k: 'put', v: { id: 'e_bad4', title: 'x', project: 'p1' } },
     ]);
     expect(bad.body.results.map(r => r.status)).toEqual([400, 400, 400, 400]);
+  });
+});
+
+/* Sudo-Time-Zone: a client acting for someone on another clock (the Slack bot, one key for a team)
+   names their zone, and for that request the API words and reads days on it. Ada's key is India's. */
+describe('a request on the clock the client names (Sudo-Time-Zone)', () => {
+  const DUBAI = { 'sudo-time-zone': 'Asia/Dubai' };
+
+  it('words history on that clock, keeping the key’s person’s time format', async () => {
+    const { ada, api } = await workspace();
+    const { body: task } = await api.post('/tasks', { project: 'WEB', title: 'Ship it' });
+    await api.patch(`/tasks/${task.key}`, { due: '2026-11-10T18:30:00+05:30' });
+    const extra = async h => (await api.get(`/tasks/${task.key}/activity`, h)).body.data.find(a => a.verb === 'changed due date of').extra;
+    expect(await extra()).toBe('to Nov 10, 6:30 PM');
+    expect(await extra(DUBAI)).toBe('to Nov 10, 5:00 PM');
+    expect(await extra({ 'sudo-time-zone': ' Asia/Dubai ' })).toBe('to Nov 10, 5:00 PM');
+    // The workspace feed too.
+    expect((await api.get('/activity', DUBAI)).body.data.find(a => a.verb === 'changed due date of').extra).toBe('to Nov 10, 5:00 PM');
+    // 24-hour time is Ada's setting, and stays hers.
+    await ada.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata', timeFmt: '24' } });
+    expect(await extra(DUBAI)).toBe('to Nov 10, 17:00');
+    expect(await extra()).toBe('to Nov 10, 18:30');
+  });
+
+  it('ignores a value that isn’t a time zone', async () => {
+    const { api } = await workspace();
+    const { body: task } = await api.post('/tasks', { project: 'WEB', title: 'Ship it' });
+    await api.patch(`/tasks/${task.key}`, { due: '2026-11-10T18:30:00+05:30' });
+    for (const tz of ['+04:00', 'Mars/Olympus_Mons', 'Dubai', '', 'x'.repeat(65)]) {
+      const r = await api.get(`/tasks/${task.key}/activity`, { 'sudo-time-zone': tz });
+      expect(r.status, tz).toBe(200);
+      expect(r.body.data.find(a => a.verb === 'changed due date of').extra, tz).toBe('to Nov 10, 6:30 PM');
+    }
+  });
+
+  it('reads and words events, sort=due and “today” on that clock', async () => {
+    const { api } = await workspace();
+    // Sent from Dubai: 10:00 there is 11:30 in India.
+    const { body: ev } = await api.post('/events', { title: 'Standup', date: '2026-11-20', time: '10:00', project: 'WEB' }, DUBAI);
+    expect(ev).toMatchObject({ date: '2026-11-20', time: '10:00', when: '2026-11-20T06:00:00.000Z' });
+    expect((await api.get('/events')).body.data[0]).toMatchObject({ date: '2026-11-20', time: '11:30' });
+    // 01:00 on Nov 21 in India is still Nov 20 in Dubai, for the answer and for `from` / `to`.
+    await api.post('/events', { title: 'Deploy', date: '2026-11-21', time: '01:00', project: 'WEB' });
+    expect((await api.get('/events?from=2026-11-21')).body.data.map(e => e.title)).toEqual(['Deploy']);
+    expect((await api.get('/events?from=2026-11-21', DUBAI)).body.data).toEqual([]);
+    expect((await api.get('/events?to=2026-11-20', DUBAI)).body.data.map(e => `${e.time} ${e.title}`)).toEqual(['10:00 Standup', '23:30 Deploy']);
+
+    // Nov 10 all day, and 20:00 UTC on Nov 10 (01:30 on Nov 11 in India, 20:00 in London).
+    await api.post('/tasks', { project: 'WEB', title: 'all day', due: '2026-11-10' });
+    await api.post('/tasks', { project: 'WEB', title: 'timed', due: '2026-11-10T20:00:00Z' });
+    const order = async h => (await api.get('/tasks?sort=due', h)).body.data.map(x => x.title);
+    expect(await order()).toEqual(['all day', 'timed']);
+    expect(await order({ 'sudo-time-zone': 'Europe/London' })).toEqual(['timed', 'all day']);
+
+    // A new project starts today on that clock (UTC+14 and UTC−11 are always on different days).
+    const start = async tz => (await api.post('/projects', { name: `From ${tz}` }, { 'sudo-time-zone': tz })).body.start;
+    const east = await start('Pacific/Kiritimati');
+    const west = await start('Pacific/Pago_Pago');
+    expect([east, west]).toEqual([dayOf(Date.now(), 'Pacific/Kiritimati'), dayOf(Date.now(), 'Pacific/Pago_Pago')]);
+    expect(east).not.toBe(west);
+  });
+
+  it('saves no zone and leaves everyone else’s clock alone', async () => {
+    const { t, adaId, api, bobApi } = await workspace();
+    // Ada's own zone is still what she and others are told.
+    expect((await api.get('/me/preferences', DUBAI)).body).toMatchObject({
+      timeZone: 'Asia/Kolkata',
+      timeZoneSource: 'person',
+      preferences: { tz: 'Asia/Kolkata' },
+    });
+    expect((await api.get('/me', DUBAI)).body).toMatchObject({ timeZone: 'Asia/Kolkata', timeZoneSource: 'person' });
+    expect((await api.get('/members', DUBAI)).body.data.find(m => m.id === 'mbob')).toMatchObject({ timeZone: 'Asia/Dubai' });
+    expect(t.repo.userState(adaId).prefs.tz).toBe('Asia/Kolkata');
+
+    // Bob is told about a task assigned to him on his clock, whatever clock the request was on.
+    await api.post('/tasks', { project: 'WEB', title: 'For Bob', assignee: 'mbob', due: '2026-11-09T20:30:00.000Z' }, { 'sudo-time-zone': 'America/New_York' });
+    expect((await bobApi.get('/notifications')).body.data.find(n => n.type === 'assign').snippet).toBe('Due 2026-11-10 12:30 AM · No priority');
+
+    // A repeating task keeps its time of day on Ada's clock (India has no daylight saving; London
+    // leaves it on Oct 25, which would move it an hour).
+    const { body: task } = await api.post('/tasks', { project: 'WEB', title: 'Weekly report', due: '2026-10-20T23:59+05:30', recurrence: 'Weekly' });
+    await api.post(`/tasks/${task.key}/complete`, {}, { 'sudo-time-zone': 'Europe/London' });
+    const next = (await api.get('/tasks?status=open')).body.data.find(x => x.title === 'Weekly report');
+    expect(next.due).toBe('2026-10-27T18:29:00.000Z');
   });
 });
 

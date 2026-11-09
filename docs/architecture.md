@@ -118,9 +118,14 @@ notifications, reminders and digests, repeats, `sort=due`, "today" in the API, s
 API shows the result as `timeZone` and `timeZoneSource` (`person`, `workspace` or `default`) on
 Members, `GET /me` and `GET /me/preferences`, so other surfaces use the same clock: the MCP server
 and the CLI read the person's from there, and fall back to their computer's only when an older
-server doesn't say. The Slack bot reads each request on the asker's clock: their saved zone, else
-their Slack profile's, else the tracker's for them (`packages/slack-bot/src/clock.js`); timed dues
-in channel messages are Slack date tokens, so each reader sees their own time.
+server doesn't say. What the API words or reads as a day for the caller (activity, events,
+`sort=due`, "today") is on the key's person's clock, unless a client acting for someone else sends
+that person's zone in the `Sudo-Time-Zone` header, for that request only (`clockOf` in
+`server/api/v1.js`, [docs/api.md](api.md)); notifications, reminders and repeats never take it.
+The Slack bot reads each request on the asker's clock: their saved zone, else their Slack profile's,
+else the tracker's for them (`packages/slack-bot/src/clock.js`), and sends it as `Sudo-Time-Zone`,
+so history it reads back is worded on that clock too; timed dues in channel messages are Slack date
+tokens, so each reader sees their own time.
 
 The app (`src/core/clock.js`, `zoneOf`) uses the saved zone, else the browser's, else the
 workspace's, else UTC. The browser's zone is never only shown: when someone with none saved opens
@@ -136,7 +141,7 @@ What is stored is the value; words are made when someone reads it, on their cloc
 - **History.** An activity entry that sets a start or due (a task's start or due, a subtask's due)
   also keeps the value it was set to, `when` (`null` when cleared), next to `extra`, the words on
   the writer's clock. Every reader words `when` on their own clock: the app in task history and
-  the activity feeds, and the REST API in `extra` for the key's person, which is what the MCP
+  the activity feeds, and the REST API in `extra` for the caller, which is what the MCP
   server, the CLI and the Slack bot show. The rule lives in `src/core/activity.js` (`whenAct` to
   write, `actExtra` to read). Entries saved before `when` existed, and those written by apps from
   before it, only have `extra`, and show it as written. Nothing is rewritten.

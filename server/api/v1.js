@@ -6,7 +6,7 @@
 
    Routes are declared once in ROUTES; registration and the OpenAPI document both read them. */
 import { Hono } from 'hono';
-import { PR, ST } from '../../src/core/constants.js';
+import { PR, ST, validTz } from '../../src/core/constants.js';
 import { clockOf as memberClock } from '../lib/clock.js';
 import { dayOf, instant, isCanonical, label, timeOf } from '../../packages/client/dates.js';
 import { actExtra, whenAct } from '../../src/core/activity.js';
@@ -38,9 +38,17 @@ export const htmlToText = html =>
     .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, e) => ENT[e])
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-/* The key's person's time zone and clock: activity reads a start or due as they'd see it in the app
-   ("to Nov 9, 11:59 PM"), and repeats keep a task's time of day on their clock. */
-const clockOf = x => memberClock(x.repo, x.me.id);
+/* The caller's clock: what the API words or turns into a day for whoever is asking (activity "to
+   Nov 9, 11:59 PM", `date` and `time` on events, `sort=due`, "today", an event's day and time sent
+   in words). The key's person's clock, except that a client acting for someone else (the Slack bot,
+   one key for a whole team) can name that person's zone in the Sudo-Time-Zone header, for that
+   request only. The time format stays the key's person's. Nothing is saved, and what the server
+   does for other people (notifications, reminders, repeats) keeps their own clocks. A value that
+   isn't a zone is ignored. */
+export const TIME_ZONE_HEADER = 'Sudo-Time-Zone';
+const askedZone = c => validTz((c.req.header(TIME_ZONE_HEADER) || '').trim());
+const onAsked = (own, asked) => (asked ? { ...own, tz: asked } : own);
+const clockOf = x => onAsked(memberClock(x.repo, x.me.id), x.askedTz);
 /* A member's effective time zone and where it comes from, as Member, Me and Preferences show it. */
 const zoneView = ({ tz, source }) => ({ timeZone: tz, timeZoneSource: source });
 const shortDate = (x, v) => {
@@ -52,9 +60,9 @@ const whenFields = (x, verb, v) => whenAct(verb, v, w => shortDate(x, w));
 
 /* ---------- public views of synced records ---------- */
 const LEVEL = ['none', 'view', 'comment', 'edit', 'full'];
-/* `clock`: a member's clock (server/lib/clock.js), for the effective time zone on Member; and the
-   reader's (`me`), for activity and events, which read on the reader's clock. */
-const views = (config, me, favs, keyOf, clock) => ({
+/* `clock`: a member's clock (server/lib/clock.js), for the effective time zone on Member. `reader`:
+   the caller's (clockOf above), for activity and events, which read on the reader's clock. */
+const views = (config, me, favs, keyOf, clock, reader) => ({
   task: t => ({
     id: t.id,
     key: t.key,
@@ -134,7 +142,7 @@ const views = (config, me, favs, keyOf, clock) => ({
     by: a.by,
     verb: a.verb,
     extra: actExtra(a, v => {
-      const { tz, time } = clock(me.id);
+      const { tz, time } = reader();
       return label(v, tz, { style: 'short', time });
     }),
     ...(a.when !== undefined ? { when: a.when } : {}),
@@ -168,7 +176,7 @@ const views = (config, me, favs, keyOf, clock) => ({
   // has only the day and time it was saved with.)
   event: e => {
     if (!isCanonical(e.when)) return { id: e.id, title: e.title, date: e.date, time: e.time || '', when: null, project: e.project ?? null };
-    const { tz } = clock(me.id);
+    const { tz } = reader();
     return { id: e.id, title: e.title, date: dayOf(e.when, tz), time: timeOf(e.when, tz), when: e.when, project: e.project ?? null };
   },
   view: v => ({ id: v.id, project: v.project, name: v.name, type: v.type, filters: (v.filters || []).map(f => ({ field: f.f, op: f.op, values: f.v })) }),
@@ -263,6 +271,8 @@ export function v1Routes({ limit, uploads }) {
     // A key acts as its person: an Owner's or Admin's key has their admin powers, as in the app.
     const admin = isAdminRole(me);
     const clocks = new Map();
+    const clock = id => clocks.get(id) || clocks.set(id, memberClock(repo, id)).get(id);
+    const askedTz = askedZone(c);
     return {
       c,
       db,
@@ -274,8 +284,9 @@ export function v1Routes({ limit, uploads }) {
       visible,
       favorites,
       resetFavorites,
+      askedTz,
       // Each member's clock once per request (activity and events read the caller's on every row).
-      V: views(config, me, favorites, keyOf, id => clocks.get(id) || clocks.set(id, memberClock(repo, id)).get(id)),
+      V: views(config, me, favorites, keyOf, clock, () => onAsked(clock(me.id), askedTz)),
     };
   };
   const findProject = (x, ref, field = 'project') => {
@@ -757,6 +768,7 @@ export function v1Routes({ limit, uploads }) {
     shortDate,
     whenFields,
     clockOf,
+    memberClock,
     zoneView,
   });
 

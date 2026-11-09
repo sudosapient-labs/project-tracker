@@ -148,6 +148,23 @@ added by someone in India is `time: "08:30"` for someone in Dubai. `POST` and `P
 `date` and `time` on the key's person's clock (a new day keeps the time, a new time keeps the day),
 and `from` and `to` are their days.
 
+**Acting for someone on another clock: `Sudo-Time-Zone`.** "The key's person's clock" above is the
+caller's, and a client that acts for other people with one key (the Slack bot's, for a whole team)
+can name the person it's asking for: send `Sudo-Time-Zone: <IANA zone>` (`Asia/Dubai`) and, for
+that request only, everything the API words or reads as a day for the caller uses that zone instead
+of the key's person's. That is Activity `extra` (for reading, and the words written with a change),
+an event's `date` and `time` (in answers, and as sent to `POST` and `PATCH /events`), `from` and `to`
+on `GET /events`, `sort=due` on `GET /tasks`, and "today" (a new project's start). The time format
+(12 or 24 hours) stays the key's person's. It changes nothing else: no zone is saved, Member,
+`GET /me` and `GET /me/preferences` still show the person's own `timeZone`, stored values are the
+same UTC moments and days, and what the server does for other people keeps their clocks
+(notifications, reminders and digests on each recipient's, a repeating task's next due on its
+rule, read on the key's person's clock). A value that isn't an IANA zone (an offset such as
+`+04:00`, a misspelling, anything over 64 characters) is ignored: the request is read on the key's
+person's clock, as if no header was sent. `@sudosapient/client` sends it for a client given a zone
+(the MCP tools' `useTimeZone(api, tz)`), which is how the Slack bot words history on each asker's
+clock.
+
 Finishing a task (`status: done`, or `…/complete`) sets `completedAt` from the server's clock;
 moving it to any other status clears it. A repeating task finished with a due date gets one next
 occurrence (due moved on by the repeat, in the key's person's time zone), however many people

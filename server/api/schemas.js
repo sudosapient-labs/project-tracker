@@ -618,7 +618,7 @@ export const EventQuery = z.object({
   limit,
   cursor,
 });
-// The day and time are read on the key's person's clock (timeZone on GET /me/preferences); a timed
+// The day and time are read on the caller's clock (timeZone on GET /me/preferences, or Sudo-Time-Zone); a timed
 // event is stored as the moment it starts.
 export const EventCreate = z.strictObject({
   title: z.string().trim().min(1, 'Give the event a title').max(200),
