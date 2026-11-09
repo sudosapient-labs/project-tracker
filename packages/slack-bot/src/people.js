@@ -16,6 +16,7 @@
    expose per-person levels set in the share dialog ("Can view", "Can comment"), so a listed
    person counts as an editor here. The tracker still enforces the bot's own access; see ROADMAP.md
    for closing this with delegated access. */
+import { clockOf, slackZones, trackerZone } from './clock.js';
 
 export const VIEW = 1;
 export const COMMENT = 2;
@@ -74,11 +75,14 @@ export function directory(api, { ttl = TTL, now = () => Date.now() } = {}) {
 
 const RECHECK = 60 * 60_000;
 
-/* Slack user → tracker member, or a reason they can't be matched. */
-export function people({ slack, store, dir, now = () => Date.now() }) {
+/* Slack user → tracker member, or a reason they can't be matched; and whose clock they read on
+   (clock.js). `fallbackTz`: SLACK_BOT_TIMEZONE, for when neither the tracker nor Slack says. */
+export function people({ slack, store, dir, fallbackTz = 'UTC', now = () => Date.now() }) {
+  const zones = slackZones(slack, { now });
   async function slackEmail(slackUser) {
     try {
       const r = await slack.users.info({ user: slackUser });
+      zones.remember(slackUser, r.user);
       if (r.user?.is_bot || r.user?.deleted) return { error: 'bot' };
       return { email: r.user?.profile?.email || '', name: r.user?.real_name || r.user?.profile?.display_name || r.user?.name || '' };
     } catch {
@@ -123,6 +127,9 @@ export function people({ slack, store, dir, now = () => Date.now() }) {
       return { member };
     },
     unlink: slackUser => store.forgetPerson(slackUser),
+    /* The clock `member` (resolved for `slackUser`) reads and writes dates on: { tz, source }. The
+       Slack profile is asked only when the tracker doesn't say. */
+    clock: async (slackUser, member) => clockOf(member, { slackTz: trackerZone(member) ? null : await zones.of(slackUser), fallback: fallbackTz }),
   };
 }
 

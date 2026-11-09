@@ -58,7 +58,9 @@ proxies `/api` to the API on :8787.
   (`x-client-id`). When the stream drops, the client reconnects and bootstraps again; a
   bootstrap that fails is retried with backoff (the tab shows offline meanwhile).
 - **Per-person data** (preferences, view settings, favourites, sidebar order, notification
-  preferences) is stored per account (`PUT /api/me/state`), not in the browser.
+  preferences) is stored per account (`PUT /api/me/state`), not in the browser. Preferences are
+  merged key by key, and the app sends only the ones changed in that tab, so a tab left open never
+  puts back one changed elsewhere (a time zone set with the CLI).
 - **Files** stream to `POST /api/files` as the raw request body, are written under `UPLOAD_DIR` with a
   random storage key, and are served (`GET /api/files/<id>/<name>`) only to people who can see the
   project.
@@ -94,10 +96,67 @@ MCP server and the Slack bot:
 The sync schema accepts only these two; the API also takes a date-time with an offset and stores it
 in UTC, and refuses one without a zone. A timed value's day depends on the reader (`2026-11-09T20:30Z`
 is Nov 10, 2:00 AM in India), so code reads values with `dayOf`, `timeOf`, `label`, `instant`,
-`isOverdue` and `compareDue` and the reader's time zone (Settings → time zone; on the server,
-`server/lib/clock.js`), never with `value.slice(0, 10)` or string comparison. What people type
-("fri 5pm") becomes a value through `parseWhen`. Calendar events are a separate model (a day plus
-an optional `HH:MM`).
+`isOverdue` and `compareDue` and the reader's time zone, never with `value.slice(0, 10)` or string
+comparison. What people type ("fri 5pm") becomes a value through `parseWhen`. A calendar event's
+start (`when`) has the same two shapes: an all-day event is a day, a timed one the moment it starts.
+
+### Whose clock
+
+Stored values don't depend on anyone's clock; reading or writing them in words or as a day does.
+Which time zone that is, is decided in one place, in this order:
+
+1. **The person's** saved zone (Settings → Date and time; `prefs.tz`, any IANA zone: what counts as
+   one is `validZone` / `modernZone` in `packages/client/dates.js`, `validTz` / `modernTz` in the app
+   and server).
+2. **The workspace's** (Settings → Workspace, Owners and Admins; `tz` on the workspace doc,
+   `timeZone` in `GET /workspace`), for people who haven't set one, and for bots such as the Slack
+   bot's account.
+3. **UTC**.
+
+Never the machine's zone: on the server that is UTC, not anyone's. On the server the order lives in
+`server/lib/clock.js` (`clockOf(repo, uid)` → `{ tz, time, source }`, and `workspaceClock(repo)`),
+and everything the server writes or decides for someone goes through it: activity text,
+notifications, reminders and digests, repeats, `sort=due`, "today" in the API, session dates. The
+API shows the result as `timeZone` and `timeZoneSource` (`person`, `workspace` or `default`) on
+Members, `GET /me` and `GET /me/preferences`, so other surfaces use the same clock: the MCP server
+and the CLI read the person's from there, and fall back to their computer's only when an older
+server doesn't say. What the API words or reads as a day for the caller (activity, events,
+`sort=due`, "today") is on the key's person's clock, unless a client acting for someone else sends
+that person's zone in the `Sudo-Time-Zone` header, for that request only (`clockOf` in
+`server/api/v1.js`, [docs/api.md](api.md)); notifications, reminders and repeats never take it.
+The Slack bot reads each request on the asker's clock, in the same order (their Member's `timeZone`;
+their Slack profile's only from a server too old to say; `packages/slack-bot/src/clock.js`), and
+sends it as `Sudo-Time-Zone`,
+so history it reads back is worded on that clock too; timed dues in channel messages are Slack date
+tokens, so each reader sees their own time. What the model reads and writes can't hold a token, so
+there a timed due names its zone (`label(v, tz, { zone: true })`: `2026-11-20 17:00 GMT+4`).
+
+The app (`src/core/clock.js`, `zoneOf`) uses the saved zone, else the browser's, else the
+workspace's, else UTC. The browser's zone is never only shown: when someone with none saved opens
+the app, it saves the browser's as theirs, once, and says so ("Time zone set to Dubai from your
+browser"), so the server and the app agree. A zone they chose is never replaced. A new workspace
+takes the Owner's zone when setup finishes; migration 014 gave existing ones the zone most of their
+people had saved.
+
+### History and events on the reader's clock
+
+What is stored is the value; words are made when someone reads it, on their clock.
+
+- **History.** An activity entry that sets a start or due (a task's start or due, a subtask's due)
+  also keeps the value it was set to, `when` (`null` when cleared), next to `extra`, the words on
+  the writer's clock. Every reader words `when` on their own clock: the app in task history and
+  the activity feeds, and the REST API in `extra` for the caller, which is what the MCP
+  server, the CLI and the Slack bot show. The rule lives in `src/core/activity.js` (`whenAct` to
+  write, `actExtra` to read). Entries saved before `when` existed, and those written by apps from
+  before it, only have `extra`, and show it as written. Nothing is rewritten.
+- **Calendar events.** `when` is the event: a day for an all-day one, the UTC moment it starts for
+  a timed one (a 10:00 standup set in India is 8:30 in Dubai). The calendar places it on the
+  viewer's day and shows its time on their clock; the API gives `date` and `time` on the key's
+  person's clock and reads them that way when given. The sync rules (`settleEventWhen` in
+  `server/sync/rules.js`) also store `date` and `time` as the day and time on the saver's clock,
+  for apps from before `when`, which show those. An app that sends only `date` and `time` has them
+  read on its person's clock; one that can't be read is refused. Migration 015 read the events
+  saved before on the workspace's clock, else UTC.
 
 ## Public API, MCP and CLI
 

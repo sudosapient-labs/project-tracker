@@ -165,7 +165,7 @@ Mode, so no public domain is needed.
 | `SLACK_BOT_EFFORT`       | `medium`                    | Anthropic effort: `low` answers faster, `high` thinks harder                                                                                         |
 | `SLACK_BOT_MAX_TOKENS`   | `16000`                     | Per model call                                                                                                                                       |
 | `SLACK_BOT_CONFIRM`      | `edits`                     | What waits for Confirm: `edits` (changes to existing tasks), `all` (every write) or `none`                                                           |
-| `SLACK_BOT_TIMEZONE`     | `Asia/Kolkata`              | The team's clock: "today", "Friday", "by 6pm", and the due times the bot sets and shows                                                              |
+| `SLACK_BOT_TIMEZONE`     | `UTC`                       | Optional. Only the last fallback for whose clock, when the tracker doesn't say a person's zone (an older server); see **Whose clock** below          |
 | `SLACK_BOT_MCP_SERVERS`  | (none)                      | Read-only knowledge sources over MCP, as JSON: `{"sudopedia":{"url":"http://<tailnet-ip>:8765/mcp","tools":["get_context","search","read"]}}`        |
 | `SLACK_BOT_UNFURL_HOSTS` | `SUDO_URL`'s host           | Comma list of hosts whose task and project links get previews                                                                                        |
 | `SLACK_BOT_DATA_DIR`     | `./data`                    | Where `slack-bot.db` (mappings, links, confirmations) and `slack-bot-checkpoints.db` (conversations) live                                            |
@@ -215,6 +215,36 @@ Slack (Socket Mode / HTTP)
   message from the same person, or a run that broke off (a timeout, a restart), starts a fresh
   round of that conversation rather than resuming it, so its history is never left with a tool call
   that has no result.
+- **Whose clock** ([`src/clock.js`](src/clock.js)). Every request is read on the clock of the person
+  asking, never one clock for the team: "Friday 5pm" from someone in Dubai is 5 PM in Dubai. It's
+  the one the tracker uses for them, so the bot and their reminders, digest and notifications agree:
+  their zone saved in the tracker, else the workspace's, else UTC (their Member's `timeZone`,
+  whatever its `timeZoneSource`). Only when the tracker doesn't say (an older server) is it their
+  Slack profile's, else `SLACK_BOT_TIMEZONE`. It's resolved once per request (members are cached
+  for a minute, Slack profiles for five, so a changed zone is used within minutes) and used for
+  "today", the due times
+  the model sends and reads, the "Today is …" line of the request, `/sudo my`, the create modal
+  (the time picker shows the zone), and for a task card button the clicker's. Each request gets its
+  own tracker client on that zone, so people asking at the same time never share one; it sends the
+  zone as `Sudo-Time-Zone`, so what the tracker words itself (history like "to Nov 10, 5:00 PM",
+  calendar events) is on the asker's clock too, not the bot member's. A change
+  waiting for Confirm keeps the asker's zone, and its dates are read when it's asked ("tomorrow
+  17:00" is saved as the moment it meant then), so the card shows, and Confirm makes, whenever it's
+  pressed and after a restart, the change they asked for.
+  - Messages in a channel are read by everyone, each on their own clock, so a timed due on a task
+    card, a list, a preview or a confirmation is Slack's date token
+    (`<!date^UNIX^{date_short_pretty} {time}|fallback>`): each viewer sees their own day and time.
+    The fallback (notifications, clients that can't show the token) is on the asker's clock, with
+    the zone. An all-day due is a plain date. Slack shows the token only in mrkdwn, so dates never go
+    in plain text, headers or modals. `sudo-tracker chat` uses the requester's saved zone (else the
+    tracker's for them).
+  - The model's own words can't hold a token (its replies and cards are escaped, so a token it
+    writes shows as text), so what it reads names the zone instead: a timed due or start in a tool
+    result is `2026-11-20 17:00 GMT+4` (the zone's short name on the asker's clock; an all-day one
+    stays `2026-11-20`), the prompt and the `slack-style` skill tell it to keep the zone with every
+    time it writes in a channel, and a card with a time of day and no zone after it goes back to the
+    model to fix. A due it sends back with that zone is read as the same moment; one naming another
+    clock's zone is refused.
 - **One run at a time per conversation**, in arrival order; a run stops after 3 minutes and each
   tracker call after 20 seconds. Slack redeliveries are recognised and
   handled once. Creating a task uses an idempotency key, so a replayed tool call can't create it
@@ -230,7 +260,8 @@ Slack (Socket Mode / HTTP)
 
 `pnpm test` from the repo root runs them with the other API tests: a real tracker on an in-memory
 database, a fake Slack Web API, and LangChain's scripted `FakeToolCallingModel`, so they cost
-nothing and need no keys. They cover mentions, the requester's access, Confirm/Cancel (including
+nothing and need no keys. They cover mentions, the requester's access, each person's clock (India
+and Dubai at once, the workspace's zone, the Slack profile's with an older tracker), Confirm/Cancel (including
 across a restart), task cards, reply cards (spec → Block Kit, escaping, what a card can't have,
 Slack's limits, the plain-text fallback), `/sudo`, the modal, previews, and MCP tools loaded from the tracker's
 own `/api/mcp` over HTTP.

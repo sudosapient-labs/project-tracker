@@ -15,7 +15,7 @@
    Starts, dues and times are on the person's clock (their time zone setting) both ways: results
    say '2026-11-20' or '2026-11-20 17:00', and dates sent in that form (or 'fri 5pm') are read on
    it, so a model never works out UTC offsets. The rules are @sudosapient/client/dates'. */
-import { compareDue, isOverdue, label, parseWhen } from '@sudosapient/client/dates';
+import { compareDue, dayOf, isOverdue, label, modernZone, parseWhen, timeOf, validZone } from '@sudosapient/client/dates';
 
 const seg = ref => encodeURIComponent(String(ref).trim());
 const str = (description, extra = {}) => ({ type: 'string', ...(description ? { description } : {}), ...extra });
@@ -40,10 +40,11 @@ const MAX_UPLOAD = 700 * 1024;
 
 /* Drop null, '', [] and false so results carry only what's set. */
 const compact = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null && v !== '' && v !== false && !(Array.isArray(v) && !v.length)));
-/* The person's time zone (Settings → time zone), read once per client; their computer's if the
-   server won't say. */
+/* The person's time zone, read once per client: the one the server reads their dates in (their own,
+   else the workspace's, else UTC: `timeZone` on /me/preferences). This computer's only when the
+   server is too old to say. */
 const clocks = new WeakMap();
-const localTz = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+const localTz = () => modernZone(Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
 export function tzOf(api) {
   if (!clocks.has(api))
     clocks.set(
@@ -51,26 +52,52 @@ export function tzOf(api) {
       Promise.resolve()
         .then(() => api.get('/me/preferences'))
         .then(
-          r => r?.preferences?.tz || localTz(),
+          r => validZone(r?.timeZone) || validZone(r?.preferences?.tz) || localTz(),
           () => localTz(),
         ),
     );
   return clocks.get(api);
 }
-/* Use this time zone for `api` instead of asking the server (the Slack bot's, for a whole team). */
-export function useTimeZone(api, tz) {
+/* Read and write `api`'s dates on this time zone instead of the one the server has for the key's
+   person: a client acting for someone else (the Slack bot, one key for a whole team, makes one per
+   asker). The tools read on it, and the client sends it as Sudo-Time-Zone, so what the server words
+   (history, events) and reads as a day (sort=due, "today") is on that clock too.
+   `zoneNames`: results are read out to people on other clocks (a Slack channel), so a timed start or
+   due also says whose clock it's on ('2026-11-20 17:00 GMT+4'). */
+const named = new WeakSet();
+export function useTimeZone(api, tz, { zoneNames = false } = {}) {
   clocks.set(api, Promise.resolve(tz));
+  api.setTimeZone?.(tz);
+  if (zoneNames) named.add(api);
+  else named.delete(api);
   return api;
 }
 /* A moment (Unix ms) or a start/due on the person's clock: '2026-11-20 17:00', '2026-11-20'. */
 const when = (ms, tz) => (ms ? label(new Date(ms).toISOString(), tz) : null);
-const day = (v, tz) => (v ? label(v, tz) : v);
+const day = (v, tz, api) => (v ? label(v, tz, { zone: named.has(api) }) : v);
 /* A start or due argument for the API: "" clears; anything else is read on the person's clock. */
 async function dateArg(api, v) {
   if (v === '' || v === null) return null;
   const out = parseWhen(v, await tzOf(api));
   if (!out) throw bad(`Can’t read the date “${v}”. Use YYYY-MM-DD, or YYYY-MM-DD HH:MM for a time.`);
   return out;
+}
+/* A calendar event's `date` ('fri', 'fri 10am', '2026-11-20 10:00'), on the person's clock, as the
+   day and the time the API takes ('' for none); a `time` given on its own wins. */
+async function eventArgs(api, a) {
+  if (!a.date) return a;
+  const tz = await tzOf(api);
+  const v = parseWhen(a.date, tz);
+  if (!v) throw bad(`Can’t read the date “${a.date}”. Use YYYY-MM-DD, or YYYY-MM-DD HH:MM for a time.`);
+  return { ...a, date: dayOf(v, tz), ...(a.time === undefined && timeOf(v, tz) ? { time: timeOf(v, tz) } : {}) };
+}
+/* A day to list from or to ('today', 'fri'), on the person's clock. */
+async function dayArg(api, v) {
+  if (!v) return v;
+  const tz = await tzOf(api);
+  const out = parseWhen(v, tz);
+  if (!out) throw bad(`Can’t read the date “${v}”. Use YYYY-MM-DD.`);
+  return dayOf(out, tz);
 }
 const dateArgs = async (api, a, keys) => {
   const out = { ...a };
@@ -166,14 +193,14 @@ const after = p => p.catch(() => null);
 /* Instead of people's names when they can't be read then: their ids, so an assignee doesn't vanish. */
 const byId = { get: id => id };
 
-const brief = (t, who, tz) =>
+const brief = (t, who, tz, api) =>
   compact({
     key: t.key,
     title: t.title,
     status: t.status,
     priority: t.priority === 'none' ? null : t.priority,
     assignee: who.get(t.assignee),
-    due: day(t.due, tz),
+    due: day(t.due, tz, api),
     archived: t.archived,
   });
 /* MCP tool annotations (spec 2025-06-18). Every tool sets all four, since the spec's defaults for a
@@ -204,15 +231,15 @@ async function taskDetail(api, ref) {
   ]);
   const deps = await taskKeys(api, t.dependsOn || [], 20);
   return compact({
-    ...brief(t, who, tz),
-    start: day(t.start, tz),
+    ...brief(t, who, tz, api),
+    start: day(t.start, tz, api),
     labels: t.labels,
     estimate: t.estimate,
     recurrence: t.recurrence,
     favorite: t.favorite,
     dependsOn: (t.dependsOn || []).map(deps).filter(Boolean),
     description: t.description.length > 2000 ? t.description.slice(0, 2000) + '…' : t.description,
-    subtasks: t.subtasks.map(s => compact({ id: s.id, title: s.title, done: s.done, assignee: who.get(s.assignee), due: day(s.due, tz) })),
+    subtasks: t.subtasks.map(s => compact({ id: s.id, title: s.title, done: s.done, assignee: who.get(s.assignee), due: day(s.due, tz, api) })),
     attachments: (t.attachments || []).map(a => compact({ id: a.id, name: a.name, size: a.size })),
     comments: comments.data.map(c =>
       compact({
@@ -241,13 +268,13 @@ async function myWork(api, { status = 'open', limit = 30 } = {}) {
   const n = Math.min(Math.max(Number(limit) || 30, 1), 100);
   const query = { assignee: 'me', status: status === 'all' ? undefined : status };
   const [page, who, tz] = await Promise.all([api.get('/tasks', { ...query, sort: 'due', limit: n }), names(api), tzOf(api)]);
-  if (page.sort === 'due') return page.data.map(t => brief(t, who, tz));
+  if (page.sort === 'due') return page.data.map(t => brief(t, who, tz, api));
   const tasks = await api.all('/tasks', query, MY_WORK_CAP + 1);
   const soonest = tasks
     .slice(0, MY_WORK_CAP)
     .sort(byDue(tz))
     .slice(0, n)
-    .map(t => brief(t, who, tz));
+    .map(t => brief(t, who, tz, api));
   if (tasks.length <= MY_WORK_CAP) return soonest;
   return {
     tasks: soonest,
@@ -266,25 +293,25 @@ async function projectSummary(api, ref) {
     status: p.status,
     lead: who.get(p.lead),
     team,
-    start: day(p.start, tz),
-    due: day(p.due, tz),
+    start: day(p.start, tz, api),
+    due: day(p.due, tz, api),
     private: p.private,
     archived: p.archived,
     myAccess: p.access,
     members: (p.members || []).map(id => compact({ name: who.get(id) || id, permission: p.permissions?.[id] })),
-    milestones: p.milestones?.map(m => compact({ ...m, date: day(m.date, tz) })),
+    milestones: p.milestones?.map(m => compact({ ...m, date: day(m.date, tz, api) })),
     tasks: byStatus,
     overdue: open
       .filter(t => isOverdue(t.due, tz))
       .sort(byDue(tz))
       .slice(0, 10)
-      .map(t => brief(t, who, tz)),
+      .map(t => brief(t, who, tz, api)),
     unassigned: open.filter(t => !t.assignee).length,
     next: open
       .filter(t => !isOverdue(t.due, tz))
       .sort(byDue(tz))
       .slice(0, 10)
-      .map(t => brief(t, who, tz)),
+      .map(t => brief(t, who, tz, api)),
     url: p.url,
   });
 }
@@ -317,7 +344,7 @@ export const TOOLS = {
     async run(api, { q }) {
       const [r, who, tz] = await Promise.all([api.get('/search', { q, limit: 10 }), names(api), tzOf(api)]);
       return compact({
-        tasks: r.tasks.map(t => brief(t, who, tz)),
+        tasks: r.tasks.map(t => brief(t, who, tz, api)),
         projects: r.projects.map(p => compact({ key: p.key, name: p.name })),
         people: r.members.map(m => compact({ name: m.name, email: m.email })),
       });
@@ -345,7 +372,7 @@ export const TOOLS = {
         names(api),
         tzOf(api),
       ]);
-      return tasks.map(t => brief(t, who, tz));
+      return tasks.map(t => brief(t, who, tz, api));
     },
   },
   list_projects: {
@@ -429,11 +456,12 @@ export const TOOLS = {
     },
   },
   list_events: {
-    description: 'Calendar events by date.' + UNTRUSTED,
+    description: 'Calendar events by date, on the person’s clock.' + UNTRUSTED,
     annotations: READ,
     inputSchema: obj({ project: KEY, from: str('YYYY-MM-DD'), to: str('YYYY-MM-DD') }),
-    async run(api, q) {
-      const [events, keys] = await Promise.all([api.all('/events', q, 200), projectKeys(api)]);
+    async run(api, { from, to, ...q }) {
+      const [f, t] = await Promise.all([dayArg(api, from), dayArg(api, to)]);
+      const [events, keys] = await Promise.all([api.all('/events', { ...q, from: f, to: t }, 200), projectKeys(api)]);
       return events.map(e => compact({ id: e.id, title: e.title, date: e.date, time: e.time, project: keys.get(e.project) }));
     },
   },
@@ -461,7 +489,7 @@ export const TOOLS = {
       const tkey = await taskKeys(api, favs.tasks, 20);
       return compact({
         workspace: ws,
-        me: compact({ name: me.name, email: me.email, role: me.role, title: me.title, keyScope: me.key.scope }),
+        me: compact({ name: me.name, email: me.email, role: me.role, title: me.title, keyScope: me.key.scope, timeZone: prefs.timeZone }),
         preferences: prefs.preferences,
         notifications: prefs.notifications,
         favorites: [...favs.projects.map(id => keys.get(id)), ...favs.tasks.map(tkey)].filter(Boolean),
@@ -562,9 +590,9 @@ export const TOOLS = {
         });
       const r = await steps(list);
       const tz = await tzOf(api);
-      if (!r.ok) incomplete(r, t ? { task: brief(t, (await after(names(api))) || byId, tz) } : {});
+      if (!r.ok) incomplete(r, t ? { task: brief(t, (await after(names(api))) || byId, tz, api) } : {});
       t ||= await api.get(`/tasks/${seg(key)}`);
-      return brief(t, (await after(names(api))) || byId, tz);
+      return brief(t, (await after(names(api))) || byId, tz, api);
     },
   },
   complete_task: {
@@ -582,7 +610,7 @@ export const TOOLS = {
     inputSchema: obj({ key: KEY, to: str() }, ['key', 'to']),
     async run(api, { key, to }) {
       const t = await api.patch(`/tasks/${seg(key)}`, { assignee: to ? to : null });
-      return brief(t, await names(api), await tzOf(api));
+      return brief(t, await names(api), await tzOf(api), api);
     },
   },
   edit_subtasks: {
@@ -622,7 +650,7 @@ export const TOOLS = {
       const [t, who, tz] = await Promise.all([read(api.get(`/tasks/${seg(key)}`)), read(names(api)), tzOf(api)]);
       const now = t && {
         key: t.key,
-        subtasks: t.subtasks.map(s => compact({ id: s.id, title: s.title, done: s.done, assignee: (who || byId).get(s.assignee), due: day(s.due, tz) })),
+        subtasks: t.subtasks.map(s => compact({ id: s.id, title: s.title, done: s.done, assignee: (who || byId).get(s.assignee), due: day(s.due, tz, api) })),
       };
       if (!r.ok) incomplete(r, now ? { now } : {});
       // Everything went through; if the task can't be read back now, say what was done instead.
@@ -885,7 +913,11 @@ export const TOOLS = {
           ? [
               {
                 what: { set: [...(preferences ? ['preferences'] : []), ...(notifications ? ['notifications'] : [])].join(', ') },
-                run: async () => void (await api.patch('/me/preferences', compact({ preferences, notifications }))),
+                run: async () => {
+                  await api.patch('/me/preferences', compact({ preferences, notifications }));
+                  // A new time zone applies from the next call.
+                  clocks.delete(api);
+                },
               },
             ]
           : []),
@@ -949,17 +981,17 @@ export const TOOLS = {
   },
   manage_event: {
     annotations: writes({ destructive: true, idempotent: false }),
-    description: 'Create, change or delete a calendar event (no project: workspace-wide).',
-    inputSchema: obj(
-      { action: enm(['create', 'update', 'delete']), id: str(), title: str(), date: str('YYYY-MM-DD'), time: str('HH:MM, "" all day'), project: KEY },
-      ['action'],
-    ),
+    description: 'Create, change or delete a calendar event (no project: workspace-wide), on the person’s clock.',
+    inputSchema: obj({ action: enm(['create', 'update', 'delete']), id: str(), title: str(), date: str(WHEN), time: str('HH:MM, "" all day'), project: KEY }, [
+      'action',
+    ]),
     async run(api, { action, id, ...a }) {
       const view = e => compact({ id: e.id, title: e.title, date: e.date, time: e.time });
-      if (action === 'create') return (need({ action, ...a }, 'title', 'date'), view(await api.post('/events', a)));
+      if (action === 'create') return (need({ action, ...a }, 'title', 'date'), view(await api.post('/events', await eventArgs(api, a))));
       need({ action, id }, 'id');
       if (action === 'delete') return { deleted: (await api.del(`/events/${seg(id)}`)).id };
-      return view(await api.patch(`/events/${seg(id)}`, a));
+      // A new day alone keeps the event's time (the API's rule); one with a time sets both.
+      return view(await api.patch(`/events/${seg(id)}`, await eventArgs(api, a)));
     },
   },
   manage_view: {
@@ -995,9 +1027,12 @@ export const TOOLS = {
   update_workspace: {
     admin: true,
     annotations: writes({ destructive: true, idempotent: false }),
-    description: 'Rename the workspace or change its colour; inviteLink makes a new join link (admins).',
-    inputSchema: obj({ name: str(), color: str('#RRGGBB'), brand: BOOL, inviteLink: BOOL }),
+    description: 'Rename the workspace or change its colour or time zone; inviteLink makes a new join link (admins).',
+    inputSchema: obj({ name: str(), color: str('#RRGGBB'), brand: BOOL, timeZone: str('IANA zone for people without their own; "" unsets'), inviteLink: BOOL }),
     async run(api, { inviteLink, ...a }) {
+      if (a.timeZone === '') a.timeZone = null;
+      // It may be the person's clock too: read it again next time.
+      if ('timeZone' in a) clocks.delete(api);
       let ws;
       let link = null;
       const r = await steps([

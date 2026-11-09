@@ -2,8 +2,8 @@
 /* Start and due values: the one definition the web app, the server, the CLI, the MCP server and the
    Slack bot all use. Don't handle these values anywhere without going through this file.
 
-   A value (a task's start or due, a subtask's due, a project's start or due, a milestone's date) is
-   one of exactly two shapes:
+   A value (a task's start or due, a subtask's due, a project's start or due, a milestone's date, a
+   calendar event's start, the value an activity entry set) is one of exactly two shapes:
 
      all day   'YYYY-MM-DD'                a calendar day with no time and no time zone: Nov 9 is
                                            Nov 9 wherever it's read. It counts as the *end* of that
@@ -58,7 +58,57 @@ export function checkWhen(v) {
   return { ok: true, value: new Date(v).toISOString() };
 }
 
-/* ---------- time zones ---------- */
+/* ---------- time zones ----------
+   A zone is any IANA name the JavaScript engine knows ('Asia/Kolkata', 'UTC'). This checks one; it
+   never picks one: whose clock to read on is the server's server/lib/clock.js, the app's
+   src/core/clock.js, or `timeZone` from the API in clients. */
+/* Old names some engines (and Slack profiles, and browsers) still give, under today's names. */
+const RENAMED = /** @type {Record<string, string>} */ ({
+  'Asia/Calcutta': 'Asia/Kolkata',
+  'Asia/Katmandu': 'Asia/Kathmandu',
+  'Asia/Rangoon': 'Asia/Yangon',
+  'Asia/Saigon': 'Asia/Ho_Chi_Minh',
+  'Europe/Kiev': 'Europe/Kyiv',
+  'America/Godthab': 'America/Nuuk',
+  'Atlantic/Faeroe': 'Atlantic/Faroe',
+  'Pacific/Enderbury': 'Pacific/Kanton',
+  'Pacific/Truk': 'Pacific/Chuuk',
+  'Pacific/Ponape': 'Pacific/Pohnpei',
+});
+/** @type {Map<string, boolean>} */
+const zoneChecked = new Map();
+/**
+ * `v` when it names a time zone this engine knows (an IANA name like 'Asia/Dubai', or 'UTC'), else
+ * null. Never a fallback: the caller decides whose clock to use instead.
+ * @param {unknown} v
+ * @returns {string | null}
+ */
+export function validZone(v) {
+  // Offsets ('+05:30') aren't zones: they don't follow daylight saving.
+  if (typeof v !== 'string' || !v || v.length > 64 || /^[+-]/.test(v)) return null;
+  let ok = zoneChecked.get(v);
+  if (ok === undefined) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: v });
+      ok = true;
+    } catch {
+      ok = false; // not a zone this engine knows
+    }
+    // Bounded: these can come from requests.
+    if (zoneChecked.size < 1000) zoneChecked.set(v, ok);
+  }
+  return ok ? v : null;
+}
+/**
+ * A zone under its current name ('Asia/Calcutta' → 'Asia/Kolkata'); null when it isn't one.
+ * @param {unknown} v
+ * @returns {string | null}
+ */
+export function modernZone(v) {
+  const tz = validZone(v);
+  return tz && validZone(RENAMED[tz]) ? RENAMED[tz] : tz;
+}
+
 const formatters = new Map();
 /**
  * The wall clock of a moment in a time zone.
@@ -185,22 +235,56 @@ export function fmtHM(hm, format = '24') {
   const [h, m] = hm.split(':').map(Number);
   return `${h % 12 || 12}:${pad(m)} ${h < 12 ? 'AM' : 'PM'}`;
 }
+const zoneNames = new Map();
+/**
+ * A zone's short name at a moment: 'GMT+4', 'GMT+5:30', 'EST', 'UTC'. For words read by people on
+ * other clocks (a Slack channel), so a time says whose it is.
+ * @param {number} ms
+ * @param {string} tz
+ */
+export function zoneName(ms, tz) {
+  let f = zoneNames.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' });
+    zoneNames.set(tz, f);
+  }
+  return f.formatToParts(ms).find((/** @type {Intl.DateTimeFormatPart} */ p) => p.type === 'timeZoneName')?.value || tz;
+}
 /**
  * A value for people, in a time zone: 'iso' gives '2026-11-09' or '2026-11-09 23:59'; 'short' gives
- * 'Nov 9' or 'Nov 9, 11:59 PM'. '' for no value.
+ * 'Nov 9' or 'Nov 9, 11:59 PM'. `zone` adds the zone's name to a timed value ('2026-11-09 23:59
+ * GMT+5:30'), for words people on other clocks read; an all-day value never has one. '' for no value.
  * @param {string | null | undefined} v
  * @param {string} tz
- * @param {{ style?: 'iso' | 'short', time?: '12' | '24' }} [o]
+ * @param {{ style?: 'iso' | 'short', time?: '12' | '24', zone?: boolean }} [o]
  */
-export function label(v, tz, { style = 'iso', time = '24' } = {}) {
+export function label(v, tz, { style = 'iso', time = '24', zone = false } = {}) {
   if (!v) return '';
   const day = dayOf(v, tz);
   const t = fmtHM(timeOf(v, tz), time);
+  const z = t && zone ? ' ' + zoneName(Date.parse(v), tz) : '';
   if (style === 'short') {
     const [, m, d] = day.split('-').map(Number);
-    return `${MONTHS[m - 1]} ${d}${t ? ', ' + t : ''}`;
+    return `${MONTHS[m - 1]} ${d}${t ? ', ' + t : ''}${z}`;
   }
-  return t ? `${day} ${t}` : day;
+  return t ? `${day} ${t}${z}` : day;
+}
+/**
+ * A value worded by label(…, { zone: true }) read back: '2026-11-09 23:59 GMT+5:30' is the stored
+ * value when the zone named is `tz`'s at that moment; null when it names another (a time on someone
+ * else's clock). Anything else is parseWhen's.
+ * @param {string} s
+ * @param {string} tz
+ * @param {number | Date} [now]
+ */
+export function parseZoned(s, tz, now = Date.now()) {
+  const m = /^(.*\S)\s+((?:GMT|UTC)(?:[+-]\d{1,2}(?::\d{2})?)?|[A-Z]{2,5})$/.exec(String(s ?? '').trim());
+  if (m) {
+    const v = parseWhen(m[1], tz, now);
+    if (v && isTimed(v) && zoneName(Date.parse(v), tz) === m[2]) return v;
+  }
+  // No zone ('… 5:00 PM' ends in letters too), or another clock's, which parseWhen can't read.
+  return parseWhen(s, tz, now);
 }
 
 /* ---------- reading what people type ---------- */

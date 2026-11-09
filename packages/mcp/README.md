@@ -80,10 +80,10 @@ events, views, notifications, teams, bots).
 | `summarise_project`  | Counts, overdue, unassigned, next due, members and permissions, milestones   |
 | `list_members`       | People and bots                                                              |
 | `list_teams`         | Teams and who is on them                                                     |
-| `list_activity`      | Recent activity, workspace-wide or in a project                              |
+| `list_activity`      | Recent activity, workspace-wide or in a project (dates on your clock)        |
 | `list_notifications` | My inbox                                                                     |
 | `list_files`         | Files in a project or on a task                                              |
-| `list_events`        | Calendar events                                                              |
+| `list_events`        | Calendar events, with days and times on your clock                           |
 | `list_views`         | Saved views                                                                  |
 | `get_settings`       | Workspace, my profile, preferences, notification settings and favourites     |
 
@@ -115,11 +115,11 @@ events, views, notifications, teams, bots).
 
 **Admin** (only listed when the key's person is an Owner or Admin; `list_bots` with a Read only key too):
 
-| Tool               | Does                                                    | Annotations           |
-| ------------------ | ------------------------------------------------------- | --------------------- |
-| `list_bots`        | Bots with their projects and keys                       | read-only, idempotent |
-| `update_workspace` | Name, colour, logo; `inviteLink` makes a new join link  | destructive           |
-| `manage_bot`       | Create, change, remove a bot, or revoke one of its keys | destructive           |
+| Tool               | Does                                                              | Annotations           |
+| ------------------ | ----------------------------------------------------------------- | --------------------- |
+| `list_bots`        | Bots with their projects and keys                                 | read-only, idempotent |
+| `update_workspace` | Name, colour, logo, time zone; `inviteLink` makes a new join link | destructive           |
+| `manage_bot`       | Create, change, remove a bot, or revoke one of its keys           | destructive           |
 
 `openWorldHint` is `false` on all of them. Calling a write tool with a Read only key is an
 `insufficient_scope` result, and an admin tool for someone who isn't an Owner or Admin a `forbidden`
@@ -127,9 +127,19 @@ one. Some things stay in the app on
 purpose (making API keys, including bot keys; password, two-factor, sessions, sign-in email,
 account deletion, the Owner's workspace export); see [the API reference](../../docs/api.md).
 
-Dates and times are on your own clock (Settings → time zone), both ways: results say `2026-11-20`, or
+Dates and times are on your clock in the workspace, both ways: your time zone (Settings → Date and
+time), else the workspace's, else UTC, as the server reports it (`timeZone` on `/me/preferences`;
+this computer's only with an older server that doesn't say): results say `2026-11-20`, or
 `2026-11-20 17:00` for a time of day, and `due`, `start` and milestone dates take the same (or `today`,
-`fri`, `+3d`, `fri 5pm`). The tracker stores times in UTC; the server converts.
+`fri`, `+3d`, `fri 5pm`). The tracker stores times in UTC; the server converts. What others did is
+on your clock too: a due someone in India set for 6:30 PM reads 5:00 PM in activity for someone in
+Dubai, and their 10:00 calendar event is at 08:30 (`manage_event` reads `date` and `time` on yours;
+`date` takes `fri 10am` too, and `list_events` takes `from` and `to` like `today` and `+7d`).
+A program that runs the tools for other people with one key (the Slack bot) gives each person's
+client their zone with `useTimeZone(api, tz)` from `@sudosapient/mcp/tools`: the tools read and show
+dates on it, and the client sends it as `Sudo-Time-Zone`, so the server words history and events on
+it too. `useTimeZone(api, tz, { zoneNames: true })` also names the zone with each timed start and due
+(`2026-11-20 17:00 GMT+4`), for results that may be read out to people on other clocks.
 
 Arguments are checked against each tool's `inputSchema` before it runs: a missing, unknown or
 mistyped one is an `isError` result naming it (`invalid_arguments: Missing required argument:

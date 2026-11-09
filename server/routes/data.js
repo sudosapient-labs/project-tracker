@@ -4,11 +4,13 @@ import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import { GONE, requireAuth } from '../auth.js';
 import { parseBody } from '../lib/http.js';
-import { TIMEZONES } from '../../src/core/constants.js';
+import { tzCity, validTz } from '../../src/core/constants.js';
 import { bootstrap } from '../sync/bootstrap.js';
 import { canSee, projectFor } from '../sync/rules.js';
 import { newId } from '../lib/crypto.js';
 import { pushEndpointAllowed } from '../lib/push.js';
+import { clockOf } from '../lib/clock.js';
+import { dayOf } from '../../packages/client/dates.js';
 
 const MAX_OPS = 500;
 const PING_MS = 25_000;
@@ -20,18 +22,22 @@ export const SYNCS_PER_MINUTE = 600;
 
 /* Save a person's display preferences, view settings and sidebar state (each optional; `prefs`
    replaces theirs whole). Shared with the public API's PATCH /me/preferences. */
+/* `prefs` are merged key by key into what's saved: each client sends only what it changed, so a tab
+   left open can't put back a setting (a time zone) changed since elsewhere (the CLI, MCP, the API,
+   another device). `views` and `collapsed` are replaced. */
 export function saveState({ repo, engine }, uid, { prefs, views, collapsed }) {
   const patch = {};
   if (prefs) {
     // Name and title live on the member record; prefs only mirrors them.
     const { name, title, ...rest } = prefs;
-    patch.prefs = rest;
+    patch.prefs = { ...repo.userState(uid).prefs, ...rest };
   }
   if (views) patch.views = views;
   if (collapsed != null) patch.collapsed = collapsed;
   repo.saveUserState(uid, patch);
   // Show the person's local city on their profile, from their time-zone preference.
-  const city = TIMEZONES.some(z => z.id === prefs?.tz) && prefs.tz.split('/').pop().replace(/_/g, ' ');
+  const tz = validTz(prefs?.tz);
+  const city = tz && tzCity(tz);
   const m = repo.get('members', uid);
   if (city && m && m.tz !== city) {
     m.tz = city;
@@ -119,7 +125,7 @@ export function dataRoutes({ limit }) {
         `[export] ${member.name} <${user.email}> (${member.id}) exported the workspace: ${vis.size} of ${out.workspace.projects.length} projects in full`,
       );
     }
-    c.header('Content-Disposition', `attachment; filename="sudo-sapient-export-${new Date().toISOString().slice(0, 10)}.json"`);
+    c.header('Content-Disposition', `attachment; filename="sudo-sapient-export-${dayOf(Date.now(), clockOf(repo, member.id).tz)}.json"`);
     c.header('Cache-Control', 'no-store');
     return c.json(out);
   });

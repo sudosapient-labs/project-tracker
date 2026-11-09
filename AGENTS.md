@@ -47,7 +47,13 @@ everything about them is in `packages/client/dates.js` (see
 - Compare and sort with `instant` / `compareDue`, never as strings.
 - Turn what people or models type into a value with `parseWhen` / `fromWallClock`. Models and people
   give wall-clock times ("Friday 5pm"); code adds the time zone, not the model.
-- On the server, a person's time zone and time format come from `server/lib/clock.js`.
+- Never pick a clock in feature code (no machine zone, no `'UTC'` default of your own). Ask the shared
+  resolver for the person's clock: `clockOf(repo, uid)` in `server/lib/clock.js` on the server,
+  `zoneOf` in `src/core/clock.js` in the app, `timeZone` from `/me/preferences` or a Member in
+  clients. It's the person's saved zone, else the workspace's, else UTC. Store moments (UTC) and
+  days; format them on the reader's clock. `test/core/dates-convention.test.js` fails on code that
+  reads the machine's zone, cuts a UTC day from a moment, uses UTC getters, formats a date without a
+  zone, compares starts and dues as strings, or (in the app) reads a moment on the browser's clock.
 
 ## Tests
 

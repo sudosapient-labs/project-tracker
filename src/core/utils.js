@@ -51,7 +51,8 @@ export let dateFormat = 'MMM d';
 export function setDateFormat(f) {
   dateFormat = f || 'MMM d';
 }
-export let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+/* Whose clock: set from core/clock.js (store.js on load, theme.js on every render). */
+export let timeZone = 'UTC';
 export function setTimeZone(tz) {
   if (tz) timeZone = tz;
 }
@@ -73,6 +74,8 @@ export const dayKey = v => (v == null || v === '' ? '' : D.dayOf(v, timeZone));
 export const today = () => parse(dayKey(Date.now()));
 /* UTC ms of a value. All-day values count as the start of the day, or its end when `end` is set. */
 export const instant = (v, end) => D.instant(v, timeZone, end);
+/* Soonest first, no value last, on the selected zone (an all-day value sorts as the end of its day). */
+export const compareDue = (a, b) => D.compareDue(a, b, timeZone);
 export const toDate = (v, end) => new Date(instant(v, end));
 /* 'HH:MM' (24h) of a timed value in the selected zone; '' for all-day values. */
 export const timeOf = v => D.timeOf(v, timeZone);

@@ -3,7 +3,7 @@
    unknown fields pass through (the UI keeps small flags on records), bounded by the per-record size
    limit in the engine. */
 import { z } from 'zod';
-import { FILTER_FIELDS, PCOLORS, PRIOS, PSTAT, REACTIONS, RECUR, ROLES, STATUSES } from '../../src/core/constants.js';
+import { FILTER_FIELDS, PCOLORS, PRIOS, PSTAT, REACTIONS, RECUR, ROLES, STATUSES, validTz } from '../../src/core/constants.js';
 import { FILE_TYPES } from '../../src/core/file-types.js';
 import { isCanonical } from '../../packages/client/dates.js';
 
@@ -16,6 +16,8 @@ const ts = z.number().finite().nonnegative();
 // so every reader can rely on the shape.
 const date = z.string().refine(isCanonical, 'Invalid date').nullable().optional();
 const color = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid colour');
+// An IANA time zone ('Asia/Dubai', 'UTC').
+export const timeZone = z.string().refine(v => !!validTz(v), 'Unknown time zone');
 // A team reference: a team id, or '' for none.
 const teamRef = z.string().regex(/^[A-Za-z0-9_-]{0,64}$/, 'Invalid team');
 // Attachment and file URLs only ever point at this server's own files (routes/files.js).
@@ -101,7 +103,10 @@ export const SCHEMAS = {
     text: text(10_000).min(1),
     re: z.partialRecord(z.enum(REACTIONS), z.array(id).max(1000)).optional(),
   }),
-  activity: z.looseObject({ id, by: id, verb: text(80), task: ref, project: ref, at: ts, extra: text(500).optional() }),
+  // `extra`: the words after the verb, on the writer's clock. `when`: for an entry that sets a start
+  // or due, the value it was set to (null: cleared), which readers word on their own clock
+  // (src/core/activity.js).
+  activity: z.looseObject({ id, by: id, verb: text(80), task: ref, project: ref, at: ts, extra: text(500).optional(), when: date }),
   notifs: z.looseObject({ id, read: z.boolean() }),
   files: z.looseObject({
     id,
@@ -114,10 +119,13 @@ export const SCHEMAS = {
     task: ref,
     url: fileUrl.optional(),
   }),
-  // `time` is the event's start, 'HH:MM', or '' for all day.
+  // `when` is the event: 'YYYY-MM-DD' for all day, or the UTC instant it starts, the two shapes of a
+  // start or due. `date` and `time` ('HH:MM' or '') are its day and time on the clock of whoever
+  // saved it, set by the server (rules.js) for apps from before `when`, which show those.
   events: z.looseObject({
     id,
     title: text(200).min(1),
+    when: z.string().refine(isCanonical, 'Invalid date'),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     time: z.string().regex(/^(\d{2}:\d{2})?$/, 'Invalid time'),
     project: ref,
@@ -126,7 +134,8 @@ export const SCHEMAS = {
 };
 
 export const DOC_SCHEMAS = {
-  ws: z.object({ name: text(80), c: color, brand: z.boolean().optional() }),
+  // `tz`: the workspace's time zone, the clock of people who haven't set their own (server/lib/clock.js).
+  ws: z.object({ name: text(80), c: color, brand: z.boolean().optional(), tz: timeZone.nullable().optional() }),
   projOrder: z.array(id).max(5000),
   recentSearches: z.array(text(200)).max(20),
   notifPrefs: z.record(z.string().max(40), z.boolean()),

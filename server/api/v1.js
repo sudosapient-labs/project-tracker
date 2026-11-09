@@ -6,9 +6,10 @@
 
    Routes are declared once in ROUTES; registration and the OpenAPI document both read them. */
 import { Hono } from 'hono';
-import { PR, ST } from '../../src/core/constants.js';
+import { PR, ST, validTz } from '../../src/core/constants.js';
 import { clockOf as memberClock } from '../lib/clock.js';
-import { instant, label } from '../../packages/client/dates.js';
+import { checkWhen, dayOf, instant, isAllDay, isCanonical, label, timeOf } from '../../packages/client/dates.js';
+import { actExtra, whenAct } from '../../src/core/activity.js';
 import { textToHtml } from '../../src/core/rich-text.js';
 import { newId } from '../lib/crypto.js';
 import { PERMS, isAdminRole, projectLevel } from '../../src/core/access.js';
@@ -37,17 +38,31 @@ export const htmlToText = html =>
     .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, e) => ENT[e])
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-/* The key's person's time zone and clock: activity reads a start or due as they'd see it in the app
-   ("to Nov 9, 11:59 PM"), and repeats keep a task's time of day on their clock. */
-const clockOf = x => memberClock(x.repo, x.me.id);
+/* The caller's clock: what the API words or turns into a day for whoever is asking (activity "to
+   Nov 9, 11:59 PM", `date` and `time` on events, `sort=due`, "today", an event's day and time sent
+   in words). The key's person's clock, except that a client acting for someone else (the Slack bot,
+   one key for a whole team) can name that person's zone in the Sudo-Time-Zone header, for that
+   request only. The time format stays the key's person's. Nothing is saved, and what the server
+   does for other people (notifications, reminders, repeats) keeps their own clocks. A value that
+   isn't a zone is ignored. */
+export const TIME_ZONE_HEADER = 'Sudo-Time-Zone';
+const askedZone = c => validTz((c.req.header(TIME_ZONE_HEADER) || '').trim());
+const onAsked = (own, asked) => (asked ? { ...own, tz: asked } : own);
+const clockOf = x => onAsked(memberClock(x.repo, x.me.id), x.askedTz);
+/* A member's effective time zone and where it comes from, as Member, Me and Preferences show it. */
+const zoneView = ({ tz, source }) => ({ timeZone: tz, timeZoneSource: source });
 const shortDate = (x, v) => {
   const { tz, time } = clockOf(x);
   return label(v, tz, { style: 'short', time });
 };
+/* An activity entry's fields for a start or due set to `v`, worded on the key's person's clock. */
+const whenFields = (x, verb, v) => whenAct(verb, v, w => shortDate(x, w));
 
 /* ---------- public views of synced records ---------- */
 const LEVEL = ['none', 'view', 'comment', 'edit', 'full'];
-const views = (config, me, favs, keyOf) => ({
+/* `clock`: a member's clock (server/lib/clock.js), for the effective time zone on Member. `reader`:
+   the caller's (clockOf above), for activity and events, which read on the reader's clock. */
+const views = (config, me, favs, keyOf, clock, reader) => ({
   task: t => ({
     id: t.id,
     key: t.key,
@@ -112,6 +127,7 @@ const views = (config, me, favs, keyOf) => ({
     team: m.team || '',
     status: m.status,
     kind: m.kind === 'bot' ? 'bot' : 'person',
+    ...zoneView(clock(m.id)),
   }),
   comment: c => ({
     id: c.id,
@@ -125,7 +141,11 @@ const views = (config, me, favs, keyOf) => ({
     id: a.id,
     by: a.by,
     verb: a.verb,
-    extra: a.extra || '',
+    extra: actExtra(a, v => {
+      const { tz, time } = reader();
+      return label(v, tz, { style: 'short', time });
+    }),
+    ...(a.when !== undefined ? { when: a.when } : {}),
     via: a.via ?? null,
     task: a.task ?? null,
     taskKey: keyOf(a.task),
@@ -152,7 +172,13 @@ const views = (config, me, favs, keyOf) => ({
     uploadedAt: f.at,
     url: f.url ? `${config.appUrl}/api/v1/files/${f.id}/content` : null,
   }),
-  event: e => ({ id: e.id, title: e.title, date: e.date, time: e.time || '', project: e.project ?? null }),
+  // `date` and `time` on the reader's clock; `when` as stored. (An event the migration couldn't read
+  // has only the day and time it was saved with.)
+  event: e => {
+    if (!isCanonical(e.when)) return { id: e.id, title: e.title, date: e.date, time: e.time || '', when: null, project: e.project ?? null };
+    const { tz } = reader();
+    return { id: e.id, title: e.title, date: dayOf(e.when, tz), time: timeOf(e.when, tz), when: e.when, project: e.project ?? null };
+  },
   view: v => ({ id: v.id, project: v.project, name: v.name, type: v.type, filters: (v.filters || []).map(f => ({ field: f.f, op: f.op, values: f.v })) }),
   notification: n => ({
     id: n.id,
@@ -244,7 +270,24 @@ export function v1Routes({ limit, uploads }) {
     };
     // A key acts as its person: an Owner's or Admin's key has their admin powers, as in the app.
     const admin = isAdminRole(me);
-    return { c, db, repo, config, me, admin, projects, visible, favorites, resetFavorites, V: views(config, me, favorites, keyOf) };
+    const clocks = new Map();
+    const clock = id => clocks.get(id) || clocks.set(id, memberClock(repo, id)).get(id);
+    const askedTz = askedZone(c);
+    return {
+      c,
+      db,
+      repo,
+      config,
+      me,
+      admin,
+      projects,
+      visible,
+      favorites,
+      resetFavorites,
+      askedTz,
+      // Each member's clock once per request (activity and events read the caller's on every row).
+      V: views(config, me, favorites, keyOf, clock, () => onAsked(clock(me.id), askedTz)),
+    };
   };
   const findProject = (x, ref, field = 'project') => {
     const up = ref.toUpperCase();
@@ -303,10 +346,12 @@ export function v1Routes({ limit, uploads }) {
     }
     return results.map(r => r.v);
   }
-  /* The activity line the app logs with each change (store.js logAct). */
+  /* The activity line the app logs with each change (store.js logAct). `extra`: its words, or for a
+     start or due, `whenFields` (the words and the value). */
   const actOp = (x, t, verb, extra = '') => {
     const id = newId('a');
-    return { c: 'activity', id, k: 'put', v: { id, by: x.me.id, verb, task: t.id, project: t.project, at: Date.now(), extra } };
+    const more = typeof extra === 'string' ? { extra } : extra;
+    return { c: 'activity', id, k: 'put', v: { id, by: x.me.id, verb, task: t.id, project: t.project, at: Date.now(), ...more } };
   };
   /* The key the next task in project `p` gets (the app's nextKey; the server keeps it, see
      rules.js settleKey). */
@@ -390,8 +435,8 @@ export function v1Routes({ limit, uploads }) {
       const m = b.assignee === null ? null : findMember(x, b.assignee, 'assignee');
       if (set('assignee', m?.id ?? null)) acts.push(['assigned', m ? `to ${m.name}` : '(unassigned)']);
     }
-    if (b.due !== undefined && set('due', b.due)) acts.push(['changed due date of', b.due ? `to ${shortDate(x, b.due)}` : '(cleared)']);
-    if (b.start !== undefined && set('start', b.start)) acts.push(['changed start date of', b.start ? `to ${shortDate(x, b.start)}` : '(cleared)']);
+    if (b.due !== undefined && set('due', b.due)) acts.push(['changed due date of', whenFields(x, 'changed due date of', b.due)]);
+    if (b.start !== undefined && set('start', b.start)) acts.push(['changed start date of', whenFields(x, 'changed start date of', b.start)]);
     if (b.labels !== undefined && set('labels', b.labels)) acts.push(['updated labels on', '']);
     if (b.estimate !== undefined && set('estimate', b.estimate)) acts.push(['estimated', b.estimate || 'none']);
     if (b.recurrence !== undefined && set('recur', b.recurrence)) acts.push(['set repeat on', b.recurrence ? b.recurrence.toLowerCase() : 'off']);
@@ -468,8 +513,15 @@ export function v1Routes({ limit, uploads }) {
         args.push(q.q.toLowerCase(), q.q.toUpperCase());
       }
       if (q.updatedSince) {
-        const since = /^\d+$/.test(q.updatedSince) ? Number(q.updatedSince) : Date.parse(q.updatedSince);
-        if (!Number.isFinite(since)) throw new ApiFail(400, 'updatedSince must be an ISO date-time or Unix milliseconds.', 'invalid_request', 'updatedSince');
+        // Unix ms; a day, from its start on the caller's clock; or a date-time with its zone (one
+        // without is refused, as everywhere in the API: it would be a different moment for each reader).
+        let since = NaN;
+        if (/^\d+$/.test(q.updatedSince)) since = Number(q.updatedSince);
+        else {
+          const c = checkWhen(q.updatedSince);
+          if (!c.ok) throw new ApiFail(400, `updatedSince: ${c.error}, or Unix milliseconds.`, 'invalid_request', 'updatedSince');
+          since = isAllDay(c.value) ? instant(c.value, clockOf(x).tz) : Date.parse(c.value);
+        }
         where.push('updated_at >= ?');
         args.push(since);
       }
@@ -721,7 +773,10 @@ export function v1Routes({ limit, uploads }) {
     limit,
     uploads,
     shortDate,
+    whenFields,
     clockOf,
+    memberClock,
+    zoneView,
   });
 
   /* ---------- wiring ---------- */

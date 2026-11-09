@@ -7,7 +7,7 @@
    preferences) call the same server functions as the app's own routes.
 
    `h` carries v1.js's route table and helpers. */
-import { PCOLORS, PSTAT } from '../../src/core/constants.js';
+import { PCOLORS, PSTAT, validTz } from '../../src/core/constants.js';
 import { EDIT, canSeeProject, projectLevel } from '../../src/core/access.js';
 import { newId } from '../lib/crypto.js';
 import { RESTORE_MS } from '../sync/engine.js';
@@ -18,7 +18,7 @@ import { makeInviteLink, requestAccess, resendInvite } from '../routes/workspace
 import { MAX_BOTS, createBot, getBot, listBots, updateBot } from './bots.js';
 import { revokeKey } from './keys.js';
 import * as S from './schemas.js';
-import { dayOf } from '../../packages/client/dates.js';
+import { dayOf, fromWallClock, instant } from '../../packages/client/dates.js';
 
 export function registerMore(h) {
   const {
@@ -36,10 +36,12 @@ export function registerMore(h) {
     needAdmin,
     encodeCursor,
     decodeCursor,
-    shortDate,
+    whenFields,
     clockOf,
+    memberClock,
+    zoneView,
   } = h;
-  // Today on the key's person's calendar, not UTC's.
+  // Today on the caller's calendar (clockOf in v1.js), not UTC's.
   const today = x => dayOf(Date.now(), clockOf(x).tz);
   /* One use of a budget the app's own routes share (same key, size and message), refused with
      Retry-After as the app's limiter does. */
@@ -490,7 +492,7 @@ export function registerMore(h) {
     }
     if (b.due !== undefined && (s.due ?? null) !== b.due) {
       next.due = b.due;
-      acts.push(['set a subtask due date on', b.due ? shortDate(x, b.due) : '(cleared)']);
+      acts.push(['set a subtask due date on', whenFields(x, 'set a subtask due date on', b.due)]);
     }
     return { next, acts };
   };
@@ -847,11 +849,14 @@ export function registerMore(h) {
   });
 
   /* ---------- preferences, favourites, sidebar order ---------- */
+  // `preferences.tz` is the zone the person saved (when it is one); timeZone the one in use for them
+  // (their own, else the workspace's: never a Sudo-Time-Zone sent with this request).
   const prefsOf = x => {
     const st = x.repo.userState(x.me.id);
     return {
-      preferences: Object.fromEntries(Object.entries(st.prefs).filter(([k]) => S.PREF_KEYS.includes(k))),
+      preferences: Object.fromEntries(Object.entries(st.prefs).filter(([k, v]) => S.PREF_KEYS.includes(k) && (k !== 'tz' || validTz(v)))),
       notifications: { ...DEFAULT_NOTIF_PREFS, ...st.notifPrefs },
+      ...zoneView(memberClock(x.repo, x.me.id)),
     };
   };
   route('get', '/me/preferences', {
@@ -870,8 +875,8 @@ export function registerMore(h) {
     run: (x, { body: b }) => {
       if (b.notifications && Object.keys(b.notifications).length) write(x, [{ c: 'notifPrefs', k: 'patch', v: b.notifications }]);
       if (b.preferences && Object.keys(b.preferences).length) {
-        const cur = x.repo.userState(x.me.id).prefs;
-        saveState(x.c.var, x.me.id, { prefs: { ...cur, ...b.preferences } });
+        // Only the ones sent change (saveState merges them into what's saved).
+        saveState(x.c.var, x.me.id, { prefs: b.preferences });
         x.c.set('committed', true);
       }
       return prefsOf(x);
@@ -913,13 +918,13 @@ export function registerMore(h) {
   /* ---------- workspace ---------- */
   const wsView = x => {
     const ws = x.repo.workspace() || {};
-    return { name: ws.name || '', color: ws.c || '#5A67D8', brand: !!ws.brand };
+    return { name: ws.name || '', color: ws.c || '#5A67D8', brand: !!ws.brand, timeZone: validTz(ws.tz) };
   };
   route('get', '/workspace', { id: 'getWorkspace', tag: 'Workspace', summary: 'Workspace settings', ok: ok(S.Workspace), run: wsView });
   route('patch', '/workspace', {
     id: 'updateWorkspace',
     tag: 'Workspace',
-    summary: 'Rename the workspace or change its colour',
+    summary: 'Rename the workspace, or change its colour or time zone',
     admin: true,
     body: S.WorkspaceUpdate,
     ok: ok(S.Workspace),
@@ -928,6 +933,7 @@ export function registerMore(h) {
       if (b.name !== undefined) v.name = b.name;
       if (b.color !== undefined) v.c = b.color;
       if (b.brand !== undefined) v.brand = b.brand;
+      if (b.timeZone !== undefined) v.tz = b.timeZone;
       if (Object.keys(v).length) write(x, [{ c: 'ws', k: 'patch', v }]);
       return wsView(x);
     },
@@ -1177,19 +1183,27 @@ export function registerMore(h) {
     return e;
   };
   const eventProject = (x, ref) => (ref == null ? null : findProject(x, ref).id);
+  /* An event's `when` from a day and an 'HH:MM' ('' for all day) on the caller's clock. */
+  const eventWhen = (x, day, hm) => (hm ? fromWallClock(day, hm, clockOf(x).tz) : day);
+  /* When an event (as x.V.event shows it) starts, to order by: an all-day one at the start of its day. */
+  const eventMs = (v, tz) => instant(v.when || (v.time ? fromWallClock(v.date, v.time, tz) : v.date), tz);
   route('get', '/events', {
     id: 'listEvents',
     tag: 'Events',
-    summary: 'Calendar events (in projects you can open, and workspace-wide), by date',
+    summary: 'Calendar events (in projects you can open, and workspace-wide), by date on your clock',
     query: S.EventQuery,
     ok: ok(S.EventPage),
     run: (x, { query: q }) => {
       const pid = q.project ? findProject(x, q.project).id : null;
+      const { tz } = clockOf(x);
+      // Days and order on the caller's clock (`date` in each view is that day).
       const all = x.repo
         .all('events', 'WHERE project_id IS NULL OR project_id IN (SELECT value FROM json_each(?)) ORDER BY created_at, rowid', visibleIds(x))
-        .filter(e => (!pid || e.project === pid) && (!q.from || e.date >= q.from) && (!q.to || e.date <= q.to))
-        .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
-      return pageOf(all.map(x.V.event), q);
+        .filter(e => !pid || e.project === pid)
+        .map(x.V.event)
+        .filter(v => (!q.from || v.date >= q.from) && (!q.to || v.date <= q.to))
+        .sort((a, b) => eventMs(a, tz) - eventMs(b, tz));
+      return pageOf(all, q);
     },
   });
   route('post', '/events', {
@@ -1199,7 +1213,8 @@ export function registerMore(h) {
     body: S.EventCreate,
     ok: ok(S.Event, 201),
     run: (x, { body: b }) => {
-      const e = { id: newId('e'), title: b.title, date: b.date, time: b.time || '', project: eventProject(x, b.project) };
+      // The sync rules add `date` and `time` (on this person's clock) for older apps.
+      const e = { id: newId('e'), title: b.title, when: eventWhen(x, b.date, b.time || ''), project: eventProject(x, b.project) };
       return x.V.event(write(x, [put('events', e)])[0]);
     },
   });
@@ -1213,7 +1228,13 @@ export function registerMore(h) {
     run: (x, { params, body: b }) => {
       const e = findEvent(x, params.id);
       const v = {};
-      for (const k of ['title', 'date', 'time']) if (b[k] !== undefined) v[k] = b[k];
+      if (b.title !== undefined) v.title = b.title;
+      // A new day keeps the time, and a new time the day, as this person reads them now.
+      if (b.date !== undefined || b.time !== undefined) {
+        const now = x.V.event(e);
+        const when = eventWhen(x, b.date ?? now.date, b.time ?? now.time);
+        if (when !== e.when) v.when = when;
+      }
       if (b.project !== undefined) v.project = eventProject(x, b.project);
       if (!Object.keys(v).length) return x.V.event(e);
       return x.V.event(write(x, [patchOp('events', e.id, v)])[0]);

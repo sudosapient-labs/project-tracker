@@ -2,12 +2,13 @@
 /* ---------- theme ---------- */
 import { setDateFormat, setTimeFormat, setTimeZone } from './utils.js';
 import { S } from './store.js';
+import { zoneOf } from './clock.js';
 
 export function applyPrefs() {
   const r = document.documentElement,
     p = S.prefs;
   setDateFormat(p.dateFmt);
-  setTimeZone(p.tz);
+  setTimeZone(zoneOf(p, S.data.ws));
   setTimeFormat(p.timeFmt);
   if (p.theme === 'system') r.removeAttribute('data-theme');
   else r.setAttribute('data-theme', p.theme);

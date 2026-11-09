@@ -121,6 +121,9 @@ export function createEngine({ db, repo, config, mailer, pusher = null, log = co
       const cur = repo.workspace();
       const { onboarded, ...base } = cur;
       const next = k === 'patch' ? { ...base, ...v } : { ...v };
+      // An app from before the workspace had a time zone sends the whole doc without one: that
+      // keeps it (null clears it).
+      if (k === 'put' && isObj(v) && !('tz' in v) && base.tz) next.tz = base.tz;
       const r = DOC_SCHEMAS.ws.safeParse(next);
       if (!r.success) throw new Reject(r.error.issues[0].message, 400);
       repo.saveWorkspace({ ...r.data, onboarded });

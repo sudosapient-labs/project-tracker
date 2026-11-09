@@ -8,13 +8,15 @@
 
    Confirmations use humanInTheLoopMiddleware in per-call mode. (Batched mode, the default, drops
    the other tool calls of the same model turn when one is rejected, leaving calls with no result;
-   per-call resolves each on its own.) */
+   per-call resolves each on its own.) A change is held with its dates pinned to the moments they
+   stand for when it's asked (tools.js pinDates), and Confirm runs it with those (an "edit" decision
+   when they differ from what the model wrote), so "tomorrow" means the day it was asked. */
 import { createAgent, dynamicSystemPromptMiddleware, humanInTheLoopMiddleware, initChatModel, modelRetryMiddleware, toolCallLimitMiddleware } from 'langchain';
 import { Command } from '@langchain/langgraph';
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { CONFIRM_POLICIES } from './config.js';
-import { TRACKER_TOOLS, wouldBeAllowed } from './tools.js';
+import { TRACKER_TOOLS, pinDates, wouldBeAllowed } from './tools.js';
 import { basePrompt, loadSkills, systemPrompt } from './prompt.js';
 
 /* The chat model from a "provider:model" id, through the LLM proxy when one is configured.
@@ -51,10 +53,12 @@ const textOf = m => {
 
 /* What a run produced: the reply, the writes waiting for Confirm, the tasks it touched, and the card
    (a json-render spec) to show under the reply, if the agent made one. */
-function outcome(result, ctx) {
-  const pending = (result.__interrupt__ || [])
-    .filter(i => i.value?.type === 'tool_approval')
-    .map(i => ({ id: i.id, name: i.value.name, args: i.value.args, toolCallId: i.value.tool_call_id }));
+async function outcome(result, ctx) {
+  const pending = await Promise.all(
+    (result.__interrupt__ || [])
+      .filter(i => i.value?.type === 'tool_approval')
+      .map(async i => ({ id: i.id, name: i.value.name, args: await pinDates(ctx, i.value.args), toolCallId: i.value.tool_call_id })),
+  );
   const last = [...(result.messages || [])].reverse().find(m => m.getType?.() === 'ai');
   return { text: pending.length ? '' : textOf(last).trim(), pending, touched: [...new Set(ctx.touched)], card: ctx.card || null };
 }
@@ -76,8 +80,13 @@ export async function createSudoAgent({ config, store, model, tools = [], checkp
       humanInTheLoopMiddleware({
         interruptMode: 'per_call',
         interruptOn: Object.fromEntries(
-          confirm.map(name => [name, { allowedDecisions: ['approve', 'reject'], when: req => wouldBeAllowed(req.runtime.context, name, req.toolCall.args) }]),
+          confirm.map(name => [
+            name,
+            { allowedDecisions: ['approve', 'edit', 'reject'], when: req => wouldBeAllowed(req.runtime.context, name, req.toolCall.args) },
+          ]),
         ),
+        // An edit only pins dates (see above): the result reads as the change the person confirmed.
+        editNotice: '',
       }),
       toolCallLimitMiddleware({ runLimit: 25 }),
       modelRetryMiddleware({ maxRetries: 2 }),
@@ -100,12 +109,14 @@ export async function createSudoAgent({ config, store, model, tools = [], checkp
       return outcome(result, ctx);
     },
     /* The person pressed Confirm (approve) or Cancel on a card showing the interrupts `ids`. Acts
-       only if exactly those are still waiting; otherwise the card is out of date ({ stale: true }). */
-    async resume({ threadId, ids, approve, ctx }) {
+       only if exactly those are still waiting; otherwise the card is out of date ({ stale: true }).
+       `pending`: the changes as the card showed them (run's `pending`, saved with the card), whose
+       pinned dates are the ones made. */
+    async resume({ threadId, ids, approve, ctx, pending = [] }) {
       const waiting = await waitingIn(threadId);
       const now = new Set(waiting.map(i => i.id));
       if (!ids.length || ids.length !== now.size || !ids.every(id => now.has(id))) return { stale: true };
-      const result = await agent.invoke(new Command({ resume: decide(waiting, approve, 'They pressed Cancel.') }), cfg(threadId, ctx));
+      const result = await agent.invoke(new Command({ resume: decide(waiting, approve, 'They pressed Cancel.', pending) }), cfg(threadId, ctx));
       return outcome(result, ctx);
     },
     /* Interrupts the saved graph is paused on, if any. */
@@ -124,4 +135,14 @@ export async function createSudoAgent({ config, store, model, tools = [], checkp
   };
 }
 
-const decide = (interrupts, approve, why) => Object.fromEntries(interrupts.map(i => [i.id, approve ? { type: 'approve' } : { type: 'reject', message: why }]));
+/* Each interrupt's answer: Cancel rejects; Confirm runs the change as shown, with its pinned dates
+   (an edit) when they differ from the model's words. */
+function decide(interrupts, approve, why, pending = []) {
+  const shown = new Map(pending.map(p => [p.id, p.args]));
+  const answer = i => {
+    if (!approve) return { type: 'reject', message: why };
+    const args = shown.get(i.id);
+    return args && JSON.stringify(args) !== JSON.stringify(i.value.args) ? { type: 'edit', edited_action: { name: i.value.name, args } } : { type: 'approve' };
+  };
+  return Object.fromEntries(interrupts.map(i => [i.id, answer(i)]));
+}

@@ -117,7 +117,7 @@ by id, email, full name, a unique first name, or `me`. 🔑 Owners and Admins on
 | Events        | `GET`, `POST /events`, `PATCH`, `DELETE /events/{id}`                                   | Calendar events (`from`, `to`, `project`); workspace-wide ones 🔑                                |
 | Views         | `GET`, `POST /views`, `PATCH`, `DELETE /views/{id}`                                     | Saved views: named filters shown as a project tab                                                |
 | Notifications | `GET /notifications`, `PATCH /notifications/{id}`, `POST /notifications/read-all`       | Inbox (`unread=true`), mark read or unread, mark all read                                        |
-| Workspace     | `GET /workspace`, `PATCH /workspace` 🔑, `POST /workspace/invite-link` 🔑               | Settings; rename and colour; the reusable join link                                              |
+| Workspace     | `GET /workspace`, `PATCH /workspace` 🔑, `POST /workspace/invite-link` 🔑               | Settings; rename, colour and time zone; the reusable join link                                   |
 |               | `GET /activity`                                                                         | The activity feed (`project`), newest first                                                      |
 | Search        | `GET /search?q=`                                                                        | Tasks, projects and people                                                                       |
 
@@ -125,8 +125,46 @@ People can be given as an id, an email, a full name, a unique first name, or `me
 is `YYYY-MM-DD` for all day, or an ISO 8601 date-time **with a zone** for a time of day
 (`2026-11-09T23:59+05:30` or `…Z`); a date-time without a zone is refused, since it would be a
 different moment on different clocks. Times are stored and returned in UTC
-(`2026-11-09T18:29:00.000Z`): show them in the reader's time zone (`GET /me/preferences` → `tz`),
-not by cutting the string. See [dates and times](architecture.md#dates-and-times).
+(`2026-11-09T18:29:00.000Z`): show them in the reader's time zone, not by cutting the string. See
+[dates and times](architecture.md#dates-and-times).
+
+**Time zones.** Each person's dates are read on one clock: their own zone, else the workspace's,
+else UTC ([whose clock](architecture.md#whose-clock)). Every Member, `GET /me` and
+`GET /me/preferences` say which, as `timeZone` (an IANA zone, always set) and `timeZoneSource`
+(`person`, `workspace` or `default`); anyone who can see a member sees them, bots included. Use
+`timeZone` to show someone their times and to read what they type ("Friday 5pm"), never your
+machine's zone. `preferences.tz` is only the zone the person saved, so it's missing when they have
+none; set it with `PATCH /me/preferences` (any IANA zone, like `Australia/Sydney`). The workspace's
+is `timeZone` on `GET /workspace` (`null` when unset); Owners and Admins change it with
+`PATCH /workspace` (`null` unsets it).
+
+**History and events on your clock.** An Activity entry's `extra` ("to Nov 10, 5:00 PM") is worded
+on the key's person's clock, whoever made the change. An entry that set a start or due also has
+`when`, the value it was set to as stored (`null` when it was cleared); entries saved before it was
+kept have no `when`, and their `extra` is in the words of whoever wrote them. A calendar event's
+`date` and `time` are its day and start on the key's person's clock, and `when` is the event as
+stored: `YYYY-MM-DD` for all day, or the UTC moment it starts, the same for everyone. A 10:00 event
+added by someone in India is `time: "08:30"` for someone in Dubai. `POST` and `PATCH /events` take
+`date` and `time` on the key's person's clock (a new day keeps the time, a new time keeps the day),
+and `from` and `to` are their days.
+
+**Acting for someone on another clock: `Sudo-Time-Zone`.** "The key's person's clock" above is the
+caller's, and a client that acts for other people with one key (the Slack bot's, for a whole team)
+can name the person it's asking for: send `Sudo-Time-Zone: <IANA zone>` (`Asia/Dubai`) and, for
+that request only, everything the API words or reads as a day for the caller uses that zone instead
+of the key's person's. That is Activity `extra` (for reading, and the words written with a change),
+an event's `date` and `time` (in answers, and as sent to `POST` and `PATCH /events`), `from` and `to`
+on `GET /events`, `sort=due` and a day given as `updatedSince` on `GET /tasks`, and "today" (a new
+project's start). The time format
+(12 or 24 hours) stays the key's person's. It changes nothing else: no zone is saved, Member,
+`GET /me` and `GET /me/preferences` still show the person's own `timeZone`, stored values are the
+same UTC moments and days, and what the server does for other people keeps their clocks
+(notifications, reminders and digests on each recipient's, a repeating task's next due on its
+rule, read on the key's person's clock). A value that isn't an IANA zone (an offset such as
+`+04:00`, a misspelling, anything over 64 characters) is ignored: the request is read on the key's
+person's clock, as if no header was sent. `@sudosapient/client` sends it for a client given a zone
+(the MCP tools' `useTimeZone(api, tz)`), which is how the Slack bot words history on each asker's
+clock.
 
 Finishing a task (`status: done`, or `…/complete`) sets `completedAt` from the server's clock;
 moving it to any other status clears it. A repeating task finished with a due date gets one next
@@ -148,6 +186,9 @@ list it fetched long ago; the app sends what it edited from, and the server merg
   Anything in a project the key can't open answers `404`, so nothing reveals what exists.
 - **Pagination:** lists return `{ data, nextCursor }`; pass `cursor=<nextCursor>` for the next page
   (`limit` 1–100, default 50). Cursors are opaque.
+- **Changed since:** `updatedSince` on `GET /tasks` is Unix milliseconds, an ISO date-time with its
+  zone (`2026-11-10T09:00:00+05:30`, `…Z`), or a day (`2026-11-10`: from the start of that day on
+  the key's person's clock). A date-time without a zone is refused (`400`), as for dates you send.
 - **Order:** `GET /tasks` is newest first. With `sort=due` it's soonest due first across every
   matching task (an all-day due counts as the end of its day in the key's person's time zone, as in
   the app; no due date last, ties newest first), and the answer carries `"sort": "due"`; a
@@ -235,7 +276,7 @@ the app (select several, a whole column) are one request per task here.
 | Saved views   | Save a view, rename, change its filters, delete                                                                  | `/views…`                                          | `views …`                                     | `list_views`, `manage_view`                                       |
 | Notifications | Inbox, mark read or unread, mark all read                                                                        | `/notifications…`                                  | `inbox …`                                     | `list_notifications`, `mark_notifications_read`                   |
 | Activity      | The workspace, project and task feeds                                                                            | `GET /activity`, `…/activity`                      | `activity`, `show`                            | `list_activity`, `get_task`                                       |
-| Workspace     | Rename, colour 🔑                                                                                                | `PATCH /workspace`                                 | `workspace edit`                              | `update_workspace`                                                |
+| Workspace     | Rename, colour, time zone 🔑                                                                                     | `PATCH /workspace`                                 | `workspace edit`                              | `update_workspace`                                                |
 | Preferences   | Display preferences (theme, accent, density, language, time zone, formats, …)                                    | `PATCH /me/preferences`                            | `prefs set`                                   | `update_settings preferences`                                     |
 |               | Notification preferences (email, push and in-app per kind)                                                       | `PATCH /me/preferences`                            | `notify-prefs set`                            | `update_settings notifications`                                   |
 | Keys          | See the key in use; revoke it                                                                                    | `GET /me`, `DELETE /me/key`                        | `whoami`, `logout --revoke`                   | —                                                                 |

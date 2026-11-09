@@ -11,14 +11,19 @@
    (so nobody inherits what the bot looked up for someone else), in a DM one per day. Each
    confirmation card acts only on the changes it shows, only for the person who asked.
 
+   Whose clock: every request is read on the clock of the person it's for (clock.js, people.clock):
+   the asker's for a mention, DM, command or modal, the clicker's for a task card button, the
+   poster's for a link preview, and for a Confirm the asker's as saved with the change. Timed dues in
+   messages are Slack date tokens (format.js when()), so everyone in a channel sees their own time.
+
    Handlers take Bolt's listener arguments but only use plain fields and the Web API client, so tests
    drive them with a fake client. app.js wires them to Bolt and acks. */
-import { compareDue, dayOf, fromWallClock, label as dateLabel } from '@sudosapient/client/dates';
+import { compareDue, dayOf, fromWallClock, validZone } from '@sudosapient/client/dates';
 import { trackerClient } from '../tracker.js';
 import { EDIT, VIEW, isAdmin, level, shownHere, unmatchedText } from '../people.js';
 import { requestMessage } from '../prompt.js';
 import { renderCard } from './cards.js';
-import { confirmBlocks, createTaskModal, esc, loadingModal, messageModal, modalValues, mrkdwn, resolvedBlocks, statusName, taskCard } from './format.js';
+import { confirmBlocks, createTaskModal, esc, loadingModal, messageModal, modalValues, mrkdwn, resolvedBlocks, statusName, taskCard, when } from './format.js';
 
 const seg = ref => encodeURIComponent(String(ref).trim());
 const WORKING = '_Working on it…_';
@@ -30,12 +35,14 @@ const TRACKER_TIMEOUT = 20_000;
 const MY_CAP = 200;
 
 export function createHandlers({ config, store, agent, dir, people, slack, reader, fetch }) {
-  /* A tracker client with the bot's key, labelled for Activity: "Sudo Tracker via Slack (Ada)".
-     Every call gives up after TRACKER_TIMEOUT, so a hung tracker can't hold a conversation. */
+  /* A tracker client with the bot's key, labelled for Activity: "Sudo Tracker via Slack (Ada)", on
+     `tz`, the clock of the person it acts for. Every call gives up after TRACKER_TIMEOUT, so a hung
+     tracker can't hold a conversation. A new one per request: its clock is that request's only. */
   const base = fetch || globalThis.fetch;
   const timed = (url, init = {}) => base(url, { ...init, signal: init.signal || AbortSignal.timeout(TRACKER_TIMEOUT) });
-  const trackerAs = member => trackerClient(config, { client: `Slack (${member.name})`, fetch: timed });
-  const tz = config.timezone;
+  const trackerAs = (member, tz) => trackerClient(config, { client: `Slack (${member.name})`, fetch: timed, tz });
+  /* The time zone `member` (Slack user `user`) reads and writes on. */
+  const tzOf = async (user, member) => (await people.clock(user, member)).tz;
 
   /* Hosts the bot may link to in its own words: the tracker's and Slack's. */
   const trackerHosts = () => new Set([...(config.unfurlHosts || []), ...(config.tracker.url ? [new URL(config.tracker.url).host] : [])]);
@@ -51,7 +58,6 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     return next;
   }
 
-  const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: config.timezone }).format(new Date());
   const isDm = channel => /^D/.test(String(channel));
 
   async function post(channel, threadTs, payload) {
@@ -71,8 +77,8 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     return { channel, channelName: ch.name, dm: ch.dm, private: ch.private, project: store.channelProject(channel) };
   }
 
-  /* Cards for the tasks a run created or changed. */
-  async function cards(api, keys, where) {
+  /* Cards for the tasks a run created or changed; `tz` for their fallback text. */
+  async function cards(api, keys, where, tz) {
     const out = [];
     const who = new Map((await dir.members()).map(m => [m.id, m.name]));
     for (const key of keys.slice(0, MAX_CARDS)) {
@@ -110,20 +116,22 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
         channel,
         threadTs: ctx.slack.threadTs,
         messageTs: ts,
-        // A card the agent made before stopping for Confirm is shown with the reply after it.
-        data: { pending: out.pending, titles, slack: ctx.slack, card: ctx.card || null },
+        // A card the agent made before stopping for Confirm is shown with the reply after it. The
+        // changes' dates are already values (agent.js pins them on the asker's clock), and that
+        // clock goes with them, for the card's words whenever Confirm is pressed.
+        data: { pending: out.pending, titles, slack: ctx.slack, card: ctx.card || null, tz: ctx.tz },
       });
       return slack.chat.update({
         channel,
         ts,
         text: 'Waiting for you to confirm',
-        blocks: [...prefix, ...confirmBlocks(id, out.pending, requesterSlack, titles)],
+        blocks: [...prefix, ...confirmBlocks(id, out.pending, requesterSlack, titles, ctx.tz)],
       });
     }
     const card = out.card ? cardBlocks(out.card) : null;
     const text = mrkdwn(out.text, { hosts: linkHosts() }) || (card ? '' : out.touched.length ? 'Done.' : 'I don’t have anything to add.');
     const head = [...prefix, ...(text ? [{ type: 'section', text: { type: 'mrkdwn', text: text.slice(0, 2900) } }] : [])];
-    const tasks = await cards(ctx.api, out.touched, ctx.slack);
+    const tasks = await cards(ctx.api, out.touched, ctx.slack, ctx.tz);
     const notify = (text || card.text).slice(0, 3000);
     if (card)
       try {
@@ -156,16 +164,19 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
   async function supersede(threadId, why) {
     for (const c of store.takeConfirmationsIn(threadId))
       await slack.chat
-        .update({ channel: c.channel, ts: c.message_ts, text: 'Cancelled', blocks: resolvedBlocks(c.data.pending, why, c.data.titles) })
+        .update({ channel: c.channel, ts: c.message_ts, text: 'Cancelled', blocks: resolvedBlocks(c.data.pending, why, c.data.titles, c.data.tz) })
         .catch(() => {});
   }
 
   /* A request to the agent from a mention or a DM. `replyThread`: the thread to answer in (none for
-     a flat DM). `convo`: the conversation (per person per thread, or per DM per day). */
-  async function converse({ user, channel, ts, text, replyThread, convo }) {
+     a flat DM). `convo`: the conversation (per person per thread, or per DM per day), or a function
+     of the asker's time zone that gives it. */
+  async function converse({ user, channel, ts, text, replyThread, convo: convoOf }) {
     const who = await people.resolve(user);
     if (!who.member) return tell(channel, user, replyThread, unmatchedText(who, config.name));
     const member = who.member;
+    const tz = await tzOf(user, member);
+    const convo = typeof convoOf === 'function' ? convoOf(tz) : convoOf;
 
     const placeholder = await post(channel, replyThread, { text: WORKING });
     // Kept until the reply replaces the placeholder, so if the bot stops first, recover() can say so.
@@ -184,7 +195,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
         const thread = replyThread ? await reader.thread(channel, replyThread, { since: cursor, except: [ts, placeholder.ts] }) : { transcript: '' };
         const message = requestMessage({
           now: new Date(),
-          timezone: config.timezone,
+          timezone: tz,
           requester: member,
           channel: {
             id: channel,
@@ -197,7 +208,15 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
           transcript: thread.transcript,
           text: await reader.plain(text),
         });
-        const ctx = { api: trackerAs(member), dir, store, requester: member, slack: { ...where, threadTs: replyThread || null, permalink }, touched: [] };
+        const ctx = {
+          api: trackerAs(member, tz),
+          tz,
+          dir,
+          store,
+          requester: member,
+          slack: { ...where, threadTs: replyThread || null, permalink },
+          touched: [],
+        };
         const out = await agent.run({ threadId, message, ctx });
         store.setCursor(convo, placeholder.ts);
         await render({ out, ctx, channel, ts: placeholder.ts, threadId, requesterSlack: user });
@@ -226,14 +245,22 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     if (!taken) return say('That was already handled.');
     const { channel, message_ts: ts } = taken;
     const { pending, titles, slack: where } = taken.data;
+    // The clock the changes were asked on, saved with them (only a card from before it was saved
+    // reads on the asker's clock now).
+    const tz = validZone(taken.data.tz) || (await tzOf(user, who.member));
     const finish = () => store.finishConfirmation(id);
     if (Date.now() - taken.created_at > CONFIRM_TTL)
       try {
-        return await slack.chat.update({ channel, ts, text: 'Expired', blocks: resolvedBlocks(pending, 'Expired: ask again if you still want this.', titles) });
+        return await slack.chat.update({
+          channel,
+          ts,
+          text: 'Expired',
+          blocks: resolvedBlocks(pending, 'Expired: ask again if you still want this.', titles, tz),
+        });
       } finally {
         finish();
       }
-    const prefix = resolvedBlocks(pending, `${approve ? 'Confirmed' : 'Cancelled'} by <@${user}>.`, titles);
+    const prefix = resolvedBlocks(pending, `${approve ? 'Confirmed' : 'Cancelled'} by <@${user}>.`, titles, tz);
     try {
       await slack.chat.update({
         channel,
@@ -247,18 +274,18 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
       throw e;
     }
     return serial(taken.thread_id.replace(/#\d+$/, ''), async () => {
-      const ctx = { api: trackerAs(who.member), dir, store, requester: who.member, slack: where, touched: [], card: taken.data.card || null };
+      const ctx = { api: trackerAs(who.member, tz), tz, dir, store, requester: who.member, slack: where, touched: [], card: taken.data.card || null };
       try {
         // From here the change may be made. A restart after this can't tell whether it was, so
         // recover() says so rather than making it again (only create_task has an idempotency key).
         store.markResuming(id);
-        const out = await agent.resume({ threadId: taken.thread_id, ids: taken.interrupts, approve, ctx });
+        const out = await agent.resume({ threadId: taken.thread_id, ids: taken.interrupts, approve, ctx, pending });
         if (out.stale)
           return await slack.chat.update({
             channel,
             ts,
             text: 'Out of date',
-            blocks: resolvedBlocks(pending, 'Out of date: nothing was changed. Ask again if you still want this.', titles),
+            blocks: resolvedBlocks(pending, 'Out of date: nothing was changed. Ask again if you still want this.', titles, tz),
           });
         await render({ out, ctx, channel, ts, threadId: taken.thread_id, requesterSlack: user, prefix });
       } catch (e) {
@@ -288,7 +315,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
       store.endRun(r.channel, r.ts);
     }
     for (const c of store.takenConfirmations()) {
-      const { pending, titles } = c.data;
+      const { pending, titles, tz } = c.data;
       const it = pending.length === 1 ? 'this change' : 'these changes';
       const where = { channel: c.channel, ts: c.message_ts };
       if (c.approve && !c.resumed_at) {
@@ -297,13 +324,13 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
           type: 'context',
           elements: [{ type: 'mrkdwn', text: `_I restarted before making ${it}, so nothing was changed. Confirm again if you still want it._` }],
         };
-        await show(where, { text: 'Waiting for you to confirm', blocks: [note, ...confirmBlocks(c.id, pending, c.requester, titles)] });
+        await show(where, { text: 'Waiting for you to confirm', blocks: [note, ...confirmBlocks(c.id, pending, c.requester, titles, tz)] });
         continue;
       }
       const note = c.approve
         ? `Confirmed by <@${c.taken_by}>, but I restarted while making ${it}, so I can’t tell whether ${pending.length === 1 ? 'it' : 'they'} went through. Check before you ask me again.`
         : `Cancelled by <@${c.taken_by}>.`;
-      await show(where, { text: c.approve ? 'Interrupted' : 'Cancelled', blocks: resolvedBlocks(pending, note, titles) });
+      await show(where, { text: c.approve ? 'Interrupted' : 'Cancelled', blocks: resolvedBlocks(pending, note, titles, tz) });
       store.finishConfirmation(c.id);
     }
   }
@@ -314,7 +341,8 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     const say = text => respond?.({ response_type: 'ephemeral', replace_original: false, text });
     if (!who.member) return say(unmatchedText(who, config.name));
     const [key, status] = name === 'task_status' ? String(value).split('|') : [value];
-    const api = trackerAs(who.member);
+    const tz = await tzOf(user, who.member);
+    const api = trackerAs(who.member, tz);
     let t;
     try {
       t = await api.get(`/tasks/${seg(key)}`);
@@ -362,7 +390,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     const show = view => slack.views.update({ view_id: opened.view?.id, view });
     const who = await people.resolve(user);
     if (!who.member) return show(messageModal('Create task', unmatchedText(who, config.name)));
-    const [visible, members] = await Promise.all([dir.visible(who.member), dir.members()]);
+    const [visible, members, tz] = await Promise.all([dir.visible(who.member), dir.members(), tzOf(user, who.member)]);
     const projects = visible.filter(p => !p.archived && level(p, who.member) >= EDIT);
     if (!projects.length) return show(messageModal('Create task', 'There’s no project you can add tasks to.'));
     return show(
@@ -372,7 +400,9 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
         projects,
         members: members.filter(m => m.kind !== 'bot' && m.status === 'active'),
         defaultProject: store.channelProject(channel),
-        meta,
+        // The due time is read on the clock the form showed (the person's, now).
+        meta: { ...meta, tz },
+        tz,
       }),
     );
   }
@@ -402,10 +432,11 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     const who = await people.resolve(command.user_id);
     if (!who.member) return say(unmatchedText(who, config.name));
     const me = who.member;
-    const api = trackerAs(me);
+    const tz = await tzOf(command.user_id, me);
+    const api = trackerAs(me, tz);
     const names = new Map((await dir.members()).map(m => [m.id, m.name]));
     const line = t =>
-      `• <${t.url}|${esc(t.key)}> ${esc(t.title)}  ·  ${statusName(t.status)}${t.due ? `  ·  📅 ${dateLabel(t.due, tz, { time: '12' })}` : ''}${t.assignee && t.assignee !== me.id ? `  ·  ${esc(names.get(t.assignee) || '')}` : ''}`;
+      `• <${t.url}|${esc(t.key)}> ${esc(t.title)}  ·  ${statusName(t.status)}${t.due ? `  ·  📅 ${when(t.due, tz)}` : ''}${t.assignee && t.assignee !== me.id ? `  ·  ${esc(names.get(t.assignee) || '')}` : ''}`;
     // Only the person sees these answers, so everything they can open is included.
     const visibleIds = async () => new Set((await dir.visible(me)).map(p => p.id));
 
@@ -531,7 +562,10 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     const p = await dir.project(v.project);
     if (!p || level(p, who.member) < EDIT) return errors({ project: 'You can’t add tasks to that project.' });
     if (!String(v.title || '').trim()) return errors({ title: 'Give the task a title.' });
-    const api = trackerAs(who.member);
+    // The clock the time was picked on: the zone Slack says the picker showed, else the one the form
+    // was opened with, else the person's now.
+    const tz = validZone(v.dueTimeZone) || validZone(meta.tz) || (await tzOf(user, who.member));
+    const api = trackerAs(who.member, tz);
     const description = [v.description, meta.permalink ? `From Slack: ${meta.permalink}` : '', `— created by ${who.member.name} in Slack`]
       .filter(Boolean)
       .join('\n\n');
@@ -545,7 +579,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
           description,
           ...(v.assignee ? { assignee: v.assignee } : {}),
           ...(v.priority ? { priority: v.priority } : {}),
-          // A time needs a day: on its own it's today's, on the team's clock.
+          // A time needs a day: on its own it's today's, on the person's clock.
           ...(v.due || v.dueTime ? { due: v.dueTime ? fromWallClock(v.due || dayOf(Date.now(), tz), v.dueTime, tz) : v.due } : {}),
         },
         { idempotencyKey: `modal-${view.id}` },
@@ -591,7 +625,9 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
     const who = await people.resolve(event.user);
     if (!who.member) return; // no preview for people the tracker doesn't know
     const where = event.channel ? await whereIs(event.channel) : { dm: false };
-    const api = trackerAs(who.member);
+    // The preview is everyone's: dues in it show each viewer's clock, the poster's in the fallback.
+    const tz = await tzOf(event.user, who.member);
+    const api = trackerAs(who.member, tz);
     const unfurls = {};
     for (const l of links.slice(0, 5)) {
       try {
@@ -608,7 +644,7 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
             p.status,
             lead ? `Lead: ${esc(lead)}` : null,
             `${p.openTasks} open · ${p.doneTasks} done`,
-            p.due ? `📅 ${dateLabel(p.due, tz, { time: '12' })}` : null,
+            p.due ? `📅 ${when(p.due, tz)}` : null,
           ].filter(Boolean);
           unfurls[l.url] = {
             blocks: [
@@ -656,7 +692,8 @@ export function createHandlers({ config, store, agent, dir, people, slack, reade
         ts: event.ts,
         text: event.text,
         replyThread,
-        convo: replyThread ? `${event.channel}:${replyThread}:${event.user}` : `${event.channel}:dm:${today()}`,
+        // Flat DMs: one conversation per day, on the person's clock.
+        convo: replyThread ? `${event.channel}:${replyThread}:${event.user}` : tz => `${event.channel}:dm:${dayOf(Date.now(), tz)}`,
       });
     },
     onAction({ action, body, respond }) {

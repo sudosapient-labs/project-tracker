@@ -53,7 +53,7 @@ export function bootstrap({ db, repo }, auth) {
 
   return {
     data: {
-      ws: { name: ws?.name || '', c: ws?.c || '#5A67D8', ...(ws?.brand ? { brand: true } : {}) },
+      ws: { name: ws?.name || '', c: ws?.c || '#5A67D8', ...(ws?.brand ? { brand: true } : {}), ...(ws?.tz ? { tz: ws.tz } : {}) },
       me: uid,
       members,
       teams: repo.all('teams', 'ORDER BY created_at, rowid'),
@@ -67,7 +67,7 @@ export function bootstrap({ db, repo }, auth) {
       projOrder: [...unplaced, ...known],
       savedViews: repo.all('savedViews', `WHERE ${IN} ORDER BY created_at, rowid`, vis),
       recentSearches: state.recentSearches,
-      sessions: listSessions(db, uid, auth.session.id),
+      sessions: listSessions({ db, repo }, uid, auth.session.id),
       apiKeys: listKeys(db, uid),
       // Settings → API → Bots, for the Owner and Admins who manage them.
       bots: isAdminRole(auth.member) ? listBots(db, repo) : [],

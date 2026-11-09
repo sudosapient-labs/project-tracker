@@ -15,6 +15,17 @@ const ERRORS = {
   429: errorResponse('Rate limit reached; see Retry-After.'),
 };
 
+/* Sudo-Time-Zone (v1.js clockOf): the caller's clock for one request, for a client acting for
+   someone on another clock than the key's person's. */
+const TIME_ZONE_PARAM = {
+  name: 'Sudo-Time-Zone',
+  in: 'header',
+  required: false,
+  description:
+    'An IANA time zone (Asia/Dubai) to word and read dates on for this request instead of the key’s person’s: activity text, event `date` and `time`, `sort=due`, “today”, and an event’s `date` and `time` sent. For a client acting for someone else, such as a bot with one key for a team. The time format stays the key’s person’s; nothing is saved, and notifications, reminders and repeats keep each person’s own clock. A value that isn’t a zone is ignored.',
+  schema: { type: 'string', maxLength: 64, examples: ['Asia/Dubai'] },
+};
+
 let cached;
 export function openapi(routes, { appUrl }) {
   if (cached?.appUrl === appUrl) return cached.doc;
@@ -30,6 +41,7 @@ export function openapi(routes, { appUrl }) {
       for (const [name, { description, ...schema }] of Object.entries(js.properties))
         parameters.push({ name, in: 'query', required: (js.required || []).includes(name), ...(description ? { description } : {}), schema });
     }
+    parameters.push(TIME_ZONE_PARAM);
     if (rt.method !== 'get')
       parameters.push({
         name: 'Idempotency-Key',

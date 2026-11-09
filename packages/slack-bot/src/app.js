@@ -37,7 +37,7 @@ export async function startApp(config, { log = console } = {}) {
     store,
     agent,
     dir,
-    people: peopleOf({ slack: app.client, store, dir }),
+    people: peopleOf({ slack: app.client, store, dir, fallbackTz: config.timezone }),
     slack: app.client,
     reader: slackContext(app.client, { botUserId: auth.user_id, botName: config.name }),
   });

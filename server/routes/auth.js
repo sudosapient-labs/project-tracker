@@ -521,7 +521,7 @@ export function authRoutes({ limit }) {
     const { member } = c.var.auth;
     return c.json({
       ok: true,
-      sessions: listSessions(db, user.id, c.var.auth.session.id),
+      sessions: listSessions(c.var, user.id, c.var.auth.session.id),
       apiKeys: listKeys(db, user.id),
       bots: isAdminRole(member) ? listBots(db, c.var.repo) : [],
     });
@@ -613,7 +613,7 @@ export function authRoutes({ limit }) {
     return c.json({ ok: true });
   });
 
-  r.get('/sessions', requireAuth('account'), c => c.json(listSessions(c.var.db, c.var.auth.user.id, c.var.auth.session.id)));
+  r.get('/sessions', requireAuth('account'), c => c.json(listSessions(c.var, c.var.auth.user.id, c.var.auth.session.id)));
 
   r.delete('/sessions/:id', requireAuth('account'), c => {
     const { db, engine } = c.var;
@@ -622,7 +622,7 @@ export function authRoutes({ limit }) {
     if (id === session.id) return c.json({ error: 'Use Sign out to end this session.' }, 400);
     if (db.run('DELETE FROM sessions WHERE id = ? AND user_id = ?', id, user.id).changes) retireEmailChanges(db, user.id);
     engine.disconnectSession(id);
-    return c.json(listSessions(db, user.id, session.id));
+    return c.json(listSessions(c.var, user.id, session.id));
   });
 
   r.post('/sessions/revoke-others', requireAuth('account'), c => {
@@ -630,7 +630,7 @@ export function authRoutes({ limit }) {
     const { user, session } = c.var.auth;
     endOtherSessions(db, engine, user.id, session.id);
     retireEmailChanges(db, user.id);
-    return c.json(listSessions(db, user.id, session.id));
+    return c.json(listSessions(c.var, user.id, session.id));
   });
 
   /* ---------- two-factor setup ---------- */

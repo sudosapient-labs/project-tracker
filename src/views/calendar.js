@@ -16,8 +16,12 @@ export function calendarHtml(ts, opt = {}) {
   const cur = parse(S.ui.calDate);
   const mode = S.ui.calMode;
   const evs = opt.events ? D().events.filter(e => !opt.project || e.project === opt.project) : [];
+  // An event's day and time are this viewer's (`when` is a day, or the moment it starts).
   const itemsOn = ds => [
-    ...evs.filter(e => e.date === ds).map(e => ({ ev: e })),
+    ...evs
+      .filter(e => dayKey(e.when) === ds)
+      .sort((a, b) => instant(a.when) - instant(b.when))
+      .map(e => ({ ev: e })),
     ...ts
       .filter(t => dayKey(t.due) === ds)
       .sort((a, b) => instant(a.due) - instant(b.due))
@@ -27,7 +31,8 @@ export function calendarHtml(ts, opt = {}) {
   const chip = it => {
     if (it.ev) {
       const p = proj(it.ev.project);
-      return `<button class="cev event" style="--c:${pColor(p)}" data-a="pop" data-pop="event" data-id="${it.ev.id}" title="${esc(it.ev.title)}${it.ev.time ? ' · ' + esc(it.ev.time) : ''}"><span class="num faint" style="font-size:11px">${esc(it.ev.time)}</span><span class="trunc">${esc(it.ev.title)}</span></button>`;
+      const tm = fmtTime(it.ev.when);
+      return `<button class="cev event" style="--c:${pColor(p)}" data-a="pop" data-pop="event" data-id="${it.ev.id}" title="${esc(it.ev.title)}${tm ? ' · ' + esc(tm) : ''}"><span class="num faint" style="font-size:11px">${esc(tm)}</span><span class="trunc">${esc(it.ev.title)}</span></button>`;
     }
     const t = it.t;
     const p = proj(t.project);
@@ -69,7 +74,7 @@ export function calendarHtml(ts, opt = {}) {
             .map(it => {
               if (it.ev) {
                 const p = proj(it.ev.project);
-                return `<button class="wcard event" style="--c:${pColor(p)}" data-a="pop" data-pop="event" data-id="${it.ev.id}"><span class="t"><span class="pdot" style="--c:${pColor(p)};border-radius:50%"></span>${esc(it.ev.title)}</span><span class="m">${ic('clock', 11)}${[it.ev.time, p ? p.name : 'Whole workspace'].filter(Boolean).map(esc).join(' · ')}</span></button>`;
+                return `<button class="wcard event" style="--c:${pColor(p)}" data-a="pop" data-pop="event" data-id="${it.ev.id}"><span class="t"><span class="pdot" style="--c:${pColor(p)};border-radius:50%"></span>${esc(it.ev.title)}</span><span class="m">${ic('clock', 11)}${[fmtTime(it.ev.when), p ? p.name : 'Whole workspace'].filter(Boolean).map(esc).join(' · ')}</span></button>`;
               }
               const t = it.t;
               const p = proj(t.project);
