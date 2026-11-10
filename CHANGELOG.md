@@ -5,6 +5,26 @@ All notable changes to this project are documented here. From 0.2.0 on this file
 when the release PR is merged (see [CI and releases](docs/ci-and-releases.md)), so don't edit those
 entries by hand. Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2](https://github.com/sudosapient-labs/project-tracker/compare/v0.3.1...v0.3.2) (2026-11-10)
+
+
+### Features
+
+* **slack-bot:** answer lists and project status with cards: Slack's native tables and charts ([#40](https://github.com/sudosapient-labs/project-tracker/issues/40)) ([650498e](https://github.com/sudosapient-labs/project-tracker/commit/650498e172da2e6c9a2951e6b032a738ea361405))
+
+
+### Bug Fixes
+
+* let the Slack bot, MCP and CLI set and show due times, on the person's clock ([#42](https://github.com/sudosapient-labs/project-tracker/issues/42)) ([f85a471](https://github.com/sudosapient-labs/project-tracker/commit/f85a471049a1d8a6ac6d2733d6db28e0ebb1598f))
+* show and enter every time on each person's own clock ([#44](https://github.com/sudosapient-labs/project-tracker/issues/44)) ([fc130f8](https://github.com/sudosapient-labs/project-tracker/commit/fc130f8b6cda0070b490421d175e128858867d1a))
+* stop lost edits, lost confirmations and wrong access found in the state machine audit ([#43](https://github.com/sudosapient-labs/project-tracker/issues/43)) ([4c198c5](https://github.com/sudosapient-labs/project-tracker/commit/4c198c5b5585501418dfad1fea7626d44c28fc34))
+* store and read due times one way everywhere, in the reader's time zone ([#41](https://github.com/sudosapient-labs/project-tracker/issues/41)) ([f0f168c](https://github.com/sudosapient-labs/project-tracker/commit/f0f168c7908e526a7a00427da003380a5f916262))
+
+
+### Miscellaneous Chores
+
+* **release:** record 0.3.1 and make the next release 0.3.2 ([#46](https://github.com/sudosapient-labs/project-tracker/issues/46)) ([bf84390](https://github.com/sudosapient-labs/project-tracker/commit/bf8439063d0f97e44009c3b17ae0f77b03d4308f))
+
 ## [0.3.1](https://github.com/sudosapient-labs/project-tracker/compare/v0.3.0...v0.3.1) (2026-11-09)
 
 

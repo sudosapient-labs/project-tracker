@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.1](https://github.com/sudosapient-labs/project-tracker/compare/client-v0.2.0...client-v0.2.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* let the Slack bot, MCP and CLI set and show due times, on the person's clock ([#42](https://github.com/sudosapient-labs/project-tracker/issues/42)) ([f85a471](https://github.com/sudosapient-labs/project-tracker/commit/f85a471049a1d8a6ac6d2733d6db28e0ebb1598f))
+* show a task's newest comments in get_task and sudo-cli show ([#35](https://github.com/sudosapient-labs/project-tracker/issues/35)) ([0f82586](https://github.com/sudosapient-labs/project-tracker/commit/0f825863d13981cd28cb89e30b86e16b7615058a))
+* show and enter every time on each person's own clock ([#44](https://github.com/sudosapient-labs/project-tracker/issues/44)) ([fc130f8](https://github.com/sudosapient-labs/project-tracker/commit/fc130f8b6cda0070b490421d175e128858867d1a))
+* store and read due times one way everywhere, in the reader's time zone ([#41](https://github.com/sudosapient-labs/project-tracker/issues/41)) ([f0f168c](https://github.com/sudosapient-labs/project-tracker/commit/f0f168c7908e526a7a00427da003380a5f916262))
+
 ## [0.2.0](https://github.com/sudosapient-labs/project-tracker/compare/client-v0.1.0...client-v0.2.0) (2026-11-07)
 
 

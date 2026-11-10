@@ -1,6 +1,6 @@
 {
   "name": "@sudosapient/mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP server for Sudo Sapient: search, read and manage tasks from Claude, Cursor and other MCP clients.",
   "repository": {
     "type": "git",
