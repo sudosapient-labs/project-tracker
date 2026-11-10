@@ -5,6 +5,20 @@ All notable changes to this project are documented here. From 0.2.0 on this file
 when the release PR is merged (see [CI and releases](docs/ci-and-releases.md)), so don't edit those
 entries by hand. Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1](https://github.com/sudosapient-labs/project-tracker/compare/v0.3.0...v0.3.1) (2026-11-09)
+
+
+### Features
+
+* bring the Slack bot and the staging environment from dev to prod ([f8f4787](https://github.com/sudosapient-labs/project-tracker/commit/f8f47879aab157ffbf57a4ff130e83ef222c3a00))
+
+
+### Bug Fixes
+
+* keep Railway settings on the services so the Slack bot builds its own image ([#39](https://github.com/sudosapient-labs/project-tracker/issues/39)) ([fc6b584](https://github.com/sudosapient-labs/project-tracker/commit/fc6b584b70c710a5c014481191d5e379e4cb336a))
+* list my work soonest due first across all my tasks, not just the newest 30 ([#34](https://github.com/sudosapient-labs/project-tracker/issues/34)) ([a3a8ea6](https://github.com/sudosapient-labs/project-tracker/commit/a3a8ea6a7b0de28228244fcbf7789ab1d00029b3))
+* show a task's newest comments in get_task and sudo-cli show ([#35](https://github.com/sudosapient-labs/project-tracker/issues/35)) ([0f82586](https://github.com/sudosapient-labs/project-tracker/commit/0f825863d13981cd28cb89e30b86e16b7615058a))
+
 ## [0.3.0](https://github.com/sudosapient-labs/project-tracker/compare/v0.2.0...v0.3.0) (2026-11-07)
 
 
