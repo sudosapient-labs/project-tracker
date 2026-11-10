@@ -12,7 +12,7 @@ import { localTz, personTz, showDate } from './clock.js';
 import { ALIASES, NOUNS, PRIORITIES, STATUSES, nounHelp, rawApi, reaction, several } from './commands.js';
 
 // Kept equal to package.json by release-please (extra-files in release-please-config.json).
-export const VERSION = '0.2.0'; // x-release-please-version
+export const VERSION = '0.2.1'; // x-release-please-version
 
 export const HELP = `sudo-cli: Sudo Sapient from the terminal
 

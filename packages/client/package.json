@@ -1,6 +1,6 @@
 {
   "name": "@sudosapient/client",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Minimal fetch client for the Sudo Sapient public API (/api/v1), plus the shared CLI/MCP config.",
   "repository": {
     "type": "git",
