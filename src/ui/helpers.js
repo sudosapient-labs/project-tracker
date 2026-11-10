@@ -16,6 +16,14 @@ const RICH = {
   ALLOW_ARIA_ATTR: false,
 };
 export const richHtml = html => DOMPurify.sanitize(String(html ?? ''), RICH);
+/* A short fingerprint of a description, so the editor can tell which one it is showing (see writeDesc
+   in actions.js) without keeping a copy of it on the page. */
+export const descMark = html => {
+  const s = String(html ?? '');
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 33) ^ s.charCodeAt(i)) >>> 0;
+  return `${s.length}.${h.toString(36)}`;
+};
 
 export function av(id, cls = '', tip = true) {
   const m = mem(id);

@@ -336,7 +336,9 @@ export function popHtml(p) {
     }
     case 'daylist': {
       const ds = p.date;
-      const evs = D().events.filter(e => e.date === ds);
+      const evs = D()
+        .events.filter(e => dayKey(e.when) === ds)
+        .sort((a, b) => instant(a.when) - instant(b.when));
       const ts = allTasks()
         .filter(x => dayKey(x.due) === ds)
         .sort((a, b) => instant(a.due) - instant(b.due));
@@ -345,7 +347,7 @@ export function popHtml(p) {
         evs
           .map(
             e =>
-              `<button class="mi" ${e.project ? `data-a="go" data-r="project" data-id="${esc(e.project)}" data-tab="calendar"` : `data-a="pop" data-pop="event" data-id="${esc(e.id)}"`}>${ic('clock', 14)}${esc(e.title)}<span class="r">${esc(e.time)}</span></button>`,
+              `<button class="mi" ${e.project ? `data-a="go" data-r="project" data-id="${esc(e.project)}" data-tab="calendar"` : `data-a="pop" data-pop="event" data-id="${esc(e.id)}"`}>${ic('clock', 14)}${esc(e.title)}<span class="r">${esc(fmtTime(e.when))}</span></button>`,
           )
           .join('') +
         ts
@@ -362,7 +364,7 @@ export function popHtml(p) {
       if (!e) break;
       // Workspace-wide events have no project.
       const pr = e.project ? proj(e.project) : null;
-      inner = `<div style="padding:10px 10px 6px"><div class="row" style="gap:8px;margin-bottom:6px"><span class="pdot" style="--c:${pColor(pr)};border-radius:50%"></span><b style="font-size:14px;font-weight:600">${esc(e.title)}</b></div><div class="muted" style="font-size:12.5px;display:flex;flex-direction:column;gap:4px"><span class="row" style="gap:6px">${ic('calendar', 13)}${fmtDate(e.date, true)}${e.time ? ` · ${esc(e.time)}` : ''}</span><span class="row" style="gap:6px">${ic('folder', 13)}${esc(pr ? pr.name : 'Whole workspace')}</span>${pr ? `<span class="row" style="gap:6px">${ic('users', 13)}${avStack(pr.members || [], 5)}</span>` : ''}</div></div>${pr ? `<div class="msep"></div><button class="mi" data-a="go" data-r="project" data-id="${pr.id}" data-tab="overview">${ic('arrow-up-right', 14)}Open project</button>` : ''}`;
+      inner = `<div style="padding:10px 10px 6px"><div class="row" style="gap:8px;margin-bottom:6px"><span class="pdot" style="--c:${pColor(pr)};border-radius:50%"></span><b style="font-size:14px;font-weight:600">${esc(e.title)}</b></div><div class="muted" style="font-size:12.5px;display:flex;flex-direction:column;gap:4px"><span class="row" style="gap:6px">${ic('calendar', 13)}${fmtDate(e.when, true)}${hasTime(e.when) ? ` · ${esc(fmtTime(e.when))}` : ''}</span><span class="row" style="gap:6px">${ic('folder', 13)}${esc(pr ? pr.name : 'Whole workspace')}</span>${pr ? `<span class="row" style="gap:6px">${ic('users', 13)}${avStack(pr.members || [], 5)}</span>` : ''}</div></div>${pr ? `<div class="msep"></div><button class="mi" data-a="go" data-r="project" data-id="${pr.id}" data-tab="overview">${ic('arrow-up-right', 14)}Open project</button>` : ''}`;
       style = 'width:270px';
       break;
     }

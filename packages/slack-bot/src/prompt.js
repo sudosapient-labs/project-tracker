@@ -5,6 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { zoneName, zoneParts } from '@sudosapient/client/dates';
+import { whose } from './clock.js';
 
 const SKILLS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'skills');
 
@@ -52,12 +54,16 @@ const esc = s => String(s).replace(/</g, '‹').replace(/>/g, '›');
 
 /* The user message for one request: when and where, who's asking, the thread so far (fenced as
    untrusted), and what they asked. */
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/* `timezone`: the requester's clock (clock.js), which the tools read and write dates on too. */
 export function requestMessage({ now, timezone, requester, channel, transcript, text }) {
-  const day = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
-  const get = t => day.find(p => p.type === t)?.value;
-  const date = `${get('year')}-${get('month')}-${get('day')} (${get('weekday')})`;
+  // The day and the time now, so "today", "Friday" and "by 6pm" can be resolved on this clock.
+  const at = zoneParts(+now, timezone);
   const lines = [
-    `Today is ${date}, time zone ${timezone}.`,
+    `Today is ${at.day} (${WEEKDAYS[at.weekday]}), ${String(at.hour).padStart(2, '0')}:${String(at.minute).padStart(2, '0')} now on ${whose(requester.name)} clock (${timezone}). Dates and times in tool results, and the ones you give tools, are on this clock; a time in tool results ends with its zone (${zoneName(+now, timezone)} now).` +
+      // Read by everyone in a channel, each on their own clock.
+      (channel.dm ? '' : ' People here may be on other clocks: write every time with its zone.'),
     `Asking: ${requester.name} (${requester.role}${requester.email ? `, ${requester.email}` : ''}).`,
     channel.dm
       ? `Where: a direct message with you${channel.project ? ` (default project ${channel.project})` : ''}.`

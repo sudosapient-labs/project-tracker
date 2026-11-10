@@ -1,7 +1,8 @@
 /* =====================================================================
    PAGES
    ===================================================================== */
-import { ago, esc, relDate } from '../core/utils.js';
+import { ago, esc, fmtDateTime, relDate } from '../core/utils.js';
+import { actExtra } from '../core/activity.js';
 import { ic } from '../core/icons.js';
 import { PR, ST } from '../core/constants.js';
 import { D, S, commentsOf, isOver, mem, pColor, proj, roAttr, task } from '../core/store.js';
@@ -131,7 +132,9 @@ export function actHtml(a, opt = {}) {
     : p
       ? `<span class="obj" data-a="go" data-r="project" data-id="${p.id}">${esc(p.name)}</span>`
       : '';
-  return `<div class="fitem">${av(a.by, 'sm')}<div class="grow"><b>${esc(m?.id === D().me ? 'You' : m?.name || 'Someone')}</b>${botBadge(a.by)}${a.via ? ` <span class="faint">via ${esc(a.via)}</span>` : ''} <span class="muted">${esc(a.verb)}</span> ${obj} ${a.extra ? `<span class="muted">${esc(a.extra)}</span>` : ''}${opt.proj && p && t ? ` <span class="faint">in ${esc(p.name)}</span>` : ''}</div><time>${ago(a.at)}</time></div>`;
+  // A start or due on this reader's clock (core/activity.js).
+  const extra = actExtra(a, fmtDateTime);
+  return `<div class="fitem">${av(a.by, 'sm')}<div class="grow"><b>${esc(m?.id === D().me ? 'You' : m?.name || 'Someone')}</b>${botBadge(a.by)}${a.via ? ` <span class="faint">via ${esc(a.via)}</span>` : ''} <span class="muted">${esc(a.verb)}</span> ${obj} ${extra ? `<span class="muted">${esc(extra)}</span>` : ''}${opt.proj && p && t ? ` <span class="faint">in ${esc(p.name)}</span>` : ''}</div><time>${ago(a.at)}</time></div>`;
 }
 export function miniRow(t, opt = {}) {
   const p = proj(t.project);

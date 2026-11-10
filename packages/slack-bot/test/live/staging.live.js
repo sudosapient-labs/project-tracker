@@ -9,7 +9,9 @@
    sudosapient.dev) matches the seed script's STAGING_OWNER_EMAIL domain. */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createClient } from '@sudosapient/client';
+import { addDaysToDay, dayOf } from '@sudosapient/client/dates';
 import { chatSession } from '../../src/chat.js';
+import { clockOf } from '../../src/clock.js';
 import { loadConfig } from '../../src/config.js';
 
 const url = process.env.SUDO_STAGING_URL;
@@ -18,9 +20,8 @@ const domain = process.env.STAGING_EMAIL_DOMAIN || 'sudosapient.dev';
 const BEA = `staging-bea@${domain}`;
 const GUS = `staging-gus@${domain}`;
 const run = Math.random().toString(36).slice(2, 7).toUpperCase();
-const iso = d => d.toISOString().slice(0, 10);
-const inDays = n => new Date(Date.now() + n * 86_400_000);
-const spoken = d => d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'Asia/Kolkata' });
+/* 'November 20' for a 'YYYY-MM-DD' (a calendar day: the same everywhere). */
+const spoken = day => new Date(day + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' });
 
 describe.skipIf(!url || !key)('staging: the bot against the deployed tracker, without Slack', { timeout: 240_000 }, () => {
   const config = { ...loadConfig(), tracker: { url, key } };
@@ -28,6 +29,11 @@ describe.skipIf(!url || !key)('staging: the bot against the deployed tracker, wi
   const created = new Set();
   const asked = [];
   let filed;
+  /* Bea's clock, the one the bot reads her requests on (chat.js: clockOf her tracker Member, with
+     SLACK_BOT_TIMEZONE as the fallback), so the days expected are the days she means, even near
+     midnight. */
+  let beaTz;
+  const inDays = n => addDaysToDay(dayOf(Date.now(), beaTz), n);
 
   const session = (as, project) =>
     chatSession(config, {
@@ -43,6 +49,9 @@ describe.skipIf(!url || !key)('staging: the bot against the deployed tracker, wi
   beforeAll(async () => {
     const me = await api.get('/me');
     expect(me).toMatchObject({ kind: 'bot', name: 'Sudo Tracker' });
+    const bea = (await api.all('/members', {}, 500)).find(m => m.email === BEA);
+    expect(bea).toBeTruthy();
+    beaTz = clockOf(bea, { fallback: config.timezone }).tz;
   });
 
   afterAll(async () => {
@@ -61,7 +70,7 @@ describe.skipIf(!url || !key)('staging: the bot against the deployed tracker, wi
     created.add(filed.key);
     expect(filed.key).toMatch(/^WEB-/);
     expect(filed.priority).toBe('high');
-    expect(filed.due?.slice(0, 10)).toBe(iso(due));
+    expect(dayOf(filed.due, beaTz)).toBe(due);
     expect(filed.title).toMatch(/invoice|pdf/i);
     const activity = (await api.get(`/tasks/${filed.key}/activity`)).data;
     expect(activity.at(-1).via).toBe('Slack (Bea Member)');
@@ -75,7 +84,7 @@ describe.skipIf(!url || !key)('staging: the bot against the deployed tracker, wi
     await s.send(`Move ${filed.key} to ${spoken(due)}`);
     await s.close();
     expect(asked).toContain('update_task');
-    expect((await api.get(`/tasks/${filed.key}`)).due?.slice(0, 10)).toBe(iso(due));
+    expect(dayOf((await api.get(`/tasks/${filed.key}`)).due, beaTz)).toBe(due);
   });
 
   it('shows Bea her own work', async () => {

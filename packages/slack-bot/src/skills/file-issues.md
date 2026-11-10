@@ -20,5 +20,7 @@ Use when someone asks to file, log, create, track or "make issues from" somethin
    thread doesn't contain.
 6. Assignee only when someone is named or the person says "me". Priority only when stated or
    clearly implied ("prod is down" is urgent). Due dates: resolve "Friday", "end of month" against
-   today's date in the message, as YYYY-MM-DD.
+   today's date in the message, as YYYY-MM-DD. When a time is given ("by 11:59pm today", "Friday
+   5pm"), add it as YYYY-MM-DD HH:MM (24h), on the asking person's clock (the message names it);
+   dues can hold a time.
 7. Reply with what you created: key, title and assignee for each, in one short list.

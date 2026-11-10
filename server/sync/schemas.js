@@ -1,25 +1,23 @@
 // @ts-check
 /* Shapes of synced records, matching what the client renders. Known fields are type-checked;
-   unknown fields pass through (the UI keeps small flags like `prevStatus` on records), bounded by
-   the per-record size limit in the engine. */
+   unknown fields pass through (the UI keeps small flags on records), bounded by the per-record size
+   limit in the engine. */
 import { z } from 'zod';
-import { FILTER_FIELDS, PCOLORS, PRIOS, PSTAT, REACTIONS, RECUR, ROLES, STATUSES } from '../../src/core/constants.js';
+import { FILTER_FIELDS, PCOLORS, PRIOS, PSTAT, REACTIONS, RECUR, ROLES, STATUSES, validTz } from '../../src/core/constants.js';
 import { FILE_TYPES } from '../../src/core/file-types.js';
+import { isCanonical } from '../../packages/client/dates.js';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Invalid id');
 const ref = id.nullable().optional();
 const text = (max = 500) => z.string().max(max);
 const ts = z.number().finite().nonnegative();
-// Dates are 'YYYY-MM-DD' (all day) or an ISO instant like '2026-11-02T09:30:00.000Z' (timed). The day
-// must exist: 2026-02-31 would break scheduling the next repeat (as api/schemas.js checks for the API).
-const realDate = v => !Number.isNaN(Date.parse(v)) && new Date(v.slice(0, 10) + 'T00:00:00Z').toISOString().startsWith(v.slice(0, 10));
-const date = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/, 'Invalid date')
-  .refine(realDate, 'Invalid date')
-  .nullable()
-  .optional();
+// Starts and dues are exactly one of the two stored shapes (packages/client/dates.js): 'YYYY-MM-DD'
+// (all day, a day that exists) or a UTC instant as Date#toISOString writes it (timed). Nothing else,
+// so every reader can rely on the shape.
+const date = z.string().refine(isCanonical, 'Invalid date').nullable().optional();
 const color = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid colour');
+// An IANA time zone ('Asia/Dubai', 'UTC').
+export const timeZone = z.string().refine(v => !!validTz(v), 'Unknown time zone');
 // A team reference: a team id, or '' for none.
 const teamRef = z.string().regex(/^[A-Za-z0-9_-]{0,64}$/, 'Invalid team');
 // Attachment and file URLs only ever point at this server's own files (routes/files.js).
@@ -55,7 +53,11 @@ export const SCHEMAS = {
     recur: z.enum(RECUR).nullable().optional(),
     archived: z.boolean().optional(),
     archivedAt: ts.nullable().optional(),
+    // Set by the server only (task-status.js).
     completedAt: ts.nullable().optional(),
+    prevStatus: z.enum(STATUSES.map(s => s.id)).optional(),
+    nextId: id.optional(),
+    repeatOf: z.object({ id, sum: z.string().max(64).nullable() }).optional(),
   }),
   projects: z.looseObject({
     id,
@@ -101,7 +103,10 @@ export const SCHEMAS = {
     text: text(10_000).min(1),
     re: z.partialRecord(z.enum(REACTIONS), z.array(id).max(1000)).optional(),
   }),
-  activity: z.looseObject({ id, by: id, verb: text(80), task: ref, project: ref, at: ts, extra: text(500).optional() }),
+  // `extra`: the words after the verb, on the writer's clock. `when`: for an entry that sets a start
+  // or due, the value it was set to (null: cleared), which readers word on their own clock
+  // (src/core/activity.js).
+  activity: z.looseObject({ id, by: id, verb: text(80), task: ref, project: ref, at: ts, extra: text(500).optional(), when: date }),
   notifs: z.looseObject({ id, read: z.boolean() }),
   files: z.looseObject({
     id,
@@ -114,10 +119,13 @@ export const SCHEMAS = {
     task: ref,
     url: fileUrl.optional(),
   }),
-  // `time` is the event's start, 'HH:MM', or '' for all day.
+  // `when` is the event: 'YYYY-MM-DD' for all day, or the UTC instant it starts, the two shapes of a
+  // start or due. `date` and `time` ('HH:MM' or '') are its day and time on the clock of whoever
+  // saved it, set by the server (rules.js) for apps from before `when`, which show those.
   events: z.looseObject({
     id,
     title: text(200).min(1),
+    when: z.string().refine(isCanonical, 'Invalid date'),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     time: z.string().regex(/^(\d{2}:\d{2})?$/, 'Invalid time'),
     project: ref,
@@ -126,7 +134,8 @@ export const SCHEMAS = {
 };
 
 export const DOC_SCHEMAS = {
-  ws: z.object({ name: text(80), c: color, brand: z.boolean().optional() }),
+  // `tz`: the workspace's time zone, the clock of people who haven't set their own (server/lib/clock.js).
+  ws: z.object({ name: text(80), c: color, brand: z.boolean().optional(), tz: timeZone.nullable().optional() }),
   projOrder: z.array(id).max(5000),
   recentSearches: z.array(text(200)).max(20),
   notifPrefs: z.record(z.string().max(40), z.boolean()),

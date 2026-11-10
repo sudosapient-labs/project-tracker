@@ -5,21 +5,25 @@
    The requester is named by email (they must be an active tracker member). Whoever runs this holds
    the bot's key, so they can already act as the bot; `--as` only narrows what it does to what that
    person could do. Changes that would wait for Confirm in Slack are asked about here (y/N), or
-   decided up front with --yes / --no. Conversations live in memory and end with the process. */
+   decided up front with --yes / --no. Conversations live in memory and end with the process.
+   Dates are on the requester's clock (clock.js: the tracker's for them, as in Slack); there's no
+   Slack profile here, and nothing renders Slack's date tokens. */
 import readline from 'node:readline/promises';
 import { MemorySaver } from '@langchain/langgraph';
-import { createClient } from '@sudosapient/client';
+import { trackerClient } from './tracker.js';
 import { createSudoAgent } from './agent.js';
+import { clockOf } from './clock.js';
 import { mcpTools } from './mcp.js';
 import { directory } from './people.js';
 import { requestMessage } from './prompt.js';
 import { openStore } from './store.js';
+import { renderCard } from './slack/cards.js';
 
 const plainAction = ({ name, args }) => `${name.replace(/_/g, ' ')} ${JSON.stringify(args)}`;
 
-/* One conversation: send(text) → { text, pending, touched } after any confirmations. */
+/* One conversation: send(text) → { text, touched, card } after any confirmations. */
 export async function chatSession(config, { as, project = null, decide, log = console, fetch } = {}) {
-  const api = createClient({ url: config.tracker.url, key: config.tracker.key, client: 'Slack', ...(fetch ? { fetch } : {}) });
+  const api = trackerClient(config, { fetch });
   const dir = directory(api);
   const requester = await dir.byEmail(as);
   if (!requester) throw new Error(`No active tracker member has the email ${as}.`);
@@ -28,9 +32,11 @@ export async function chatSession(config, { as, project = null, decide, log = co
   const mcp = await mcpTools(config.mcpServers, { log });
   const agent = await createSudoAgent({ config, store, tools: mcp.tools, checkpointer: new MemorySaver() });
   const threadId = `terminal:${Date.now()}`;
-  const labelled = createClient({ url: config.tracker.url, key: config.tracker.key, client: `Slack (${requester.name})`, ...(fetch ? { fetch } : {}) });
+  const { tz } = clockOf(requester, { fallback: config.timezone });
+  const labelled = trackerClient(config, { client: `Slack (${requester.name})`, fetch, tz });
   const ctx = () => ({
     api: labelled,
+    tz,
     dir,
     store,
     requester,
@@ -42,7 +48,7 @@ export async function chatSession(config, { as, project = null, decide, log = co
   async function send(text) {
     const message = requestMessage({
       now: new Date(),
-      timezone: config.timezone,
+      timezone: tz,
       requester,
       channel: { id: 'terminal', name: 'terminal', dm: true, project },
       transcript: '',
@@ -51,14 +57,16 @@ export async function chatSession(config, { as, project = null, decide, log = co
     let c = ctx();
     let out = await agent.run({ threadId, message, ctx: c });
     const touched = [...out.touched];
+    let card = out.card;
     while (out.pending.length) {
       const approve = await decide(out.pending);
       c = ctx();
-      out = await agent.resume({ threadId, ids: out.pending.map(p => p.id), approve, ctx: c });
+      out = await agent.resume({ threadId, ids: out.pending.map(p => p.id), approve, ctx: c, pending: out.pending });
       if (out.stale) break;
       touched.push(...out.touched);
+      card = out.card || card;
     }
-    return { text: out.stale ? '' : out.text || '', touched: [...new Set(touched)] };
+    return { text: out.stale ? '' : out.text || '', touched: [...new Set(touched)], card: out.stale ? null : card };
   }
   return { requester, send, close: () => (store.close(), mcp.close()) };
 }
@@ -82,6 +90,13 @@ export async function runChat(config, { as, project, yes, no, message }) {
   const show = async text => {
     const r = await session.send(text);
     console.log(`\n${r.text}`);
+    // A card prints as the text Slack would fall back to.
+    if (r.card)
+      console.log(
+        `\n${renderCard(r.card)
+          .plain.map(b => b.text.text)
+          .join('\n\n')}`,
+      );
     if (r.touched.length) console.log(`\n(tasks: ${r.touched.join(', ')})`);
   };
   try {

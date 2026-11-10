@@ -23,13 +23,18 @@ try {
 }
 ```
 
-- `createClient({ url, key, client, fetch, retry, onRetry })`: `get`, `post`, `patch`, `put`, `del`,
+- `createClient({ url, key, client, fetch, retry, onRetry, timeZone })`: `get`, `post`, `patch`, `put`, `del`,
   `request`, `all` (every page of a list endpoint), `latest(path, n, at)` (the newest `n`, at most
   100, of a task's comments or activity, oldest first, as `{ data, older }` where `older` counts
   those left out; `at(item)` gives an item's time, used with servers from before `order=newest`), `upload(path, query, bytes, type)` (raw bytes as
   the body, for `POST /files`) and `download(path)` (`{ bytes, type, name }`). `client` labels your changes in Activity ("Ada via My
   script"). Errors are `ApiError` with `status`, `code` and `field` (and `retryAfter`, in seconds, on
   a `429`).
+- `timeZone` (an IANA zone; `setTimeZone(tz)` changes it, `null` stops it) is for a client acting
+  for someone on another clock than the key's person's, such as a bot with one key for a team: it's
+  sent as `Sudo-Time-Zone`, and the server words history and events, and reads "today" and
+  `sort=due`, on that zone for each request (see [docs/api.md](../../docs/api.md)). Nothing is saved.
+  A value that isn't a zone sends nothing.
 - Rate limits are waited out: a `429` with `Retry-After` is sent again after that many seconds, up
   to `retry.retries` times (default 3), as long as each wait is at most `retry.maxDelay` ms (default
   60 000) and the waits for one request add up to at most `retry.maxTotal` ms (default 120 000);
@@ -40,6 +45,16 @@ try {
 - `@sudosapient/client/config`: `loadConfig`, `saveConfig`, `clearConfig` and `configPath` for
   `$XDG_CONFIG_HOME/sudo-sapient/config.json`, the file `sudo-cli login` writes (readable only by
   you; `SUDO_URL` and `SUDO_API_KEY` override it).
+
+- `@sudosapient/client/dates`: the one definition of a start or due, shared with the app and the
+  server. A value is `'YYYY-MM-DD'` (all day) or a UTC instant (`'2026-11-09T18:29:00.000Z'`); read
+  it in a time zone with `dayOf`, `timeOf`, `label`, `instant`, `isOverdue` and `compareDue`, move it
+  with `shiftDays`, and turn what people type (`'fri 5pm'`, `'2026-11-20 17:00'`) into one with
+  `parseWhen` or `fromWallClock`. `checkWhen` is the API's input check. Don't take a timed value's day
+  with `slice(0, 10)`: that's its UTC day.
+  `validZone` says whether something is a time zone (an IANA name such as `Asia/Dubai`, not an
+  offset), and `modernZone` also gives an old name under today's (`Asia/Calcutta` → `Asia/Kolkata`):
+  the same check the server makes.
 
 Endpoints, fields and errors are in the workspace's API reference (`/api/docs`) and in
 [docs/api.md](../../docs/api.md).

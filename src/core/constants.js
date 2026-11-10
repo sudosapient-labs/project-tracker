@@ -1,6 +1,13 @@
 // @ts-check
+import { modernZone, validZone } from '../../packages/client/dates.js';
 /* ---------- vocab ---------- */
-export const TIMEZONES = [
+/* ---------- time zones ----------
+   Any IANA time zone the JavaScript engine knows. Whose clock a start or due is read on is decided
+   in one place: server/lib/clock.js on the server and src/core/clock.js in the app (the person's
+   saved zone, then the workspace's, then UTC). Nothing reads the machine's own zone; on a server
+   that is UTC, not the person's. */
+/* Shown first in the picker. */
+const COMMON_TZ = [
   { id: 'Asia/Kolkata', name: 'India Standard Time (GMT+05:30)' },
   { id: 'Asia/Dubai', name: 'Dubai, Gulf Standard Time (GMT+04:00)' },
   { id: 'Europe/London', name: 'London (GMT+00:00 / +01:00)' },
@@ -10,10 +17,55 @@ export const TIMEZONES = [
   { id: 'America/Los_Angeles', name: 'Pacific Time (GMT−08:00 / −07:00)' },
   { id: 'UTC', name: 'UTC' },
 ];
-const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-export const DEFAULT_TZ = TIMEZONES.some(z => z.id === browserTz) ? browserTz : 'Asia/Kolkata';
-/* Older saves stored a display label; anything outside the list falls back to the default. */
-export const validTz = v => (TIMEZONES.some(z => z.id === v) ? v : DEFAULT_TZ);
+/* What a valid zone is (and today's name for an old one) is packages/client/dates.js', shared with
+   the CLI, MCP server and Slack bot; these are the app's and server's names for it. */
+/** `v` when it names a time zone, else null (validZone). */
+export const validTz = validZone;
+/** A zone under its current name ('Asia/Calcutta' → 'Asia/Kolkata'), else null (modernZone). */
+export const modernTz = modernZone;
+/** The city a zone is named after: 'America/New_York' → 'New York'. @param {string} tz */
+export const tzCity = tz =>
+  String(tz || '')
+    .split('/')
+    .pop()
+    .replace(/_/g, ' ');
+/* 'GMT+04:00', or 'GMT−05:00 / −04:00' for a zone with daylight saving (offsets in January and July). */
+function tzOffsets(tz) {
+  const year = new Date().getUTCFullYear();
+  const f = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'longOffset' });
+  const at = m => {
+    const o = f.formatToParts(Date.UTC(year, m, 1)).find(p => p.type === 'timeZoneName')?.value || 'GMT';
+    return o === 'GMT' ? 'GMT+00:00' : o;
+  };
+  const mins = o => {
+    const [, sign, h, m] = /([+-])(\d+):(\d+)/.exec(o) || ['', '+', '0', '0'];
+    return (sign === '-' ? -1 : 1) * (+h * 60 + +m);
+  };
+  // Standard time first: daylight saving moves the clock forward.
+  const [std, dst] = [at(0), at(6)].sort((a, b) => mins(a) - mins(b)).map(o => o.replace('-', '−'));
+  return std === dst ? std : `${std} / ${dst.slice(3)}`;
+}
+let zoneList = null;
+/**
+ * Every zone people can pick: the common ones first, then the rest by name, each with a readable
+ * name and its offset ('Dubai, Asia (GMT+04:00)'). Built on first use (it takes a moment).
+ * @returns {{ id: string, name: string, common?: boolean }[]}
+ */
+export function timeZones() {
+  if (zoneList) return zoneList;
+  const ids = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+  const common = new Set(COMMON_TZ.map(z => z.id));
+  const rest = [...new Set(ids.map(modernTz))]
+    .filter(id => id && !common.has(id))
+    .map(id => {
+      const parts = id.split('/');
+      const where = parts.length > 1 ? `, ${parts.slice(0, -1).join(' / ').replace(/_/g, ' ')}` : '';
+      return { id, name: `${tzCity(id)}${where} (${tzOffsets(id)})` };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+  zoneList = [...COMMON_TZ.map(z => ({ ...z, common: true })), ...rest];
+  return zoneList;
+}
 export const STATUSES = [
   { id: 'backlog', name: 'Backlog' },
   { id: 'todo', name: 'To Do' },

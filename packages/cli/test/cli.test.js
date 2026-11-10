@@ -7,6 +7,7 @@ import { account, apiKey, bot, setup } from '../../../test/server/helpers.js';
 import { parseDue, run, sameOrigin } from '../src/cli.js';
 import { safeFileName } from '../src/commands.js';
 import { plainHttpRemote } from '@sudosapient/client';
+import { dayOf, parseWhen } from '@sudosapient/client/dates';
 import { saveConfig } from '@sudosapient/client/config';
 
 /* Runs the CLI with captured output and its own config directory. */
@@ -63,6 +64,15 @@ describe('arguments', () => {
     expect(parseDue('2027-01-31', fri)).toBe('2027-01-31');
   });
 
+  it('reads a time with the day, on the given clock, as the moment in UTC', () => {
+    const fri = Date.parse('2026-11-06T09:30:00Z'); // Friday 6 November 2026, 3:00 PM in India
+    expect(parseDue('today 11:59pm', fri, 'Asia/Kolkata')).toBe('2026-11-06T18:29:00.000Z');
+    expect(parseDue('mon 9am', fri, 'Asia/Kolkata')).toBe('2026-11-09T03:30:00.000Z');
+    expect(parseDue('2026-11-20 17:00', fri, 'Europe/London')).toBe('2026-11-20T17:00:00.000Z');
+    expect(parseDue('2026-11-20T17:00+05:30', fri, 'Europe/London')).toBe('2026-11-20T11:30:00.000Z');
+    expect(() => parseDue('fri 25:00', fri, 'Asia/Kolkata')).toThrow(/Can't read the date/);
+  });
+
   it('treats only plain http to another machine as insecure', () => {
     for (const u of ['http://app.test', 'http://10.0.0.5:8787', 'http://sudo.example.com/']) expect(plainHttpRemote(u), u).toBe(true);
     for (const u of ['https://sudo.example.com', 'http://localhost:5173', 'http://127.0.0.1:8787', 'http://[::1]:8787', 'http://app.localhost'])
@@ -116,7 +126,7 @@ describe('against a workspace', () => {
     await c('tasks', 'new', 'Second', '-p', 'WEB');
 
     const mine = await c('tasks');
-    expect(mine.out.trim().split('\n')).toEqual([expect.stringMatching(/^WEB-201\s+todo\s+high\s+Ada Owner\s+2026-11-20 Fix login bug$/)]);
+    expect(mine.out.trim().split('\n')).toEqual([expect.stringMatching(/^WEB-201\s+todo\s+high\s+Ada Owner\s+2026-11-20\s+Fix login bug$/)]);
     const all = JSON.parse((await c('tasks', 'list', '-p', 'WEB', '--json')).out);
     expect(all.map(x => x.key)).toEqual(['WEB-202', 'WEB-201']);
 
@@ -150,6 +160,11 @@ describe('against a workspace', () => {
     expect(commented).toContain('Sneaky]52;c;cHduZWQ= note[2J');
     expect(commented).not.toContain('\x1b');
     expect(commented).not.toContain('\x07');
+
+    // A time typed on this computer's clock is shown back on it, and stored in UTC.
+    await c('tasks', 'edit', 'WEB-201', '--due', '2026-11-20 17:00');
+    expect((await c('show', 'WEB-201')).out).toContain('· due 2026-11-20 17:00');
+    expect(JSON.parse((await c('show', 'WEB-201', '--json')).out).due).toMatch(/^2026-11-2\dT\d\d:\d\d:00\.000Z$/);
 
     const missing = await c('done', 'WEB-999', '--json');
     expect(missing.code).toBe(1);
@@ -188,6 +203,174 @@ describe('against a workspace', () => {
     expect((await c('whoami')).out).toBe('Release Bot (bot) · Member in http://localhost · write key “GitHub Actions”\n');
     expect((await c('new', 'Release', '1.4', '-p', 'WEB')).out).toMatch(/^Created WEB-201 Release 1\.4/);
     expect(t.db.get("SELECT json_extract(data, '$.by') by, json_extract(data, '$.via') via FROM activity")).toEqual({ by: b.id, via: 'CLI' });
+  });
+});
+
+describe('whose clock', () => {
+  const machineTz = process.env.TZ;
+  afterEach(() => {
+    if (machineTz === undefined) delete process.env.TZ;
+    else process.env.TZ = machineTz;
+  });
+
+  it('reads and shows dates on the zone the server uses for the person, not this computer’s', async () => {
+    process.env.TZ = 'America/Los_Angeles';
+    const t = setup();
+    const ada = await account(t);
+    await ada.c.sync([
+      {
+        c: 'projects',
+        id: 'pweb',
+        k: 'put',
+        v: {
+          id: 'pweb',
+          key: 'WEB',
+          name: 'Website',
+          icon: 'globe',
+          color: 'indigo',
+          status: 'active',
+          team: '',
+          lead: null,
+          members: [],
+          desc: '',
+          milestones: [],
+        },
+      },
+    ]);
+    const c = cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: await apiKey(ada.c) });
+    // Ada has no zone of her own; the workspace is in India.
+    expect((await c('workspace', 'edit', '--tz', 'Asia/Kolkata')).code).toBe(0);
+    expect((await c('workspace')).out).toContain('time zone Asia/Kolkata');
+    // 02:00 on Nov 10 in India is 20:30 UTC on Nov 9 (and 12:30 PM on Nov 9 in Los Angeles).
+    const made = await c('new', 'Night', 'deploy', '-p', 'WEB', '--due', '2026-11-10 02:00', '-a', 'me');
+    expect(made.out).toMatch(/^Created WEB-201 Night deploy · due 2026-11-10 02:00/);
+    expect(JSON.parse(t.db.get("SELECT data FROM tasks WHERE json_extract(data, '$.key') = 'WEB-201'").data).due).toBe('2026-11-09T20:30:00.000Z');
+    expect((await c('tasks')).out).toMatch(/WEB-201\s+todo\s+Ada Owner\s+2026-11-10 02:00\s+Night deploy/);
+    // --json keeps the API's UTC value.
+    expect(JSON.parse((await c('show', 'WEB-201', '--json')).out).due).toBe('2026-11-09T20:30:00.000Z');
+    expect((await c('prefs')).out).toContain('Dates and times show on Asia/Kolkata (the workspace’s).');
+
+    // Her own zone wins over the workspace's.
+    await c('prefs', 'set', 'tz=Europe/London');
+    expect((await c('show', 'WEB-201')).out).toContain('due 2026-11-09 20:30');
+    await c('tasks', 'edit', 'WEB-201', '--due', '2026-12-01 9am');
+    expect(JSON.parse(t.db.get("SELECT data FROM tasks WHERE json_extract(data, '$.key') = 'WEB-201'").data).due).toBe('2026-12-01T09:00:00.000Z');
+  });
+
+  it('falls back to this computer’s clock when the server doesn’t say (an older server)', async () => {
+    process.env.TZ = 'Asia/Kolkata';
+    const t = setup();
+    const ada = await account(t);
+    const token = await apiKey(ada.c);
+    // An older server: /me/preferences without timeZone.
+    const fetch = async (url, init) => {
+      const res = await t.app.request(url, init);
+      if (!String(url).endsWith('/me/preferences')) return res;
+      const { timeZone, timeZoneSource, ...old } = await res.json();
+      return new Response(JSON.stringify(old), { status: res.status, headers: { 'content-type': 'application/json' } });
+    };
+    await ada.c.sync([
+      {
+        c: 'projects',
+        id: 'pweb',
+        k: 'put',
+        v: {
+          id: 'pweb',
+          key: 'WEB',
+          name: 'Website',
+          icon: 'globe',
+          color: 'indigo',
+          status: 'active',
+          team: '',
+          lead: null,
+          members: [],
+          desc: '',
+          milestones: [],
+        },
+      },
+    ]);
+    const c = cli(null, { SUDO_URL: 'http://localhost', SUDO_API_KEY: token }, { fetch });
+    expect((await c('new', 'Night', 'deploy', '-p', 'WEB', '--due', '2026-11-10 02:00')).code).toBe(0);
+    expect(JSON.parse(t.db.get("SELECT data FROM tasks WHERE json_extract(data, '$.key') = 'WEB-201'").data).due).toBe('2026-11-09T20:30:00.000Z');
+  });
+
+  it('shows history and events on the reader’s clock, not the writer’s', async () => {
+    process.env.TZ = 'America/Los_Angeles';
+    const t = setup();
+    const ada = await account(t);
+    await ada.c.sync([
+      {
+        c: 'members',
+        id: 'mbob',
+        k: 'put',
+        v: { id: 'mbob', name: 'Bob Lee', email: 'bob@example.com', role: 'Member', team: '', title: '', c: '#6B7280', status: 'invited', tz: '' },
+      },
+      {
+        c: 'projects',
+        id: 'pweb',
+        k: 'put',
+        v: {
+          id: 'pweb',
+          key: 'WEB',
+          name: 'Website',
+          icon: 'globe',
+          color: 'indigo',
+          status: 'active',
+          team: '',
+          lead: null,
+          members: [],
+          desc: '',
+          milestones: [],
+        },
+      },
+    ]);
+    const bob = await account(t, { name: 'Bob Lee', email: 'bob@example.com', invite: t.lastLink('bob@example.com').split('#invite/')[1] });
+    await ada.c.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata' } });
+    await bob.c.put('/api/me/state', { prefs: { tz: 'Asia/Dubai' } });
+    const india = cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: await apiKey(ada.c) });
+    const dubai = cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: await apiKey(bob.c) });
+
+    // Ada, in India: a due at 6:30 PM, and a standup at 10:00.
+    expect((await india('new', 'Ship', 'it', '-p', 'WEB', '--due', '2026-11-10 18:30')).code).toBe(0);
+    await india('tasks', 'edit', 'WEB-201', '--due', '2026-11-11 18:30');
+    expect((await india('events', 'new', 'Standup', '--date', '2026-11-20', '--time', '10:00', '-p', 'WEB')).out).toMatch(
+      /^Added Standup on 2026-11-20 at 10:00/,
+    );
+
+    // Bob, in Dubai.
+    expect((await dubai('activity')).out).toMatch(/Ada Owner via CLI changed due date of to Nov 11, 5:00 PM\n/);
+    expect((await india('activity')).out).toMatch(/Ada Owner via CLI changed due date of to Nov 11, 6:30 PM\n/);
+    expect((await dubai('events')).out).toMatch(/^2026-11-20 08:30 {3}Standup/);
+    // --json keeps the stored moment alongside.
+    expect(JSON.parse((await dubai('events', '--json')).out)[0]).toMatchObject({ date: '2026-11-20', time: '08:30', when: '2026-11-20T04:30:00.000Z' });
+  });
+
+  it('reads an event’s --date, with its time, and --from/--to on the person’s clock', async () => {
+    process.env.TZ = 'America/Los_Angeles';
+    const t = setup();
+    const ada = await account(t);
+    await ada.c.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata' } });
+    const india = cli(t, { SUDO_URL: 'http://localhost', SUDO_API_KEY: await apiKey(ada.c) });
+    const IST = 'Asia/Kolkata';
+    // 01:00 on Nov 21 in India is still Nov 20 in UTC (and Nov 20 on this computer).
+    expect((await india('events', 'new', 'Deploy', '--date', '2026-11-21 01:00')).out).toMatch(/^Added Deploy on 2026-11-21 at 01:00/);
+    const fri = parseWhen('fri 10am', IST);
+    expect((await india('events', 'new', 'Standup', '--date', 'fri 10am')).out).toMatch(new RegExp(`^Added Standup on ${dayOf(fri, IST)} at 10:00`));
+    expect((await india('events', 'new', 'Offsite', '--date', 'tomorrow')).out).toMatch(new RegExp(`^Added Offsite on ${parseWhen('tomorrow', IST)} \\S+\\n$`));
+    const all = JSON.parse((await india('events', '--json')).out);
+    expect(all.find(e => e.title === 'Deploy')).toMatchObject({ date: '2026-11-21', time: '01:00', when: '2026-11-20T19:30:00.000Z' });
+    expect(all.find(e => e.title === 'Standup').when).toBe(fri);
+    const deploy = all.find(e => e.title === 'Deploy').id;
+    // A new day alone keeps the time; with a time, both.
+    await india('events', 'edit', deploy, '--date', '2026-11-22');
+    await india('events', 'edit', all.find(e => e.title === 'Standup').id, '--date', '2026-11-23 09:15');
+    const now = JSON.parse((await india('events', '--json')).out);
+    expect(now.find(e => e.title === 'Deploy')).toMatchObject({ date: '2026-11-22', time: '01:00' });
+    expect(now.find(e => e.title === 'Standup')).toMatchObject({ date: '2026-11-23', time: '09:15' });
+    expect((await india('events', '--from', '2026-11-22', '--to', '2026-11-22')).out).toMatch(/^2026-11-22 01:00 {3}Deploy/);
+    const soon = (await india('events', '--from', 'today', '--to', '+1d')).out;
+    expect(soon).toContain('Offsite');
+    expect(soon).not.toContain('Deploy');
   });
 });
 

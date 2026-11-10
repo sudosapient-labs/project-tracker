@@ -12,31 +12,55 @@ proxies `/api` to the API on :8787.
 - **Writes.** Actions keep mutating `S.data` and calling `save()`. `shell/sync.js` diffs `S.data`
   against what the server last confirmed and sends field-level operations to `POST /api/sync` (up to
   500 per batch). The server (`server/sync/`) validates each one, checks permissions, applies side
-  effects (task keys, cascading deletes, notifications, invite emails) and returns the canonical
-  record; a rejected change is rolled back on the client with a toast. Each batch runs in one SQLite
+  effects (task keys, cascading deletes, notifications, invite emails, a task's status lifecycle)
+  and returns the canonical record, plus any other record the batch changed (`changes`, which the
+  live stream doesn't send that tab); a rejected change is rolled back on the client with a toast. Each batch runs in one SQLite
   transaction. `<html data-sync>` shows `saving` / `saved` / `offline`; changes made while offline
   are retried. Consecutive changes to the same record are folded into one queued operation (the
   later value of each field wins), and each request stays within the server's limits (500 ops,
   4 MB, 900,000 characters of descriptions); an op the server defers because its per-request
   budget is spent (`retry`) is sent again, and a batch refused as too large (`413`) is split.
+- **Unsaved edits are kept.** What's waiting to be saved is also written to IndexedDB under the
+  signed-in person, so a reload, a crash, a discarded tab or an ended session doesn't lose it; it's
+  sent after the next bootstrap, only for the same person (anyone else's is dropped, and they're
+  told how many changes). Hiding the page sends what's waiting at once.
 - **Lists and maps merge.** A project's `members`, `perms` and `milestones`, a task's `subtasks`,
   `labels` and `deps`, and a comment's reactions (`re`) are whole values, so the client sends each one with the value it edited from (`base`) and
   the server applies only that client's additions, removals and changes onto the current value
-  (`server/sync/merge.js`). A stale write (an offline queue, a tab behind) can't undo someone else's
+  (`src/core/merge.js`). A stale write (an offline queue, a tab behind) can't undo someone else's
   change: a person taken off a project stays off. Entries are matched by id (milestones by name),
   and reactions emoji by emoji, so two people reacting at once both count. A patch without `base` (the REST API, which
   reads and writes in one request) replaces the whole value.
-- **Undo.** Undo puts back only the records the action changed. A record it deleted is re-sent
+- **Task status.** The server owns what follows from a task's status
+  (`server/sync/task-status.js`, for sync and the REST API alike); clients only change `status`, and
+  what they send for the other fields is ignored. Finishing sets `completedAt` and `prevStatus`
+  (where it was, for Reopen and Undo); reopening clears both. A repeating task finished with a due
+  date gets one next occurrence, made in the same transaction, so concurrent completions make one;
+  the original names it (`nextId`) and it names the original (`repeatOf`, with a fingerprint of how
+  the server made it). Reopening removes it only if it still matches that fingerprint (nobody has
+  worked on it, whatever its timestamps say) and has no comments; otherwise it stays linked.
+- **Edit windows and descriptions.** The task, project and team edit windows save only what was
+  changed in them since they opened (lists merged onto the current value), so a field someone else
+  changed meanwhile keeps their value. A task's description is sent with the one it was edited from
+  (`base.desc`); when someone else's was saved meanwhile, the server refuses it (`desc_conflict`)
+  and the app, which also notices one arriving while the editor has focus, keeps the person's text
+  and asks whether to keep theirs or write it over.
+- **Undo.** Undo puts back only the records the action changed, and in each only the fields it
+  changed that nobody has changed since (lists and maps merged), so later edits stay. A record it deleted is re-sent
   with `restore: true`; the server then restores its own copy, kept in `recent_deletes` for 10
   minutes and only for the person who deleted it, so a comment keeps its author, time and
   reactions, a task its key, and nobody is notified again. When there is no such copy (too late,
-  or someone else deleted it) the Undo is refused (`410`); records of other kinds (projects,
-  files, events, …) are created like anything new.
+  or someone else deleted it) the Undo is refused (`410`); records of other kinds (teams,
+  events, …) are created like anything new. Deleting a project or a file and removing someone from
+  the workspace offer no Undo: the server keeps nothing to restore them from.
 - **Live updates.** Other people's changes arrive over Server-Sent Events (`GET /api/events`) and are
   merged in, filtered to what each person can see. A tab's own changes aren't echoed back to it
-  (`x-client-id`). When the stream drops, the client reconnects and bootstraps again.
+  (`x-client-id`). When the stream drops, the client reconnects and bootstraps again; a
+  bootstrap that fails is retried with backoff (the tab shows offline meanwhile).
 - **Per-person data** (preferences, view settings, favourites, sidebar order, notification
-  preferences) is stored per account (`PUT /api/me/state`), not in the browser.
+  preferences) is stored per account (`PUT /api/me/state`), not in the browser. Preferences are
+  merged key by key, and the app sends only the ones changed in that tab, so a tab left open never
+  puts back one changed elsewhere (a time zone set with the CLI).
 - **Files** stream to `POST /api/files` as the raw request body, are written under `UPLOAD_DIR` with a
   random storage key, and are served (`GET /api/files/<id>/<name>`) only to people who can see the
   project.
@@ -57,6 +81,82 @@ proxies `/api` to the API on :8787.
   HTTPS (or localhost); on iPhone/iPad the app must be added to the Home Screen first. A subscription
   belongs to the session that made it and is deleted when that session ends (sign out, revoked,
   password change or reset, expiry, removal); the browser subscribes again after its next sign-in.
+
+## Dates and times
+
+A start or due (task start and due, subtask due, project start and due, milestone date) is one of
+two shapes, defined once in `packages/client/dates.js` and used by the app, the server, the CLI, the
+MCP server and the Slack bot:
+
+| Shape   | Example                    | Means                                                         |
+| ------- | -------------------------- | ------------------------------------------------------------- |
+| All day | `2026-11-09`               | That calendar day wherever it's read; overdue once it's over. |
+| Timed   | `2026-11-09T18:29:00.000Z` | One moment, stored in UTC; shown in the reader's time zone.   |
+
+The sync schema accepts only these two; the API also takes a date-time with an offset and stores it
+in UTC, and refuses one without a zone. A timed value's day depends on the reader (`2026-11-09T20:30Z`
+is Nov 10, 2:00 AM in India), so code reads values with `dayOf`, `timeOf`, `label`, `instant`,
+`isOverdue` and `compareDue` and the reader's time zone, never with `value.slice(0, 10)` or string
+comparison. What people type ("fri 5pm") becomes a value through `parseWhen`. A calendar event's
+start (`when`) has the same two shapes: an all-day event is a day, a timed one the moment it starts.
+
+### Whose clock
+
+Stored values don't depend on anyone's clock; reading or writing them in words or as a day does.
+Which time zone that is, is decided in one place, in this order:
+
+1. **The person's** saved zone (Settings → Date and time; `prefs.tz`, any IANA zone: what counts as
+   one is `validZone` / `modernZone` in `packages/client/dates.js`, `validTz` / `modernTz` in the app
+   and server).
+2. **The workspace's** (Settings → Workspace, Owners and Admins; `tz` on the workspace doc,
+   `timeZone` in `GET /workspace`), for people who haven't set one, and for bots such as the Slack
+   bot's account.
+3. **UTC**.
+
+Never the machine's zone: on the server that is UTC, not anyone's. On the server the order lives in
+`server/lib/clock.js` (`clockOf(repo, uid)` → `{ tz, time, source }`, and `workspaceClock(repo)`),
+and everything the server writes or decides for someone goes through it: activity text,
+notifications, reminders and digests, repeats, `sort=due`, "today" in the API, session dates. The
+API shows the result as `timeZone` and `timeZoneSource` (`person`, `workspace` or `default`) on
+Members, `GET /me` and `GET /me/preferences`, so other surfaces use the same clock: the MCP server
+and the CLI read the person's from there, and fall back to their computer's only when an older
+server doesn't say. What the API words or reads as a day for the caller (activity, events,
+`sort=due`, "today") is on the key's person's clock, unless a client acting for someone else sends
+that person's zone in the `Sudo-Time-Zone` header, for that request only (`clockOf` in
+`server/api/v1.js`, [docs/api.md](api.md)); notifications, reminders and repeats never take it.
+The Slack bot reads each request on the asker's clock, in the same order (their Member's `timeZone`;
+their Slack profile's only from a server too old to say; `packages/slack-bot/src/clock.js`), and
+sends it as `Sudo-Time-Zone`,
+so history it reads back is worded on that clock too; timed dues in channel messages are Slack date
+tokens, so each reader sees their own time. What the model reads and writes can't hold a token, so
+there a timed due names its zone (`label(v, tz, { zone: true })`: `2026-11-20 17:00 GMT+4`).
+
+The app (`src/core/clock.js`, `zoneOf`) uses the saved zone, else the browser's, else the
+workspace's, else UTC. The browser's zone is never only shown: when someone with none saved opens
+the app, it saves the browser's as theirs, once, and says so ("Time zone set to Dubai from your
+browser"), so the server and the app agree. A zone they chose is never replaced. A new workspace
+takes the Owner's zone when setup finishes; migration 014 gave existing ones the zone most of their
+people had saved.
+
+### History and events on the reader's clock
+
+What is stored is the value; words are made when someone reads it, on their clock.
+
+- **History.** An activity entry that sets a start or due (a task's start or due, a subtask's due)
+  also keeps the value it was set to, `when` (`null` when cleared), next to `extra`, the words on
+  the writer's clock. Every reader words `when` on their own clock: the app in task history and
+  the activity feeds, and the REST API in `extra` for the caller, which is what the MCP
+  server, the CLI and the Slack bot show. The rule lives in `src/core/activity.js` (`whenAct` to
+  write, `actExtra` to read). Entries saved before `when` existed, and those written by apps from
+  before it, only have `extra`, and show it as written. Nothing is rewritten.
+- **Calendar events.** `when` is the event: a day for an all-day one, the UTC moment it starts for
+  a timed one (a 10:00 standup set in India is 8:30 in Dubai). The calendar places it on the
+  viewer's day and shows its time on their clock; the API gives `date` and `time` on the key's
+  person's clock and reads them that way when given. The sync rules (`settleEventWhen` in
+  `server/sync/rules.js`) also store `date` and `time` as the day and time on the saver's clock,
+  for apps from before `when`, which show those. An app that sends only `date` and `time` has them
+  read on its person's clock; one that can't be read is refused. Migration 015 read the events
+  saved before on the workspace's clock, else UTC.
 
 ## Public API, MCP and CLI
 
@@ -151,7 +251,7 @@ they only see its work once they add themselves.
 Dependencies point downward:
 
 1. `core/` depends on nothing else in the app. The server imports parts of it (`access.js`,
-   `rich-text.js`, `constants.js`, `file-types.js`), which is why the Docker image includes `src/core`.
+   `rich-text.js`, `constants.js`, `file-types.js`, `merge.js`), which is why the Docker image includes `src/core`.
 2. `ui/`, `shell/`, `components/`, `pages/`, `views/`, `overlays/` and `features/` render HTML from state.
 3. `actions/` change state and re-render. Each action module registers its handlers on the shared
    action table (`A`) when it loads, so `main.js` imports them after `actions/actions.js`.

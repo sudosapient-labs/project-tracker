@@ -11,6 +11,9 @@ import { D, PREFS_KEY, S, saveHooks, task } from '../core/store.js';
 import { CLIENT_ID, api } from '../core/api.js';
 import { toast } from '../ui/toast.js';
 import { render } from './render.js';
+/* List and map fields (MERGED) are sent with the value they were edited from, so the server applies
+   only this tab's changes to them: a stale edit can't undo someone else's. */
+import { MERGED, mergeField } from '../core/merge.js';
 
 export const COLLS = ['members', 'teams', 'projects', 'tasks', 'comments', 'activity', 'notifs', 'files', 'events', 'savedViews'];
 const DOCS = ['ws', 'projOrder', 'recentSearches', 'notifPrefs'];
@@ -41,13 +44,18 @@ const restoring = new Map();
 const gone = new Map();
 /* Records someone else changed while a change of ours to them was on its way (see settle). */
 const crossed = new Set();
-const hooks = { signedOut: () => {}, otherUser: () => {}, stillMe: () => true, resync: () => {} };
+const hooks = { signedOut: () => {}, otherUser: () => {}, stillMe: () => true, resync: () => {}, descConflict: () => false };
 export const onSync = h => Object.assign(hooks, h);
+/* The session ended (expired, revoked, signed out elsewhere): nothing more is sent from this tab, as
+   it would only be refused again. What's waiting stays queued, and signedOut (actions/session.js)
+   keeps it in the browser for when this person signs in again. */
+let ended = false;
+function sessionEnded(e) {
+  ended = true;
+  hooks.signedOut(e);
+}
 
 const fields = o => new Map(Object.keys(o).map(k => [k, JSON.stringify(o[k])]));
-/* List and map fields sent with the value they were edited from, so the server applies only this
-   tab's changes to them (server/sync/merge.js): a stale edit can't undo someone else's. */
-const MERGED = { projects: ['members', 'perms', 'milestones'], tasks: ['subtasks', 'labels', 'deps'], comments: ['re'] }; // as server/sync/merge.js
 /* Projects I can't open come as stubs; give them the empty fields pages read, in the record and its
    shadow alike, so nothing is sent back for them. */
 const fill = (c, v) =>
@@ -59,11 +67,25 @@ const keyOf = (c, id) => `${c}:${id}`;
 const who = () => (S.ui.me?.id ? { 'x-sudo-user': S.ui.me.id } : {});
 
 /* ---------- lifecycle ---------- */
-export function prime(data) {
+/* `kept`: edits this person left unsaved in this browser earlier (see takeKept), to send now. */
+export function prime(data, kept = []) {
   shadow = { docs: {} };
   (data.projects || []).forEach(p => fill('projects', p));
   for (const c of COLLS) shadow[c] = new Map((data[c] || []).map(e => [e.id, fields(e)]));
   for (const d of DOCS) shadow.docs[d] = JSON.stringify(data[d] ?? null);
+  // They go first: they were made before anything queued since. Each is this person's own change,
+  // made from what they saw then, so it's sent as their queue would have been had they stayed: a
+  // field they changed is set again over the fresh data, as any edit made offline is. List and map
+  // fields keep the `base` they were edited from, not the fresh value: the server then applies only
+  // this person's additions and removals (src/core/merge.js), so nothing someone else added or
+  // removed since is undone (re-based on the fresh data, the old list would read as this person
+  // removing what others added). The server may already have some of them (the page went while
+  // they were on their way): a patch then sets the same values again, a merged field finds its
+  // additions and removals already made, a delete finds nothing to delete. A new record (a put)
+  // the fresh data already has did reach it (ids are new for each record, and a put doesn't change
+  // once sent: later edits go as patches), so it isn't sent again over what others changed since.
+  const has = op => op.k === 'put' && op.id && (data[op.c] || []).some(e => e.id === op.id);
+  queue.unshift(...kept.filter(op => !has(op)));
   // First what the server did while this data was loading, in the order it reached this tab: our
   // changes it confirmed and other people's from the live stream. The data may have been read
   // before or after any of them; laid over it in that order, each record ends at its latest.
@@ -73,6 +95,7 @@ export function prime(data) {
   // shadow, as already sent), so reloading while some are still on their way loses none.
   for (const op of [...inflight, ...queue]) replay(data, op);
   stateSent = JSON.stringify(stateBody());
+  knowPrefs();
   syncState();
 }
 /* While a reload's bootstrap is loading, what the server saved meanwhile (as ops), for prime. */
@@ -138,9 +161,15 @@ export function stopSync() {
   disconnectLive();
 }
 export const pendingCount = () => queue.length + inflight.length;
+/* How many changes waiting in `ops`, as the person would count them: one per record changed (the
+   activity entry that comes with an edit, and a re-read, aren't changes of theirs). At least one
+   when there's anything. */
+export const changeCount = (ops = [...inflight, ...queue]) =>
+  ops.length && Math.max(1, new Set(ops.filter(op => !op.read && op.c !== 'activity').map(op => keyOf(op.c, op.id))).size);
 /* <html data-sync="saving|saved|offline"> reflects whether every local change has reached the server. */
 function syncState() {
   document.documentElement.dataset.sync = S.ui.offline ? 'offline' : queue.length || inflight.length || flushing ? 'saving' : 'saved';
+  keepSoon();
 }
 
 /* ---------- local → server ---------- */
@@ -181,7 +210,9 @@ export function collect(send = true) {
         const j = JSON.stringify(e[k]);
         if (prev.get(k) !== j) {
           set[k] = clone(e[k]);
-          if (MERGED[c]?.includes(k) && prev.has(k)) base[k] = JSON.parse(prev.get(k));
+          // A task's description goes with the one it was edited from too: the server refuses it
+          // if someone else's was saved meanwhile (desc_conflict), rather than replace theirs.
+          if ((MERGED[c]?.includes(k) || (c === 'tasks' && k === 'desc')) && prev.has(k)) base[k] = JSON.parse(prev.get(k));
           prev.set(k, j);
           n++;
         }
@@ -198,8 +229,9 @@ export function collect(send = true) {
       // whole, and a refused description mustn't take a new title with it.
       if ('desc' in set && kind(set) === 'mixed') {
         const { desc, ...rest } = set;
-        enqueue({ c, id: e.id, k: 'patch', v: { desc } });
-        enqueue({ c, id: e.id, k: 'patch', v: rest, ...b });
+        const { desc: from, ...lists } = base;
+        enqueue({ c, id: e.id, k: 'patch', v: { desc }, ...(from !== undefined ? { base: { desc: from } } : {}) });
+        enqueue({ c, id: e.id, k: 'patch', v: rest, ...(Object.keys(lists).length ? { base: lists } : {}) });
       } else enqueue({ c, id: e.id, k: 'patch', v: set, ...b });
     }
     for (const id of [...sh.keys()])
@@ -361,7 +393,9 @@ function settle(ops, results) {
   results.forEach((r, i) => {
     const op = ops[i];
     if (!op || (!r.ok && r.retry)) return;
-    if (!r.ok && !op.read) errs.push(r.error);
+    // A description refused because someone else's was saved meanwhile: the text is handed over
+    // to keep it and let the person choose, instead of only being reported.
+    if (!r.ok && !op.read && !(r.code === 'desc_conflict' && hooks.descConflict(op))) errs.push(r.error);
     land(op.c, op.id, r.v);
     changed = adopt(op.c, op.id, r.v) || changed;
   });
@@ -385,7 +419,7 @@ function settle(ops, results) {
 let flushCtl = null;
 export async function flush() {
   // While what pagehide sent is unanswered (back from the back/forward cache), wait for it.
-  if (flushing || !queue.length || !shadow || exitSends) return;
+  if (flushing || !queue.length || !shadow || exitSends || ended) return;
   // Someone else signed in on this browser: their session mustn't send this person's changes.
   if (!hooks.stillMe()) return void hooks.otherUser();
   flushing = true;
@@ -409,6 +443,9 @@ export async function flush() {
     // rather than undone. Queued back before adopting the rest, so their fields count as pending.
     queue.unshift(...ops.filter((op, i) => !res.results[i].ok && res.results[i].retry));
     const changed = settle(ops, res.results);
+    // What the batch changed besides its own records (the next occurrence of a repeating task, or
+    // its removal on reopen): the live stream doesn't send this tab its own changes.
+    if (res.changes?.length) applyRemote(res.changes);
     if (res.links?.length) S.ui.devLinks = res.links;
     if (changed) refresh();
   } catch (e) {
@@ -417,8 +454,11 @@ export async function flush() {
     } else {
       inflight = [];
       inflightBytes = 0;
-      if (e.status === 401) hooks.signedOut(e);
-      else if (e.status === 409 && e.code === 'other_user') {
+      if (e.status === 401) {
+        // The session ended: the batch goes back at the head of the queue, to be kept with it.
+        queue.unshift(...ops);
+        sessionEnded(e);
+      } else if (e.status === 409 && e.code === 'other_user') {
         queue.unshift(...ops);
         hooks.otherUser();
       } else if (e.status === 413 && ops.length > 1) {
@@ -455,9 +495,13 @@ export async function flush() {
    changes are reported as usual. `retry`: try even if the last attempt left us offline (the live
    stream just reconnected, so the server may be back). */
 export async function settled({ retry = false } = {}) {
-  if (retry && shadow && S.ui.offline) await retryNow();
-  else collect();
-  while (shadow && (queue.length || flushing) && !S.ui.offline) {
+  if (retry && shadow && S.ui.offline) {
+    collect(false);
+    // With nothing to send, the reload this waits for is what tells whether we're back (reloaded).
+    if (queue.length) await retryNow();
+  } else collect();
+  // (Once the session has ended nothing more is sent: the queue is kept, not waited for.)
+  while (shadow && (queue.length || flushing) && !S.ui.offline && !ended) {
     if (exitSends) await exitSends;
     else if (flushing) await new Promise(r => setTimeout(r, 25));
     else await flush();
@@ -513,7 +557,7 @@ export async function sameUser() {
     return false;
   }
   if (!shadow) return false;
-  if (!s.user || s.user.twoFactorPending) hooks.signedOut();
+  if (!s.user || s.user.twoFactorPending) sessionEnded();
   else if (!hooks.stillMe() || (S.ui.me?.id && s.user.id !== S.ui.me.id)) hooks.otherUser();
   else return true;
   return false;
@@ -521,20 +565,34 @@ export async function sameUser() {
 /* Try the server again (the backoff timer, the browser coming online, "Try again"). The tab stays
    offline until it answers. */
 export async function retryNow() {
-  if (!shadow) return;
+  if (!shadow || ended) return;
   clearTimeout(retryT);
   collect(false);
   if (!(await sameUser())) return;
   if (queue.length) await flush();
-  else {
+  else if (resyncWhenSaved && !flushing) {
+    // A reload is still to do (one failed, or it waited for the queue): whether it loads is what
+    // says we're back, so the tab stays offline (and the backoff keeps growing) until it does.
+    resyncWhenSaved = false;
+    await hooks.resync();
+  } else {
     online();
     syncState();
-    if (resyncWhenSaved && !flushing) {
-      resyncWhenSaved = false;
-      hooks.resync();
-    }
   }
   if (!live && shadow) connectLive();
+}
+/* How a reload (a fresh bootstrap) went. One that failed for any reason but the session ending (a
+   deploy's 502, the network) leaves the tab offline and is tried again with the backoff until one
+   loads: what changed meanwhile (missed while the live stream was down, or the reason the server
+   asked for a reload) must arrive, or new edits build on stale data. */
+export function reloaded(ok) {
+  if (!shadow) return;
+  if (ok) online();
+  else {
+    resyncWhenSaved = true;
+    offline();
+  }
+  syncState();
 }
 
 /* Before the tab goes away, send what's still queued with one keepalive request, which outlives
@@ -566,8 +624,9 @@ export function keepaliveBatch(ops, budget = KEEPALIVE_BYTES) {
   return out;
 }
 addEventListener('pagehide', () => {
-  if (!shadow || !hooks.stillMe()) return;
+  if (!shadow || !hooks.stillMe() || ended) return;
   collect(false);
+  keepNow();
   const reclaim = flushCtl && inflight.length ? inflight : [];
   // From the head of the queue: what an earlier pagehide sent, if that is still unanswered (back
   // from the back/forward cache meanwhile), goes again ahead of the rest, in place of it.
@@ -601,6 +660,7 @@ addEventListener('pagehide', () => {
       for (const op of keep) keptAlive.delete(op);
       queue = queue.filter(op => !sent.has(op) || keep.has(op));
       if (shadow && settle(ops, results)) refresh();
+      keepSoon();
     } catch {
       /* offline, or stopped by a later pagehide that sent these again: they stay queued */
     }
@@ -629,10 +689,134 @@ addEventListener('beforeunload', e => {
   }
 });
 addEventListener('online', () => retryNow());
+// Hidden (switched away from, the screen locked) is often the last sure moment: phones may then
+// freeze or kill the page without pagehide or beforeunload. What's still waiting out the save
+// delay is sent now (small batches with keepalive, so freezing the page doesn't stop them), and
+// whatever hasn't been confirmed is written down (see keepNow).
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'hidden' || !shadow) return;
+  collect();
+  keepNow();
+});
+
+/* ---------- edits waiting to be saved, kept in the browser ---------- */
+/* What's waiting to be saved (the batch on its way, then the queue) is also written to IndexedDB,
+   under the person it belongs to, so a reload, a crash, a tab the browser discarded, "Leave anyway"
+   or a session that ended doesn't lose it: the next time this person opens the app in this browser
+   it's sent once their data has loaded (takeKept, then prime). Someone else signing in here never
+   sends it: it's dropped and they're told. Each tab writes its own entry and holds a lock named
+   after it while it's open, so a tab only takes over entries of tabs that are gone (another open
+   tab is still sending its own). Every access is guarded: with storage blocked or full the app
+   works as before, the edits only in memory. */
+const KEEP_DB = 'sudo-sapient.unsaved';
+const TAB_LOCK = 'sudo-sapient.tab:';
+try {
+  navigator.locks?.request(TAB_LOCK + CLIENT_ID, () => new Promise(() => {})).catch(() => {});
+} catch {
+  /* no Web Locks: see takeKept */
+}
+let keepDb = null;
+const openKeep = () =>
+  (keepDb ||= new Promise(resolve => {
+    try {
+      const req = indexedDB.open(KEEP_DB, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('tabs', { keyPath: 'tab' });
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = req.onblocked = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  }));
+/* Run `fn(store, out)` in one read-write transaction. Resolves with `out` once it's written, or
+   null if it couldn't be. */
+async function keepTx(fn, out = {}) {
+  const db = await openKeep();
+  if (!db) return null;
+  return new Promise(resolve => {
+    try {
+      const tx = db.transaction('tabs', 'readwrite');
+      tx.oncomplete = () => resolve(out);
+      tx.onerror = tx.onabort = () => resolve(null);
+      fn(tx.objectStore('tabs'), out);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+let keepT = null;
+/* Whether this tab has an entry to keep up to date (or remove once everything is saved). */
+let keptHere = false;
+/* Written at most every 400 ms while edits keep coming (typing saves on every keystroke). */
+function keepSoon() {
+  keepT ||= setTimeout(keepNow, 400);
+}
+/* Write down what's waiting now. Resolves with whether it's safely kept (true with nothing waiting). */
+export function keepNow() {
+  clearTimeout(keepT);
+  keepT = null;
+  const user = S.ui.me?.id;
+  // Someone else signed in on this browser: this person's edits are never sent, so not kept either.
+  if (!shadow || !user || !hooks.stillMe()) return Promise.resolve(false);
+  const ops = [...inflight, ...queue].filter(op => !op.read);
+  if (!ops.length && !keptHere) return Promise.resolve(true);
+  keptHere = ops.length > 0;
+  return keepTx(st => (ops.length ? st.put({ tab: CLIENT_ID, user, at: Date.now(), ops }) : st.delete(CLIENT_ID))).then(Boolean);
+}
+/* Forget what this tab kept (signed out on purpose, or someone else signed in here). */
+export function dropKept() {
+  clearTimeout(keepT);
+  keepT = null;
+  keptHere = false;
+  return keepTx(st => st.delete(CLIENT_ID));
+}
+/* Take over what tabs that are gone left unsaved: `mine`, this person's edits (oldest tab first),
+   to send (they move to this tab's entry in the same step, so they're never in neither); `others`,
+   how many edits of anyone else were dropped, never to be sent as this person. */
+export async function takeKept(user) {
+  let open = null;
+  try {
+    open = new Set((await navigator.locks.query()).held.map(l => l.name));
+  } catch {
+    // No Web Locks (an older browser, or plain http on another address): every entry is taken as
+    // left behind. An open tab's edits may then be sent twice, which is harmless (see pagehide).
+  }
+  const got = await keepTx(
+    (st, out) => {
+      const req = st.getAll();
+      req.onsuccess = () => {
+        for (const e of req.result.sort((a, b) => a.at - b.at)) {
+          if (e.tab === CLIENT_ID || open?.has(TAB_LOCK + e.tab)) continue;
+          if (e.user === user) out.mine.push(...e.ops);
+          else out.dropped.push(...e.ops);
+          st.delete(e.tab);
+        }
+        if (out.mine.length) st.put({ tab: CLIENT_ID, user, at: Date.now(), ops: out.mine });
+      };
+    },
+    { mine: [], dropped: [] },
+  );
+  if (got?.mine.length) keptHere = true;
+  return { mine: got?.mine || [], others: changeCount(got?.dropped || []) };
+}
 
 /* ---------- per-person UI state (prefs, view settings, sidebar) ---------- */
-const stateBody = () => ({ prefs: S.prefs, views: S.views, collapsed: !!S.ui.collapsed });
-function saveState() {
+const stateBody = () => ({ views: S.views, collapsed: !!S.ui.collapsed });
+/* Each preference as the server has it, as far as this tab knows: as loaded, or as last sent. Only
+   the ones changed here since are sent (the server merges them into what it has), so a setting
+   changed elsewhere meanwhile (a time zone set with the CLI) isn't put back by this tab saving
+   another. */
+let prefsKnown = new Map();
+const knowPrefs = () => (prefsKnown = new Map(Object.entries(S.prefs).map(([k, v]) => [k, JSON.stringify(v)])));
+function prefsChanged() {
+  /** @type {Record<string, unknown>} */
+  const out = {};
+  for (const [k, v] of Object.entries(S.prefs))
+    // Name and title are the member record's, saved on their own.
+    if (k !== 'name' && k !== 'title' && prefsKnown.get(k) !== JSON.stringify(v)) out[k] = v;
+  return out;
+}
+/* Send the person's state now if it changed since it was last sent (save() does this after a pause). */
+export function saveState() {
   try {
     // Display preferences only: name and title are the person's, and the browser may be shared.
     const { name, title, ...cached } = S.prefs;
@@ -642,10 +826,18 @@ function saveState() {
   }
   if (!shadow) return;
   const body = stateBody();
+  const prefs = prefsChanged();
+  const sent = Object.keys(prefs);
   const j = JSON.stringify(body);
-  if (j === stateSent) return;
+  if (j === stateSent && !sent.length) return;
   stateSent = j;
-  api('PUT', '/api/me/state', body).catch(() => (stateSent = ''));
+  const before = new Map(sent.map(k => [k, prefsKnown.get(k)]));
+  for (const k of sent) prefsKnown.set(k, JSON.stringify(prefs[k]));
+  api('PUT', '/api/me/state', sent.length ? { ...body, prefs } : body).catch(() => {
+    stateSent = '';
+    // Not saved: send them again next time, unless changed again since.
+    for (const k of sent) if (prefsKnown.get(k) === JSON.stringify(prefs[k])) prefsKnown.set(k, before.get(k));
+  });
 }
 
 saveHooks.onSave = () => {
@@ -666,6 +858,8 @@ export function connectLive() {
   live = es;
   es.addEventListener('hello', () => {
     liveDelay = 1000;
+    // Catch up on what was missed while the stream was down. A reload that fails is tried again
+    // until one loads (see reloaded), so clearing `missed` here loses nothing.
     if (missed) {
       missed = false;
       hooks.resync();
@@ -680,7 +874,7 @@ export function connectLive() {
     missed = true;
     api('GET', '/api/auth/session')
       .then(s => {
-        if (!s.user || s.user.twoFactorPending) return hooks.signedOut();
+        if (!s.user || s.user.twoFactorPending) return sessionEnded();
         if (S.ui.me?.id && s.user.id !== S.ui.me.id) return hooks.otherUser();
         liveT = setTimeout(connectLive, liveDelay);
       })
@@ -745,11 +939,27 @@ export function refresh() {
 
 /* ---------- undo that only rewinds what the action changed ---------- */
 /* Take before an action; the matching after-state is captured once the action has run. Restoring
-   puts back only the records that action touched, so other people's edits made in between stay. */
+   puts back only the records that action touched, and in each only the fields it changed, so other
+   people's edits made in between stay. */
 export function takeSnapshot() {
   const snap = { before: JSON.stringify(S.data), after: null };
   setTimeout(() => (snap.after = JSON.stringify(S.data)), 0);
   return snap;
+}
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+/* Put back in `e` the fields that went from `was` to `now`, each only while it still holds what the
+   action left there: a later change to that field (someone else's, or mine) stays. A list or map
+   gets back only the entries the action added, removed or changed. A flag the action added is turned
+   off rather than removed (the server keeps a field it's sent without). */
+function unchange(c, e, was, now) {
+  for (const k of new Set([...Object.keys(was), ...Object.keys(now)])) {
+    if (same(was[k], now[k])) continue;
+    if (MERGED[c]?.includes(k) && was[k] != null && now[k] != null) e[k] = mergeField(now[k], was[k], e[k]);
+    else if (!same(e[k], now[k])) continue;
+    else if (k in was) e[k] = was[k];
+    else if (typeof now[k] === 'boolean') e[k] = false;
+    else delete e[k];
+  }
 }
 export function restoreSnapshot(snap) {
   const before = JSON.parse(snap.before);
@@ -759,12 +969,14 @@ export function restoreSnapshot(snap) {
     const b = new Map((before[c] || []).map(e => [e.id, e]));
     const a = new Map((after[c] || []).map(e => [e.id, e]));
     for (const id of new Set([...b.keys(), ...a.keys()])) {
-      if (JSON.stringify(b.get(id)) === JSON.stringify(a.get(id))) continue;
+      if (same(b.get(id), a.get(id))) continue;
       const i = d[c].findIndex(e => e.id === id);
       if (!b.has(id)) {
         if (i >= 0) d[c].splice(i, 1);
-      } else if (i >= 0) d[c][i] = b.get(id);
-      else {
+      } else if (i >= 0) {
+        if (a.has(id)) unchange(c, d[c][i], b.get(id), a.get(id));
+        else d[c][i] = b.get(id);
+      } else {
         // Put it back where it was relative to its old neighbours.
         const pos = (before[c] || []).findIndex(e => e.id === id);
         d[c].splice(Math.min(pos, d[c].length), 0, b.get(id));

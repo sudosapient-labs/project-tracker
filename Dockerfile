@@ -19,7 +19,8 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/src/core ./src/core
-# The hosted MCP endpoint (/api/mcp) runs the MCP package's server code; it has no dependencies.
+# The hosted MCP endpoint (/api/mcp) runs the MCP package's server code; its only dependency is
+# packages/client, reached through node_modules/@sudosapient/client.
 COPY --from=build /app/packages/client ./packages/client
 COPY --from=build /app/packages/mcp/src ./packages/mcp/src
 COPY package.json ./

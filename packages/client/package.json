@@ -12,11 +12,13 @@
   "type": "module",
   "exports": {
     ".": "./index.js",
-    "./config": "./config.js"
+    "./config": "./config.js",
+    "./dates": "./dates.js"
   },
   "files": [
     "index.js",
     "config.js",
+    "dates.js",
     "README.md"
   ],
   "engines": {

@@ -4,7 +4,7 @@
    come first and the agent's work happens after. */
 import http from 'node:http';
 import bolt from '@slack/bolt';
-import { createClient } from '@sudosapient/client';
+import { trackerClient } from './tracker.js';
 import { createSudoAgent } from './agent.js';
 import { mcpTools } from './mcp.js';
 import { directory, people as peopleOf } from './people.js';
@@ -13,10 +13,12 @@ import { slackContext } from './slack/context.js';
 import { createHandlers } from './slack/handlers.js';
 
 const { App, LogLevel } = bolt;
+// On shutdown, how long runs already going get to finish before the process stops.
+const STOP_WAIT = 10_000;
 
 export async function startApp(config, { log = console } = {}) {
   const store = openStore(config.db);
-  const api = createClient({ url: config.tracker.url, key: config.tracker.key, client: 'Slack' });
+  const api = trackerClient(config);
   const me = await api.get('/me');
   if (me.kind !== 'bot') log.warn(`SUDO_API_KEY belongs to ${me.name}, a person. Use a bot member's key (Settings → API → Bots) so the bot acts as itself.`);
   if (me.key?.scope !== 'write') log.warn('SUDO_API_KEY is read-only: the bot can answer questions but not change anything.');
@@ -35,7 +37,7 @@ export async function startApp(config, { log = console } = {}) {
     store,
     agent,
     dir,
-    people: peopleOf({ slack: app.client, store, dir }),
+    people: peopleOf({ slack: app.client, store, dir, fallbackTz: config.timezone }),
     slack: app.client,
     reader: slackContext(app.client, { botUserId: auth.user_id, botName: config.name }),
   });
@@ -69,6 +71,10 @@ export async function startApp(config, { log = console } = {}) {
     await later('action', handlers.onAction({ action, body, respond }));
   });
 
+  // Before any new event, so nothing started now is mistaken for something the last process left:
+  // replies it left at "Working on it…" and Confirms it didn't finish are told to the people waiting.
+  await later('recovering after a restart', handlers.recover());
+
   let health = null;
   if (config.slack.socketMode) {
     await app.start();
@@ -85,6 +91,9 @@ export async function startApp(config, { log = console } = {}) {
     async stop() {
       health?.close();
       await app.stop();
+      // No new events now; let runs already going finish, for a while. Whatever is still going
+      // after that is told on the next start (handlers.recover()).
+      await Promise.race([handlers.idle(), new Promise(resolve => setTimeout(resolve, STOP_WAIT).unref())]);
       await mcp.close();
       store.close();
     },

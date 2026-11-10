@@ -8,6 +8,7 @@ import { disableTwoFactor, endOtherSessions, issueToken, passwordError, retireEm
 import { HOUR, INVITES_PER_HOUR, canSee } from '../sync/rules.js';
 import { isAdminRole } from '../../src/core/access.js';
 import { notify } from '../notify.js';
+import { validTz } from '../../src/core/constants.js';
 
 /* Shared with the public API (api/v1-more.js), so a link, invite or request made there is exactly
    the app's. Each takes the request's vars ({ db, repo, config, mailer, engine }) and the acting member. */
@@ -60,12 +61,15 @@ export function workspaceRoutes({ limit }) {
   const r = new Hono();
   const byUser = c => c.var.auth.member.id;
 
-  /* The owner finished (or skipped) first-run setup. */
+  /* The owner finished (or skipped) first-run setup. A workspace with no time zone yet takes the
+     owner's (the app saved their browser's when they opened it): the clock of everyone who hasn't
+     set their own, the Slack bot's among them (server/lib/clock.js). */
   r.post('/workspace/onboarded', requireAuth(), c => {
     const { repo } = c.var;
     if (c.var.auth.member.role !== 'Owner') return c.json({ error: 'Only the workspace owner can finish setup.' }, 403);
     const ws = repo.workspace();
-    repo.saveWorkspace({ ...ws, name: ws.name || 'My Workspace', onboarded: true });
+    const tz = validTz(ws.tz) || validTz(repo.userState(c.var.auth.member.id).prefs?.tz);
+    repo.saveWorkspace({ ...ws, name: ws.name || 'My Workspace', ...(tz ? { tz } : {}), onboarded: true });
     const { onboarded, ...pub } = repo.workspace();
     c.var.engine.publish([{ c: 'ws', v: pub }]);
     return c.json({ ok: true, ws: pub });

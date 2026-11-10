@@ -29,6 +29,8 @@ A.editTeam = el => {
       .members.filter(m => m.team === t.id)
       .map(m => m.id),
   };
+  // What the window opened with: saving changes only what was changed here (see submitTeam).
+  S.ui.tform.opened = JSON.parse(JSON.stringify(S.ui.tform));
   openModal({ type: 'team', edit: t.id });
 };
 IN.tform = el => {
@@ -68,15 +70,22 @@ A.submitTeam = () => {
   let t;
   const ok = mutate(() => {
     if (m.edit) {
+      // Only what was changed in this window since it opened: someone else's change saved
+      // meanwhile stays, and so does anyone they added to the team.
+      const was = f.opened;
       t = team(m.edit);
-      Object.assign(t, { name: f.name, desc: f.desc, icon: f.icon, c: PCOLORS[f.color] });
+      if (f.name !== was.name) t.name = f.name;
+      if (f.desc !== (was.desc || '').trim()) t.desc = f.desc;
+      if (f.icon !== was.icon) t.icon = f.icon;
+      if (f.color !== was.color) t.c = PCOLORS[f.color];
       D().members.forEach(x => {
-        if (x.team === t.id && !f.members.includes(x.id)) x.team = '';
+        if (x.team === t.id && was.members.includes(x.id) && !f.members.includes(x.id)) x.team = '';
+        if (f.members.includes(x.id) && !was.members.includes(x.id)) x.team = t.id;
       });
-    } else {
-      t = { id: uid('tm'), name: f.name, desc: f.desc || 'No description yet.', icon: f.icon, c: PCOLORS[f.color] };
-      teamsList().push(t);
+      return;
     }
+    t = { id: uid('tm'), name: f.name, desc: f.desc || 'No description yet.', icon: f.icon, c: PCOLORS[f.color] };
+    teamsList().push(t);
     f.members.forEach(id => {
       const x = mem(id);
       if (x) x.team = t.id;

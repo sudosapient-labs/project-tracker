@@ -8,22 +8,35 @@
    These spend model tokens (roughly a dollar a run), so they aren't part of `pnpm test`. They need
    LLM_PROXY_BASE_URL and LLM_PROXY_API_KEY (or SLACK_BOT_LLM_*). */
 import { describe, it } from 'vitest';
+import { addDaysToDay, dayOf } from '@sudosapient/client/dates';
 import { chatModel } from '../../src/agent.js';
+import { clockOf } from '../../src/clock.js';
 import { loadConfig } from '../../src/config.js';
-import { fakeSlack, harness, tracker } from '../helpers.js';
+import { SLACK_USERS, fakeSlack, harness, tracker } from '../helpers.js';
 
 const config = loadConfig();
 const model = () => chatModel(config.model);
 
-/* Dates as the bot sees them (the harness runs in UTC). */
-const iso = d => d.toISOString().slice(0, 10);
-const today = () => new Date(iso(new Date()) + 'T00:00:00Z');
-const addDays = (d, n) => new Date(d.getTime() + n * 86_400_000);
-function nextWeekday(day) {
-  const t = today();
-  return addDays(t, (day - t.getUTCDay() + 7) % 7 || 7);
+/* Days on the clock the bot reads Slack user `user` on (src/clock.js: the tracker's for them, else
+   their Slack profile's, else SLACK_BOT_TIMEZONE as harness() sets it), so
+   what a case expects is the day the bot means, even near midnight. Each is a 'YYYY-MM-DD'. */
+async function daysFor(w, user = 'UADA') {
+  const u = SLACK_USERS[user];
+  const member = (await w.api.get('/members', { limit: 100 })).data.find(m => m.email === u.profile.email);
+  const { tz } = clockOf(member, { slackTz: u.tz, fallback: 'UTC' });
+  const today = dayOf(Date.now(), tz);
+  return {
+    tz,
+    today,
+    inDays: n => addDaysToDay(today, n),
+    /* The next `weekday` (0 Sunday … 6 Saturday) after today, as "Friday" means to the bot. */
+    next: weekday => addDaysToDay(today, (weekday - new Date(today + 'T00:00:00Z').getUTCDay() + 7) % 7 || 7),
+    /* The day a start or due falls on for them. */
+    of: v => (v ? dayOf(v, tz) : v),
+  };
 }
-const spoken = d => d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' });
+/* 'November 20' for a 'YYYY-MM-DD' (a calendar day: the same everywhere). */
+const spoken = day => new Date(day + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' });
 
 async function bot(w, threads = {}, extra = {}) {
   const slack = fakeSlack({ threads });
@@ -62,7 +75,8 @@ describe.concurrent('live: the agent behind Slack', { timeout: 240_000 }, () => 
     const [t] = all;
     expect(t.project).toBe('pweb');
     expect(t.assignee).toBe(w.adaId);
-    expect(t.due?.slice(0, 10)).toBe(iso(nextWeekday(5)));
+    const ada = await daysFor(w, 'UADA');
+    expect(ada.of(t.due)).toBe(ada.next(5));
     expect(t.title).toMatch(/export/i);
     expect(t.description).toMatch(/504/);
     expect(reply(h)).toContain(t.key);
@@ -110,7 +124,7 @@ describe.concurrent('live: the agent behind Slack', { timeout: 240_000 }, () => 
   it('answers “what’s on my plate” with the asker’s own open tasks', async ({ expect }) => {
     const w = await tracker();
     const mine = [
-      await w.api.post('/tasks', { project: 'WEB', title: 'Write release notes', assignee: 'mbea', due: iso(addDays(today(), 2)) }),
+      await w.api.post('/tasks', { project: 'WEB', title: 'Write release notes', assignee: 'mbea', due: (await daysFor(w, 'UBEA')).inDays(2) }),
       await w.api.post('/tasks', { project: 'OPS', title: 'Renew the SSL certificate', assignee: 'mbea' }),
     ];
     const theirs = await w.api.post('/tasks', { project: 'WEB', title: 'Plan the offsite', assignee: w.adaId });
@@ -120,6 +134,30 @@ describe.concurrent('live: the agent behind Slack', { timeout: 240_000 }, () => 
     for (const t of mine) expect(r).toContain(t.key);
     expect(r).not.toContain(theirs.key);
     expect(r).not.toMatch(/offsite/i);
+  });
+
+  it('answers “status of WEB” with a card: native chart or table, and nothing from a private project', async ({ expect }) => {
+    const w = await tracker();
+    const open = [
+      await w.api.post('/tasks', {
+        project: 'WEB',
+        title: 'Fix the checkout timeout',
+        assignee: 'mbea',
+        due: (await daysFor(w, 'UBEA')).inDays(-2),
+        status: 'progress',
+      }),
+      await w.api.post('/tasks', { project: 'WEB', title: 'Pricing page copy', status: 'todo' }),
+      await w.api.post('/tasks', { project: 'WEB', title: 'Cookie banner', status: 'backlog' }),
+    ];
+    await w.api.post('/tasks', { project: 'WEB', title: 'Newsletter form', status: 'done' });
+    await w.api.post('/tasks', { project: 'SEC', title: 'Rotate the leaked Stripe key' });
+    const h = await bot(w);
+    await mention(h, { user: 'UBEA', ts: '45.1', text: "what's the status of WEB?" });
+    const blocks = h.slack.of('chat.update').at(-1).blocks;
+    expect(blocks.some(b => ['data_visualization', 'data_table'].includes(b.type) || b.fields)).toBe(true);
+    expect(blocks.some(b => b.type === 'actions' || b.type === 'image')).toBe(false);
+    expect(JSON.stringify(blocks)).toContain(open[0].key);
+    expect(JSON.stringify(blocks)).not.toMatch(/stripe|leaked/i);
   });
 
   it('says nothing about a private project the asker isn’t on, even though the bot is', async ({ expect }) => {
@@ -158,8 +196,9 @@ describe.concurrent('live: the agent behind Slack', { timeout: 240_000 }, () => 
 
   it('reschedules and reprioritises only after Confirm', async ({ expect }) => {
     const w = await tracker();
-    const t = await w.api.post('/tasks', { project: 'WEB', title: 'Migrate the docs site', due: iso(addDays(today(), 3)) });
-    const target = addDays(today(), 12);
+    const ada = await daysFor(w, 'UADA');
+    const t = await w.api.post('/tasks', { project: 'WEB', title: 'Migrate the docs site', due: ada.inDays(3) });
+    const target = ada.inDays(12);
     const h = await bot(w);
     await mention(h, { ts: '70.1', text: `move ${t.key} to ${spoken(target)} and make it urgent` });
     const waiting = await h.agent.waiting(thread(h, '70.1'));
@@ -168,7 +207,7 @@ describe.concurrent('live: the agent behind Slack', { timeout: 240_000 }, () => 
     // Confirm until nothing is waiting (the model may make the two changes as one call or two).
     for (let i = 0; i < 3 && (await h.agent.waiting(thread(h, '70.1'))).length; i++) await confirm(h);
     const now = await w.api.get(`/tasks/${t.key}`);
-    expect(now.due?.slice(0, 10)).toBe(iso(target));
+    expect(ada.of(now.due)).toBe(target);
     expect(now.priority).toBe('urgent');
   });
 

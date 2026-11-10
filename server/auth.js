@@ -3,6 +3,7 @@
    only its SHA-256 is stored, so a database leak doesn't hand out live sessions. */
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { newId, sha256, token } from './lib/crypto.js';
+import { clockOf } from './lib/clock.js';
 
 export const COOKIE = 'ss_sid';
 export const DEVICE_COOKIE = 'ss_dev';
@@ -187,7 +188,8 @@ export function describeAgent(ua = '') {
   return `${os} · ${br}`;
 }
 
-export function relTime(ts, now = Date.now()) {
+/* How long ago a session was used; past a week, the day on `tz`'s calendar. */
+export function relTime(ts, now = Date.now(), tz = 'UTC') {
   const m = Math.round((now - ts) / 60000);
   if (m < 5) return 'Active now';
   if (m < 60) return `${m} minutes ago`;
@@ -195,16 +197,17 @@ export function relTime(ts, now = Date.now()) {
   if (h < 24) return h === 1 ? '1 hour ago' : `${h} hours ago`;
   const d = Math.round(h / 24);
   if (d < 7) return d === 1 ? 'Yesterday' : `${d} days ago`;
-  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: tz });
 }
 
-/* Sessions in the shape the settings page renders. */
-export function listSessions(db, userId, currentId) {
+/* Sessions in the shape the settings page renders, dated on the person's clock. */
+export function listSessions({ db, repo }, userId, currentId) {
+  const { tz } = clockOf(repo, userId);
   return db.all('SELECT * FROM sessions WHERE user_id = ? AND expires_at > ? AND pending_2fa = 0 ORDER BY last_seen_at DESC', userId, Date.now()).map(s => ({
     id: s.id,
     dev: describeAgent(s.user_agent),
     loc: s.ip || 'Unknown location',
-    at: s.id === currentId ? 'Active now' : relTime(s.last_seen_at),
+    at: s.id === currentId ? 'Active now' : relTime(s.last_seen_at, Date.now(), tz),
     cur: s.id === currentId,
   }));
 }

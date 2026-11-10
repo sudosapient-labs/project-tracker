@@ -7,6 +7,8 @@ import readline from 'node:readline';
 import { parseArgs } from 'node:util';
 import { ApiError, createClient, plainHttpRemote, seg } from '@sudosapient/client';
 import { clearConfig, configPath, loadConfig, saveConfig } from '@sudosapient/client/config';
+import { parseWhen } from '@sudosapient/client/dates';
+import { localTz, personTz, showDate } from './clock.js';
 import { ALIASES, NOUNS, PRIORITIES, STATUSES, nounHelp, rawApi, reaction, several } from './commands.js';
 
 // Kept equal to package.json by release-please (extra-files in release-please-config.json).
@@ -36,7 +38,8 @@ More (sudo-cli help <command> lists each one's subcommands)
   teams, people, bots, files, events, views, inbox, activity, workspace, me, prefs, notify-prefs, favorites
   api <METHOD> <path> [--data <json>] [-f key=value]... [-F key=value]...   any endpoint, JSON out
 
-Shortcuts: new, done, assign, show (= tasks …). Dates: today, tomorrow, friday, +3d, +2w, 2026-11-20.
+Shortcuts: new, done, assign, show (= tasks …). Dates: today, tomorrow, friday, +3d, +2w, 2026-11-20, each
+optionally with a time ("friday 5pm", "2026-11-20 17:00"), on this computer's clock (or TZ).
 Deleting a project, person, bot, team or file asks first (--yes to skip; required without a
 terminal). Deleted tasks and comments can be undeleted for 10 minutes, so they don't ask.
 Options: --json (machine-readable output), --url, --insecure (allow a plain http:// URL to another
@@ -93,6 +96,7 @@ const OPTIONS = {
   type: { type: 'string' },
   filter: { type: 'string', multiple: true },
   brand: { type: 'string' },
+  tz: { type: 'string' },
   data: { type: 'string' },
   field: { type: 'string', short: 'F', multiple: true },
   'raw-field': { type: 'string', short: 'f', multiple: true },
@@ -100,23 +104,12 @@ const OPTIONS = {
   version: { type: 'boolean', short: 'v' },
 };
 
-/* Everyday dates to YYYY-MM-DD, in local time. A weekday is its next occurrence (today counts). */
-const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-export function parseDue(s, now = new Date()) {
-  const v = String(s).trim().toLowerCase();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-  const inDays = n => {
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + n);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  };
-  if (v === 'today') return inDays(0);
-  if (v === 'tomorrow') return inDays(1);
-  const rel = /^\+?(\d{1,3})\s*(d|w)$/.exec(v);
-  if (rel) return inDays(Number(rel[1]) * (rel[2] === 'w' ? 7 : 1));
-  if (v === 'next week') return inDays((8 - now.getDay()) % 7 || 7);
-  const day = DAYS.findIndex(n => n === v || n.slice(0, 3) === v);
-  if (day >= 0) return inDays((day - now.getDay() + 7) % 7);
-  throw new UsageError(`Can't read the date “${s}”. Try today, tomorrow, friday, +3d or 2026-11-20.`);
+/* Everyday dates, optionally with a time: today, tomorrow, friday (its next occurrence; today
+   counts), +3d, 2w, next week, 2026-11-20, then e.g. 5pm or 17:00. A day alone is all day. */
+export function parseDue(s, now = new Date(), tz = localTz()) {
+  const v = parseWhen(s, tz, now);
+  if (!v) throw new UsageError(`Can't read the date “${s}”. Try today, tomorrow, friday 5pm, +3d or 2026-11-20 17:00.`);
+  return v;
 }
 
 class UsageError extends Error {}
@@ -236,8 +229,14 @@ export async function run(argv, io = {}) {
   const json = v => print(JSON.stringify(v, null, 2));
   const who = async a => new Map((await a.all('/members')).map(m => [m.id, m.name]));
   const pad = (s, n) => String(s ?? '').padEnd(n);
-  const row = (t, names) =>
-    `${bold(pad(t.key, 9))} ${pad(t.status, 8)} ${pad(t.priority === 'none' ? '' : t.priority, 6)} ${pad(names.get(t.assignee) || dim('—'), 14)} ${pad(t.due ? t.due.slice(0, 10) : '', 10)} ${t.title}`;
+  const row = (t, names, tz) =>
+    `${bold(pad(t.key, 9))} ${pad(t.status, 8)} ${pad(t.priority === 'none' ? '' : t.priority, 6)} ${pad(names.get(t.assignee) || dim('—'), 14)} ${pad(showDate(t.due, tz), 16)} ${t.title}`;
+  /* The person's clock (clock.js), asked of the server once, the first time it's needed. */
+  let asked = null;
+  let zone = null;
+  const tz = async () => (zone ||= await (asked ||= personTz(api)));
+  // For human output only: --json keeps the API's UTC values and needn't ask.
+  const showTz = () => (o.json ? Promise.resolve('UTC') : tz());
   const need = (v, msg) => {
     if (!v) throw new UsageError(msg);
     return v;
@@ -263,7 +262,10 @@ export async function run(argv, io = {}) {
     usage: msg => {
       throw new UsageError(msg);
     },
-    date: v => (/^none$/i.test(String(v)) ? null : parseDue(v)),
+    /* A start, due or event date typed in, on the person's clock (asked before the command runs). */
+    date: v => (/^none$/i.test(String(v)) ? null : parseDue(v, new Date(), zone || localTz())),
+    tz,
+    showTz,
     emit: (data, human) => (o.json ? json(data) : human(data)),
     cancelled: () => (err.write('sudo-cli: cancelled.\n'), 1),
     /* A yes at the terminal, or --yes. Without a terminal to ask at, --yes is required. */
@@ -275,6 +277,10 @@ export async function run(argv, io = {}) {
   };
 
   try {
+    // A date that needs a clock to read ('fri 5pm', 'today') is read on the person's: ask the server
+    // for it first. One that can't be read at all is refused without asking.
+    const typed = [o.due, o.start, o.date, o.from, o.to, ...[].concat(o.milestone || []).map(m => String(m).split(/=(.*)/s)[1])];
+    if (url && key && typed.some(v => v && !/^none$/i.test(v) && parseWhen(v, 'UTC'))) await tz();
     if (table) {
       x.args = table.args;
       return (await NOUNS[table.noun].verbs[table.verb].run(x)) || 0;
@@ -332,13 +338,13 @@ export async function run(argv, io = {}) {
         const status = o.status || (o.all ? undefined : 'open');
         const n = Math.min(Math.max(Number(o.limit) || 50, 1), 500);
         const query = { project, status, assignee: mine ? 'me' : undefined, ...(o.archived ? { includeArchived: 'true' } : {}) };
-        const [tasks, names] = await Promise.all([a.all('/tasks', query, n), who(a)]);
+        const [tasks, names, shownTz] = await Promise.all([a.all('/tasks', query, n), who(a), showTz()]);
         if (o.json) {
           json(tasks);
           return 0;
         }
         if (!tasks.length) print(dim(mine ? 'Nothing assigned to you here.' : 'No tasks.'));
-        for (const t of tasks) print(row(t, names));
+        for (const t of tasks) print(row(t, names, shownTz));
         return 0;
       }
       case 'new': {
@@ -349,7 +355,7 @@ export async function run(argv, io = {}) {
         const body = {
           project,
           title,
-          ...(o.due ? { due: parseDue(o.due) } : {}),
+          ...(o.due ? { due: x.date(o.due) } : {}),
           ...(o.assignee ? { assignee: o.assignee } : {}),
           ...(o.priority ? { priority: o.priority } : {}),
           ...(o.status ? { status: o.status } : {}),
@@ -358,7 +364,7 @@ export async function run(argv, io = {}) {
         // Safe to retry: the server replays the first response for the same Idempotency-Key.
         const t = await api().post('/tasks', body, { idempotencyKey: randomUUID() });
         if (o.json) json(t);
-        else print(`Created ${bold(t.key)} ${t.title}${t.due ? dim(` · due ${t.due.slice(0, 10)}`) : ''}\n${dim(t.url)}`);
+        else print(`Created ${bold(t.key)} ${t.title}${t.due ? dim(` · due ${showDate(t.due, await tz())}`) : ''}\n${dim(t.url)}`);
         return 0;
       }
       case 'done': {
@@ -389,22 +395,29 @@ export async function run(argv, io = {}) {
         const k = need(args[0], 'Which task? sudo-cli show WEB-12');
         const a = api();
         // The newest 50 comments, oldest first, so a long discussion shows its latest turns.
-        const [t, comments, names] = await Promise.all([a.get(`/tasks/${seg(k)}`), a.latest(`/tasks/${seg(k)}/comments`, 50, c => c.createdAt), who(a)]);
+        const [t, comments, names, shownTz] = await Promise.all([
+          a.get(`/tasks/${seg(k)}`),
+          a.latest(`/tasks/${seg(k)}/comments`, 50, c => c.createdAt),
+          who(a),
+          showTz(),
+        ]);
         if (o.json) {
           json({ ...t, comments: comments.data, olderComments: comments.older });
           return 0;
         }
         print(`${bold(t.key)} ${t.title}`);
-        print(dim(`${t.status} · ${t.priority} · ${names.get(t.assignee) || 'unassigned'}${t.due ? ` · due ${t.due.slice(0, 10)}` : ''}`));
+        print(dim(`${t.status} · ${t.priority} · ${names.get(t.assignee) || 'unassigned'}${t.due ? ` · due ${showDate(t.due, shownTz)}` : ''}`));
         if (t.description) print('\n' + t.description);
         for (const s of t.subtasks)
           print(
-            `  [${s.done ? 'x' : ' '}] ${s.title}${s.assignee ? ` · ${names.get(s.assignee) || '?'}` : ''}${s.due ? ` · ${s.due.slice(0, 10)}` : ''}  ${dim(s.id)}`,
+            `  [${s.done ? 'x' : ' '}] ${s.title}${s.assignee ? ` · ${names.get(s.assignee) || '?'}` : ''}${s.due ? ` · ${showDate(s.due, shownTz)}` : ''}  ${dim(s.id)}`,
           );
         if (comments.older) print('\n' + dim(`${comments.older} older comment${comments.older === 1 ? '' : 's'} not shown`));
         for (const c of comments.data)
           print(
-            `\n${bold(names.get(c.author) || '?')} ${dim(new Date(c.createdAt).toLocaleString())}  ${dim(c.id)}\n${c.text}${Object.entries(c.reactions || {})
+            `\n${bold(names.get(c.author) || '?')} ${dim(showDate(new Date(c.createdAt).toISOString(), shownTz))}  ${dim(c.id)}\n${c.text}${Object.entries(
+              c.reactions || {},
+            )
               .map(([e, w]) => ` ${e}${w.length}`)
               .join('')
               .replace(/^ /, '\n')}`,

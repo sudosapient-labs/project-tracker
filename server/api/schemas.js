@@ -3,10 +3,16 @@
    document (openapi.js) is generated from the same objects, so the two can't drift. Records are
    the public view of the synced ones (sync/schemas.js), with stable, documented field names. */
 import { z } from 'zod';
-import { PCOLORS, PICONS, PRIOS, PSTAT, REACTIONS, RECUR, ROLES, STATUSES, TIMEZONES } from '../../src/core/constants.js';
+import { PCOLORS, PICONS, PRIOS, PSTAT, REACTIONS, RECUR, ROLES, STATUSES, validTz } from '../../src/core/constants.js';
 import { PERMS } from '../../src/core/access.js';
 import { FILE_TYPES } from '../../src/core/file-types.js';
 import { DEFAULT_NOTIF_PREFS } from '../notify.js';
+import { checkWhen } from '../../packages/client/dates.js';
+
+const WHEN =
+  'YYYY-MM-DD for all day, or an ISO 8601 date-time with a zone (Z or an offset like +05:30) for a time of day; times are stored and returned in UTC';
+// How a stored start or due reads, on records.
+const WHEN_OUT = 'YYYY-MM-DD (all day), or a UTC date-time like 2026-11-09T18:29:00.000Z (a time of day; show it in the reader’s time zone)';
 
 export const registry = z.registry();
 const named = (id, schema, description) => {
@@ -16,16 +22,39 @@ const named = (id, schema, description) => {
 
 const STATUS = z.enum(STATUSES.map(s => s.id));
 const PRIORITY = z.enum(PRIOS.map(p => p.id));
-// 'YYYY-MM-DD' (all day) or an ISO instant (timed), as in the app. The day must exist: 2026-02-31
-// would read as "Invalid Date" in activity and break scheduling the next repeat.
-const realDate = v => !Number.isNaN(Date.parse(v)) && new Date(v.slice(0, 10) + 'T00:00:00Z').toISOString().startsWith(v.slice(0, 10));
+// A start or due (packages/client/dates.js): 'YYYY-MM-DD' (all day), or an ISO date-time with a zone
+// (timed), stored and returned as UTC ('2026-11-09T18:29:00.000Z'). A date-time without a zone is
+// refused: it would be a different moment depending on whose clock read it. The day must exist:
+// 2026-02-31 would read as "Invalid Date" in activity and break scheduling the next repeat.
 const date = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/, 'Use YYYY-MM-DD or an ISO date-time')
-  .refine(realDate, 'That date doesn’t exist')
-  .describe('YYYY-MM-DD, or an ISO 8601 date-time for a timed due date');
+  .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/, { message: 'Use YYYY-MM-DD or an ISO date-time', abort: true })
+  .superRefine((v, ctx) => {
+    const c = checkWhen(v);
+    if ('error' in c) ctx.addIssue({ code: 'custom', message: c.error });
+  })
+  .overwrite(v => {
+    const c = checkWhen(v);
+    return c.ok ? c.value : v;
+  })
+  .describe(WHEN);
 const ms = z.number().int().describe('Unix time in milliseconds');
 const ref = z.string().min(1).max(254);
+// Any IANA time zone. Whose clock is used is decided by server/lib/clock.js.
+const tz = z
+  .string()
+  .max(64)
+  .refine(v => !!validTz(v), 'Use an IANA time zone, like Asia/Dubai or UTC');
+const zoneFields = {
+  timeZone: z
+    .string()
+    .describe(
+      'The IANA time zone this person’s starts, dues and reminders are read in: their own (Settings → Date and time), else the workspace’s, else UTC. Show their times in it.',
+    ),
+  timeZoneSource: z
+    .enum(['person', 'workspace', 'default'])
+    .describe('Where timeZone comes from: person (they set it), workspace (the workspace’s zone), default (UTC: neither is set)'),
+};
 
 /* ---------- records ---------- */
 export const ErrorBody = named(
@@ -53,6 +82,7 @@ export const Member = named(
     team: z.string().describe('Team id, or empty'),
     status: z.enum(['active', 'invited']),
     kind: Kind,
+    ...zoneFields,
   }),
   'A person or bot in the workspace.',
 );
@@ -68,6 +98,7 @@ export const Me = named(
     team: z.string(),
     status: z.enum(['active', 'invited']),
     kind: Kind,
+    ...zoneFields,
     workspace: z.string(),
     key: z.object({
       id: z.string(),
@@ -87,7 +118,7 @@ export const Revoked = named(
 
 export const Subtask = named(
   'Subtask',
-  z.object({ id: z.string(), title: z.string(), done: z.boolean(), assignee: z.string().nullable(), due: z.string().nullable() }),
+  z.object({ id: z.string(), title: z.string(), done: z.boolean(), assignee: z.string().nullable(), due: z.string().nullable().describe(WHEN_OUT) }),
   'A checklist item of a task.',
 );
 
@@ -104,8 +135,8 @@ export const Task = named(
     status: STATUS,
     priority: PRIORITY,
     assignee: z.string().nullable().describe('Member id'),
-    due: z.string().nullable(),
-    start: z.string().nullable(),
+    due: z.string().nullable().describe(WHEN_OUT),
+    start: z.string().nullable().describe(WHEN_OUT),
     labels: z.array(z.string()),
     estimate: z.string().nullable(),
     subtasks: z.array(Subtask),
@@ -137,12 +168,12 @@ export const Project = named(
       .describe('Member id → permission set in the share dialog (listed people without one: Guests comment, others edit)'),
     private: z.boolean(),
     archived: z.boolean(),
-    start: z.string().nullable(),
-    due: z.string().nullable(),
+    start: z.string().nullable().describe(WHEN_OUT),
+    due: z.string().nullable().describe(WHEN_OUT),
     icon: z.string(),
     color: z.string(),
     team: z.string().describe('Team id, or empty'),
-    milestones: z.array(z.object({ name: z.string(), date: z.string().nullable() })),
+    milestones: z.array(z.object({ name: z.string(), date: z.string().nullable().describe(WHEN_OUT) })),
     favorite: z.boolean(),
     access: z
       .enum(['view', 'comment', 'edit', 'full', 'none'])
@@ -172,7 +203,14 @@ export const Activity = named(
     id: z.string(),
     by: z.string().describe('Member id'),
     verb: z.string().describe('e.g. "created", "completed", "moved"'),
-    extra: z.string(),
+    extra: z.string().describe('The words after the verb and task, e.g. "to Nov 10, 6:30 PM"; a start or due in it is on your clock'),
+    when: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        `For an entry that set a start or due: the value it was set to, null when cleared. ${WHEN_OUT}. Absent on other entries, and on ones saved before it was kept.`,
+      ),
     via: z.string().nullable().describe('What made the change when it was not the app, e.g. "Claude" or "CLI"'),
     task: z.string().nullable(),
     taskKey: z.string().nullable().describe('The task’s key (e.g. WEB-12), while it exists'),
@@ -227,7 +265,11 @@ export const TaskQuery = z.object({
     .describe('Comma-separated statuses, or "open" for everything not done'),
   assignee: ref.optional().describe('Member id, email, or "me"'),
   q: z.string().max(200).optional().describe('Text in the title, or an exact key'),
-  updatedSince: z.string().max(40).optional().describe('Only tasks changed since this ISO date-time or Unix ms'),
+  updatedSince: z
+    .string()
+    .max(40)
+    .optional()
+    .describe('Only tasks changed since then: an ISO date-time with its zone (Z or ±HH:MM), Unix ms, or YYYY-MM-DD (from the start of that day on your clock)'),
   includeArchived: bool,
   sort: z
     .enum(['created', 'due'])
@@ -322,11 +364,17 @@ export const Event = named(
   z.object({
     id: z.string(),
     title: z.string(),
-    date: z.string().describe('YYYY-MM-DD'),
-    time: z.string().describe('HH:MM start, or empty for all day'),
+    date: z.string().describe('YYYY-MM-DD: its day on your clock (timeZone on GET /me/preferences)'),
+    time: z.string().describe('HH:MM (24h): when it starts on your clock, or empty for all day'),
+    when: z
+      .string()
+      .nullable()
+      .describe(
+        'The event as stored: YYYY-MM-DD for all day, or the UTC moment it starts (2026-11-10T04:30:00.000Z), the same for everyone; null for an event saved before times had a zone that could not be read',
+      ),
     project: z.string().nullable().describe('Project id; null for a workspace-wide event'),
   }),
-  'A calendar event.',
+  'A calendar event. A timed one is one moment: each reader gets its day and time on their own clock.',
 );
 
 const Filter = z.object({
@@ -359,7 +407,12 @@ export const Notification = named(
 
 export const Workspace = named(
   'Workspace',
-  z.object({ name: z.string(), color: z.string(), brand: z.boolean().describe('Show the workspace logo in the sidebar') }),
+  z.object({
+    name: z.string(),
+    color: z.string(),
+    brand: z.boolean().describe('Show the workspace logo in the sidebar'),
+    timeZone: z.string().nullable().describe('IANA time zone for people who haven’t set their own (bots too); null: not set, so they get UTC'),
+  }),
   'Workspace settings.',
 );
 
@@ -371,7 +424,7 @@ const PREF_SCHEMA = {
   motion: z.enum(['system', 'reduce']),
   lang: z.enum(['English (US)', 'English (UK)', 'Deutsch', 'Español', 'Français', '日本語']),
   spell: z.boolean().describe('Spellcheck in descriptions and comments'),
-  tz: z.enum(TIMEZONES.map(t => t.id)).describe('Time zone for due dates and reminders'),
+  tz: tz.describe('Your own time zone (any IANA zone) for starts, dues and reminders; without one, the workspace’s is used'),
   timeFmt: z.enum(['12', '24']),
   dateFmt: z.enum(['MMM d', 'd/M', 'M/d', 'yyyy-MM-dd']),
   weekStart: z.union([z.literal(0), z.literal(1), z.literal(6)]).describe('0 Sunday, 1 Monday, 6 Saturday'),
@@ -386,8 +439,9 @@ const NOTIF_SCHEMA = Object.fromEntries(Object.keys(DEFAULT_NOTIF_PREFS).map(k =
 export const Preferences = named(
   'Preferences',
   z.object({
-    preferences: z.object(PREF_SCHEMA).partial().describe('Display preferences (Settings → Appearance, Language, Date and time)'),
+    preferences: z.object(PREF_SCHEMA).partial().describe('Display preferences (Settings → Appearance, Language, Date and time); tz only when you set one'),
     notifications: z.object(NOTIF_SCHEMA).describe('Notification preferences (Settings → Notifications)'),
+    ...zoneFields,
   }),
   'The key’s person’s preferences.',
 );
@@ -528,6 +582,7 @@ export const WorkspaceUpdate = z
     name: z.string().trim().min(1).max(80),
     color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'A colour is #RRGGBB'),
     brand: z.boolean(),
+    timeZone: tz.nullable().describe('IANA time zone for people who haven’t set their own; null unsets it'),
   })
   .partial();
 
@@ -554,22 +609,24 @@ export const DownloadQuery = z.object({ download: bool.describe('true: always as
 
 const time = z
   .string()
-  .regex(/^(\d{2}:\d{2})?$/, 'Use HH:MM, or empty for all day')
-  .describe('HH:MM, or empty for all day');
+  .regex(/^(([01]\d|2[0-3]):[0-5]\d)?$/, 'Use HH:MM, or empty for all day')
+  .describe('HH:MM (24h) on your clock, or empty for all day');
 const day = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')
-  .refine(realDate, 'That date doesn’t exist');
+  .refine(v => checkWhen(v).ok, 'That date doesn’t exist');
 export const EventQuery = z.object({
   project: ref.optional().describe('Project id or key'),
-  from: day.optional().describe('From this day (YYYY-MM-DD)'),
-  to: day.optional().describe('To this day'),
+  from: day.optional().describe('From this day (YYYY-MM-DD) on your clock'),
+  to: day.optional().describe('To this day, on your clock'),
   limit,
   cursor,
 });
+// The day and time are read on the caller's clock (timeZone on GET /me/preferences, or Sudo-Time-Zone); a timed
+// event is stored as the moment it starts.
 export const EventCreate = z.strictObject({
   title: z.string().trim().min(1, 'Give the event a title').max(200),
-  date: day,
+  date: day.describe('YYYY-MM-DD, on your clock'),
   time: time.optional(),
   project: ref.nullable().optional().describe('Project id or key; null or left out for a workspace-wide event (admins only)'),
 });

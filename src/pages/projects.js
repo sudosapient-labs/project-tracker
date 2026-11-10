@@ -1,5 +1,5 @@
 /* ---------- PROJECTS ---------- */
-import { ago, esc, fmtDate, minsAgo } from '../core/utils.js';
+import { ago, compareDue, esc, fmtDate, minsAgo } from '../core/utils.js';
 import { ic } from '../core/icons.js';
 import { PSTAT } from '../core/constants.js';
 import { S, TM, canManage, canSee, mem, progressOf, tasksOf, visibleProjects } from '../core/store.js';
@@ -24,8 +24,9 @@ export function pageProjects() {
   const st = u.projStatus || 'all';
   const sort = u.projSort || 'recent';
   let ps = visibleProjects().filter(p => (st === 'all' || p.status === st) && (!q || p.name.toLowerCase().includes(q) || p.desc.toLowerCase().includes(q)));
-  const sorter = { recent: p => p.last, name: p => p.name, due: p => p.due, progress: p => -progressOf(p.id) }[sort];
-  ps.sort((a, b) => (sorter(a) > sorter(b) ? 1 : -1));
+  const sorter = { recent: p => p.last, name: p => p.name, progress: p => -progressOf(p.id) }[sort];
+  // Dues as moments on the reader's clock, not as text: a day and a time on it don't sort as strings.
+  ps.sort(sort === 'due' ? (a, b) => compareDue(a.due, b.due) : (a, b) => (sorter(a) > sorter(b) ? 1 : -1));
   const view = u.projView;
   let body;
   if (!visibleProjects().length)
