@@ -75,6 +75,8 @@ self.addEventListener('push', e => {
       body: m.body || '',
       tag: m.tag,
       icon: '/icons/icon-192.png',
+      // The small monochrome mark Android shows in the status bar (scripts/monochrome-icon.js).
+      badge: '/icons/badge-96.png',
       data: { url: m.url || '/' },
     }),
   );
