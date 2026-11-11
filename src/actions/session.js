@@ -9,7 +9,9 @@ import { browserTz, zoneOf } from '../core/clock.js';
 import { D, DEFAULT_PREFS, PREFS_KEY, S, allTasks, canSee, emptyData, me, proj } from '../core/store.js';
 import { ApiError, get, post } from '../core/api.js';
 import { toast } from '../ui/toast.js';
-import { hashFor, render, routeFromHash } from '../shell/render.js';
+import { go, hashFor, layers, pageEntry, render, routeFromHash } from '../shell/render.js';
+import { keepAll } from './drafts.js';
+import { parseHash } from '../core/links.js';
 import {
   OFFLINE_MSG,
   changeCount,
@@ -141,32 +143,69 @@ async function enter(hash, msg) {
     return;
   }
   S.ui.auth = null;
-  openRoute(hash || S.ui.returnTo || '');
+  openRoute(linked ?? (hash || S.ui.returnTo || ''));
+  linked = null;
   S.ui.returnTo = null;
   refreshPush();
   if (msg) toast(msg);
   told();
 }
 
-/* Route from the URL hash: a page (see hashFor in shell/render.js), or a deep link written by
-   A.copyLink (#task/KEY, #file/id). */
-function openRoute(h = '') {
-  const r = routeFromHash(h);
-  S.ui.route = r?.route || S.prefs.home || 'home';
-  S.ui.params = r?.params || {};
-  S.ui.history = [];
-  history.replaceState(null, '', location.pathname + location.search + '#' + hashFor(S.ui.route, S.ui.params));
-  render();
-  let kind, ref;
-  try {
-    [kind, ref] = h.split('/').map(decodeURIComponent);
-  } catch {
-    /* malformed escape in the hash: open normally */
+/* Route from the URL hash: a page (see hashFor in shell/render.js), the task open over it, or a
+   deep link written by A.copyLink (#task/KEY, #file/id); see core/links.js. At the start the page is
+   the one the hash names, else Home. `here`: a link that came while the app was open (openLink),
+   which closes what's open (the task too), goes to the page it names, else stays on this one. */
+function openRoute(h = '', { here = false } = {}) {
+  const { page, task: key, file: fid } = parseHash(h);
+  const r = page ? routeFromHash(page) : null;
+  const base = location.pathname + location.search + '#';
+  // Give the entry a state (a link's has none), so nothing below takes it for a link. A reloaded
+  // layer's entry (actions/back.js) stays one: the task opens on it again. A link that stays on the
+  // page shown makes its entry a layer over that page, so Back closes what it opens and stays here.
+  const same = !r || hashFor(r.route, r.params) === hashFor(S.ui.route, S.ui.params);
+  const state = history.state || (here ? layers.linkEntry(same) : pageEntry());
+  const mark = () => history.replaceState(state, '', base + hashFor(S.ui.route, S.ui.params));
+  if (here) {
+    mark();
+    // What the link names is what's shown: a link to a page closes the task open over this one.
+    // What was typed in a window or the composer it closes is kept (drafts.js).
+    keepAll();
+    Object.assign(S.ui, {
+      pop: null,
+      palette: null,
+      modals: [],
+      mention: null,
+      editCell: null,
+      composer: null,
+      subOpen: null,
+      mnav: false,
+      drawer: null,
+      drawerFull: false,
+    });
+    if (r) go(r.route, r.params, { fromUrl: true });
+  } else {
+    S.ui.route = r?.route || S.prefs.home || 'home';
+    S.ui.params = r?.params || {};
+    S.ui.history = [];
   }
-  const t = kind === 'task' && allTasks().find(x => x.key === ref);
+  mark();
+  const t = key && allTasks().find(x => x.key.toUpperCase() === key.toUpperCase());
+  const f = fid && D().files.find(x => x.id === fid && canSee(proj(x.project)));
+  // The task opens in the first render, so a touch screen's Back entry for it is made only once.
   if (t) A.openTask({ dataset: { id: t.id } });
-  const f = kind === 'file' && D().files.find(x => x.id === ref);
-  if (f && canSee(proj(f.project))) A.previewFile({ dataset: { id: f.id } });
+  else render();
+  if (key && !t) toast(`${key.slice(0, 40)} can't be opened: it was deleted or archived, or you don't have access to it.`, { kind: 'err', ms: 7000 });
+  if (f) A.previewFile({ dataset: { id: f.id } });
+  else if (fid) toast("That file can't be opened: it was deleted, or you don't have access to it.", { kind: 'err', ms: 7000 });
+}
+
+/* A link that came while this tab was open: a notification or URL Android hands the app (it only
+   changes the hash), a hash typed or pasted. Signed in, it opens here at once; while the app is
+   still loading, signing in or being set up, it opens when that's done. */
+let linked = null;
+function openLink(h) {
+  if (S.ui.auth) linked = h;
+  else openRoute(h, { here: true });
 }
 
 /* Who this browser's session belongs to, for the app's other tabs (see stillMe). */
@@ -644,15 +683,22 @@ A.onbFinish = async () => {
 A.onbExit = async () => {
   await finishSetup();
   S.ui.auth = null;
-  openRoute('');
+  openRoute(linked ?? '');
+  linked = null;
 };
 
-/* An emailed link pasted into a tab that already has the app open only changes the hash. */
+/* A link opened in a tab that already has the app open only changes the hash. An emailed link
+   (#reset/…) boots with its token; any other opens in place. Back and forward between the app's
+   own entries also change it: those have a state, and the popstate handler routed them. */
 addEventListener('hashchange', () => {
   if (/^#(verify|reset|invite|join|setup|email)\//.test(location.hash)) boot();
+  else if (!history.state) openLink(location.hash.slice(1));
 });
 
-/* A push notification was clicked while the app was open: go to what it's about. */
+/* A push notification was clicked while the app was open: go to what it's about, as a link does
+   (a history entry of its own, so Back returns to where you were). */
 navigator.serviceWorker?.addEventListener('message', e => {
-  if (e.data?.type === 'open' && !S.ui.auth) openRoute((e.data.url || '').split('#')[1] || '');
+  if (e.data?.type !== 'open') return;
+  const h = (e.data.url || '').split('#')[1] || '';
+  if (h && '#' + h !== location.hash) location.hash = h;
 });

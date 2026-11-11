@@ -2,7 +2,8 @@
    SHELL: render loop, router, sidebar, topbar, skeletons, filter engine
    ===================================================================== */
 import { $, $$ } from '../core/utils.js';
-import { D, S, mem, proj, team } from '../core/store.js';
+import { D, S, mem, proj, task, team } from '../core/store.js';
+import { parseHash, withTask } from '../core/links.js';
 import { applyPrefs } from '../core/theme.js';
 import { enhanceSelects, selectMenu } from '../ui/select.js';
 import { renderShell } from './layout.js';
@@ -56,7 +57,8 @@ export const ROUTE_ICONS = {
 };
 
 /* ---------- URL ↔ route ----------
-   #home · #project/web/list · #member/<id> · #team/<id> · #settings/<section> */
+   #home · #project/web/list · #member/<id> · #team/<id> · #settings/<section>, and the open task
+   after the page (#project/web/list?task=WEB-12; see core/links.js). */
 export function hashFor(route, params = {}) {
   if (route === 'project') {
     const p = proj(params.id);
@@ -85,15 +87,54 @@ export function routeFromHash(h) {
   if (r === 'settings') return { route: 'settings', params: /^[a-z0-9-]{1,40}$/.test(a || '') ? { sec: a } : {} };
   return ROUTE_NAMES[r] && r !== 'member' && r !== 'team' ? { route: r, params: {} } : null;
 }
+/* On touch screens each open drawer, modal, menu or sidebar opened by a tap has a history entry of
+   its own, so the system Back button closes it (actions/back.js sets these). `back` handles a
+   popstate (true: nothing to route); `sync` adds or steps back over entries after each render;
+   `added` is told when a page's entry is added (a tap adds one entry at most); `linkEntry` is the
+   state for an entry a link made over the page shown. */
+export const layers = {
+  back: () => false,
+  sync: () => {},
+  onEntry: () => false,
+  added: () => {},
+  linkEntry: (/** @type {boolean} */ _samePage) => pageEntry(),
+};
+/* Every history entry the app writes for a page has a state like this (a layer's: `{ layer: n }`,
+   see actions/back.js), with an id of its own. One without a state was made by a link (a
+   notification or URL Android hands the open app, a hash typed or pasted): the popstate it fires is
+   left alone, and the hashchange after it opens the link (openLink in actions/session.js). */
+let seq = 0;
+export const entryId = () => `${Date.now().toString(36)}.${(++seq).toString(36)}.${Math.random().toString(36).slice(2, 6)}`;
+export const pageEntry = () => ({ page: true, id: entryId() });
+/* The hash for what's shown: the page, and the task open over it. */
+export const urlHash = () => withTask(hashFor(S.ui.route, S.ui.params), S.ui.drawer ? task(S.ui.drawer)?.key : null);
 function writeHash(route, params, replace) {
   const h = '#' + hashFor(route, params);
   if (location.hash === h) return;
-  history[replace ? 'replaceState' : 'pushState'](null, '', location.pathname + location.search + h);
+  const url = location.pathname + location.search + h;
+  // Going somewhere from an open layer takes over its entry, so Back returns to the page, not to it.
+  if (layers.onEntry()) history.replaceState(pageEntry(), '', url);
+  else if (replace) history.replaceState(history.state?.page ? history.state : pageEntry(), '', url);
+  else {
+    history.pushState(pageEntry(), '', url);
+    layers.added();
+  }
 }
-// Browser back / forward: follow the URL without adding another history entry.
+/* After each render the URL names the open task, on the entry shown, adding no history entry. On a
+   touch screen that is usually the open layer's entry (layers.sync has just added it in a tap), so
+   the page's own entry under it keeps the page's URL and Back goes there; an entry Back lands on is
+   rewritten to what's still open. An entry a link made is left for the link to open first. */
+function showUrl() {
+  if (S.ui.auth || !history.state) return;
+  const h = '#' + urlHash();
+  if (location.hash !== h) history.replaceState(history.state, '', location.pathname + location.search + h);
+}
+// Browser back / forward: follow the URL without adding another history entry. The open task
+// isn't followed: on a desktop it stays open as before, and showUrl then writes it into the URL.
 addEventListener('popstate', () => {
-  if (S.ui.auth) return;
-  const r = routeFromHash(location.hash.slice(1));
+  if (layers.back()) return;
+  if (S.ui.auth || !history.state) return;
+  const r = routeFromHash(parseHash(location.hash).page);
   if (r) go(r.route, r.params, { back: true, fromUrl: true });
 });
 
@@ -157,9 +198,14 @@ export function pageTitle() {
   if (u.route === 'team' && team(u.params.id)) t = team(u.params.id).name;
   return `${t} · ${D().ws.name}`;
 }
-/* Anything clickable is keyboard-reachable: non-native [data-a] controls get a role and a tab stop. */
+/* Anything clickable is keyboard-reachable: non-native [data-a] controls get a role and a tab stop.
+   Not a tap area (`data-tap-area`): a bigger target for a button inside it, which a keyboard and a
+   screen reader use instead (a board card and its title). Made a button, it would hide its other
+   buttons from a screen reader. */
 export function makeFocusable() {
-  for (const el of document.querySelectorAll('[data-a]:not(button):not(a):not(input):not(label):not(select):not(textarea):not([tabindex])')) {
+  for (const el of document.querySelectorAll(
+    '[data-a]:not(button):not(a):not(input):not(label):not(select):not(textarea):not([tabindex]):not([data-tap-area])',
+  )) {
     if (el.matches('.scrim,.modal-wrap,.drawer-scrim,.side-scrim')) continue;
     el.tabIndex = 0;
     if (!el.hasAttribute('role')) el.setAttribute('role', el.dataset.a === 'go' ? 'link' : 'button');
@@ -203,6 +249,7 @@ export function render() {
       el.scrollLeft = l;
     }
   });
+  showOpenTabs();
   if (fid) {
     const el = document.getElementById(fid);
     if (el && el !== document.activeElement) {
@@ -236,6 +283,8 @@ export function render() {
     if (live && !S.ui.loading) live.textContent = title.split(' · ').slice(0, -1).join(', ');
   }
   afterRender();
+  layers.sync();
+  showUrl();
 }
 export function afterRender() {
   selectMenu.close();
@@ -270,4 +319,29 @@ export function countUp() {
 export function autosize(el) {
   el.style.height = 'auto';
   el.style.height = el.scrollHeight + 'px';
+}
+/* A strip of tabs too wide for the screen scrolls sideways (Settings and a project's views on a phone).
+   Bring the open tab into view when it changes, or the strip is new. A strip that keeps its scroll
+   across renders (data-keep) is otherwise left where it was scrolled to; one drawn anew each time
+   is brought to its open tab each time, rather than left past the edge. */
+const openTabs = new Map(); // data-keep: the open tab last brought into view in that strip
+function showOpenTabs() {
+  const seen = new Set();
+  for (const on of $$('.tabs > .tab.on, .set-nav > .sitem.on')) {
+    const strip = /** @type {HTMLElement} */ (on.parentElement);
+    const k = strip.dataset.keep,
+      v = /** @type {HTMLElement} */ (on).dataset.tab || /** @type {HTMLElement} */ (on).dataset.sec || on.textContent;
+    if (k) {
+      seen.add(k);
+      const same = openTabs.get(k) === v;
+      openTabs.set(k, v);
+      if (same) continue;
+    }
+    if (strip.scrollWidth <= strip.clientWidth) continue;
+    const s = strip.getBoundingClientRect(),
+      r = on.getBoundingClientRect();
+    if (r.left < s.left || r.right > s.right) strip.scrollLeft += r.left - s.left - (s.width - r.width) / 2;
+  }
+  // A strip that's gone starts again when it's back.
+  for (const k of [...openTabs.keys()]) if (!seen.has(k)) openTabs.delete(k);
 }

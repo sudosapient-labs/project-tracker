@@ -103,7 +103,7 @@ export function miniCal(p, val) {
         const ds = iso(d);
         const on = ds === dayKey(val);
         const isToday = diffD(d, today()) === 0;
-        return `<button data-a="popPick" data-v="${ds}" style="height:30px;border-radius:6px;font-size:12px;${on ? 'background:var(--accent);color:var(--on-accent);font-weight:600' : isToday ? 'color:var(--accent);font-weight:600;box-shadow:inset 0 0 0 1px var(--accent-line)' : d.getMonth() !== m.getMonth() ? 'color:var(--text-3)' : ''}" onmouseover="if(!this.style.background)this.style.background='var(--surface-2)'" onmouseout="if(this.style.background==='var(--surface-2)')this.style.background=''" aria-label="${fmtDate(ds, true)}" class="num">${d.getDate()}</button>`;
+        return `<button data-a="popPick" data-v="${ds}" style="height:30px;border-radius:6px;font-size:12px;${on ? 'background:var(--accent);color:var(--on-accent);font-weight:600' : isToday ? 'color:var(--accent);font-weight:600;box-shadow:inset 0 0 0 1px var(--accent-line)' : d.getMonth() !== m.getMonth() ? 'color:var(--text-3)' : ''}" aria-label="${fmtDate(ds, true)}" class="num dp-day">${d.getDate()}</button>`;
       })
       .join('')}</div></div>`;
 }

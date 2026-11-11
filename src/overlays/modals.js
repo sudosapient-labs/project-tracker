@@ -7,6 +7,7 @@ import { PERMS, isAdminRole, projectLevel } from '../core/access.js';
 import { av, filePrev, fileUrl, ftOf, lbl, prPill, stPill } from '../ui/helpers.js';
 import { focusKey, render } from '../shell/render.js';
 import { teamModal } from '../features/teams.js';
+import { dropForm } from '../actions/drafts.js';
 
 export function openModal(m) {
   S.ui.modalOpeners = S.ui.modalOpeners || [];
@@ -24,8 +25,10 @@ export function openModal(m) {
     (af || last?.querySelector('input,textarea,button'))?.focus();
   }, 30);
 }
-export function closeModal() {
-  S.ui.modals.pop();
+/* `keep`: what's typed in it was kept (drafts.js) and stays; otherwise closing it discards that. */
+export function closeModal({ keep = false } = {}) {
+  const m = S.ui.modals.pop();
+  if (!keep) dropForm(m);
   S.ui.pop = null;
   render();
 }

@@ -15,6 +15,9 @@ export const uid = (p = 'x') => p + randomHex(14);
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 export const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 export const MOD = isMac ? '⌘' : 'Ctrl';
+/* A screen used by touch (a phone, a tablet): nothing there may depend on hovering, and the system
+   Back button closes what's open first (actions/back.js). The same test as the CSS's (hover: none). */
+export const touchUI = () => matchMedia('(hover: none)').matches;
 
 /* ---------- dates ---------- */
 export const DAY = 864e5;

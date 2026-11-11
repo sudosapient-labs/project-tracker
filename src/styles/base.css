@@ -10,6 +10,10 @@ html,
 body {
   height: 100%;
 }
+/* The page is the visible viewport: on a phone the browser's and the system's bars don't cover it. */
+body {
+  height: 100dvh;
+}
 body {
   margin: 0;
   background: var(--bg);

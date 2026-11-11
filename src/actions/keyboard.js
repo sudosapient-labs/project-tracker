@@ -3,9 +3,8 @@ import { $, $$ } from '../core/utils.js';
 import { STATUSES } from '../core/constants.js';
 import { S } from '../core/store.js';
 import { go, render } from '../shell/render.js';
-import { closeModal } from '../overlays/modals.js';
-import { closePop } from '../overlays/popovers.js';
 import { A, KEY } from './actions.js';
+import { closeTop } from './back.js';
 
 export let gPending = 0;
 document.addEventListener('keydown', e => {
@@ -101,43 +100,8 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.key === 'Escape') {
-    if (S.ui.pop) {
-      closePop();
-      return;
-    }
-    if (S.ui.mention) {
-      S.ui.mention = null;
-      render();
-      return;
-    }
-    if (S.ui.editCell) {
-      S.ui.editCell = null;
-      render();
-      return;
-    }
-    if (S.ui.composer) {
-      A.cancelComposer();
-      return;
-    }
-    if (S.ui.modals.length) {
-      closeModal();
-      return;
-    }
-    if (S.ui.subOpen) {
-      if (typing) t.blur();
-      S.ui.lastSub = S.ui.subOpen.sid;
-      A.closeSub();
-      return;
-    }
-    if (S.ui.drawer) {
-      if (typing) t.blur();
-      A.closeDrawer();
-      return;
-    }
-    if (S.ui.mnav) {
-      A.closeMnav();
-      return;
-    }
+    // The same order the Back button closes things in on touch screens.
+    if (closeTop()) return;
     if (S.ui.sel.size) {
       A.clearSel();
       return;

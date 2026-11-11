@@ -6,7 +6,7 @@ import { D, canEdit, canManage, canSee, me, mem, proj, task, visibleProjects } f
 
 export function ctxMenu(p) {
   const I = (act, icon, label, extra = '', r = '') =>
-    `<button class="mi ${extra}" data-a="${act}" data-id="${p.id}" data-key="${p.key || ''}">${ic(icon, 15)}${label}${r ? `<span class="r">${r}</span>` : ''}</button>`;
+    `<button class="mi ${extra}" data-a="${act}" data-id="${p.id}" data-key="${p.key || ''}">${ic(icon, 15)}${label}${r ? `<span class="r khint">${r}</span>` : ''}</button>`;
   const sep = '<div class="msep"></div>';
   if (p.ctx === 'task') {
     const t = task(p.id);
@@ -26,6 +26,9 @@ export function ctxMenu(p) {
       I('ctxAssign', 'user', 'Assign to…') +
       I('ctxPrio', 'signal-high', 'Priority…') +
       I('ctxMove', 'folder-input', 'Move to project…') +
+      // A touch screen can't drag the row (see rowPlace): it moves from here.
+      (p.row?.up ? I('rowUp', 'arrow-up', 'Move up') : '') +
+      (p.row?.down ? I('rowDown', 'arrow-down', 'Move down') : '') +
       sep +
       I('toggleFavTask', 'star', t.fav ? 'Remove from favorites' : 'Add to favorites') +
       I('copyLink', 'link', 'Copy link') +

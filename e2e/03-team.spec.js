@@ -88,6 +88,9 @@ test('work done by one person appears live for the other, with notifications', a
 });
 
 test('roles and removal: an admin changes a role and removes a member, who is signed out', async () => {
+  // The task left open above is in the URL, so the reload below would open it again over the list.
+  await ada.locator('.drawer-h [data-a="closeDrawer"]').click();
+  await expect(ada.locator('.drawer')).toHaveCount(0);
   await ada.locator('.side [data-r="members"]').click();
   const gRow = ada.locator('tr', { hasText: MATE.email });
   await gRow.locator('[data-pop="role"]').click();

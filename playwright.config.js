@@ -14,5 +14,11 @@ export default defineConfig({
   reporter: [['list']],
   use: { baseURL: `http://127.0.0.1:${port}`, trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   webServer: { command: 'node e2e/serve.js', url: `http://127.0.0.1:${port}/api/health`, reuseExistingServer: false, stdout: 'pipe' },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    // The journeys, on a desktop browser.
+    { name: 'chromium', testIgnore: 'phone/**', use: { ...devices['Desktop Chrome'] } },
+    // Phone checks (e2e/phone/): touch, the Back button, layouts at phone widths. They sign in to the
+    // workspace the journeys made, so they run after them (`--no-deps` with 01-auth to run them alone).
+    { name: 'phone', testDir: 'e2e/phone', dependencies: ['chromium'], use: { ...devices['Pixel 7'] } },
+  ],
 });

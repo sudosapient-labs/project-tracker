@@ -26,11 +26,15 @@
     width: 280px;
     z-index: 70;
     transform: translateX(-100%);
-    transition: transform 0.22s var(--ease);
-    box-shadow: var(--shadow-pop);
+    transition:
+      transform 0.22s var(--ease),
+      box-shadow 0.22s var(--ease);
+    /* No shadow while closed: it would show as a grey edge down the left of the screen. */
+    box-shadow: none;
   }
   .shell.mnav .side {
     transform: none;
+    box-shadow: var(--shadow-pop);
   }
   .shell.collapsed .side .sitem {
     justify-content: flex-start;
@@ -167,8 +171,17 @@
     display: none;
   }
   .tlist .trow .ttl {
-    flex: 1 1 calc(100% - 30px);
+    flex: 1 1 calc(100% - 72px);
     order: 1;
+  }
+  /* The row's menu sits at the end of the title line. */
+  .tlist .trow .c-more {
+    order: 1;
+    margin-left: auto;
+  }
+  .tlist .trow .c-more .ibtn {
+    width: 36px;
+    height: 36px;
   }
   .tlist .trow .c-check {
     order: 0;
@@ -192,7 +205,32 @@
   }
   .drawer-b,
   .drawer.full .drawer-b {
-    padding: 16px 16px 40px;
+    padding: 16px 16px calc(40px + env(safe-area-inset-bottom, 0px));
+  }
+  /* The header fits 360px: the project name gives way, the key stays on one line. */
+  .drawer-h {
+    height: calc(52px + env(safe-area-inset-top, 0px));
+    padding: env(safe-area-inset-top, 0px) 4px 0 12px;
+    gap: 2px;
+  }
+  .drawer-h > .pillbtn {
+    min-width: 0;
+    flex-shrink: 1;
+    overflow: hidden;
+  }
+  .drawer-h > .mono {
+    white-space: nowrap;
+  }
+  .drawer-h .ibtn {
+    width: 36px;
+    height: 36px;
+  }
+  .topbar {
+    height: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .side {
+    padding-top: env(safe-area-inset-top, 0px);
   }
   .modal-wrap {
     padding: 0;
@@ -200,7 +238,9 @@
   }
   .modal {
     max-height: 92vh;
+    max-height: 92dvh;
     border-radius: 14px 14px 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   .opts,
   .tmpls {
@@ -221,15 +261,36 @@
   .cal-g {
     grid-auto-rows: minmax(72px, 1fr);
   }
-  .cev .trunc,
-  .cev .av {
+  /* A day is a seventh of the screen: an entry is its title, on up to two lines, with the project's
+     colour down its side (the time, icon and person are in the task). */
+  .cday {
+    padding: 4px 2px;
+    gap: 2px;
+  }
+  .cev > svg,
+  .cev .av,
+  .cev .num {
     display: none;
   }
   .cev {
-    height: 8px;
-    padding: 0;
+    height: auto;
+    min-height: 16px;
+    padding: 1px 3px;
+    border-width: 0 0 0 3px;
+    border-color: var(--c);
     border-radius: 3px;
-    background: var(--c);
+    font-size: 10px;
+    line-height: 1.25;
+  }
+  .cev .trunc {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+    /* Break between words; inside a word only when it's longer than the line, hyphenated if the
+       browser can (Chrome on Android can, from the page's lang). */
+    overflow-wrap: break-word;
+    hyphens: auto;
   }
   .week {
     grid-template-columns: minmax(0, 1fr);
@@ -241,6 +302,20 @@
   }
   .tl-left {
     display: none;
+  }
+  /* Without the task column, a bar's title and a group's name stay at the left edge of the screen while
+     the bar or group runs past it (clip, not hidden, so the timeline is what they stick to). */
+  .bar {
+    overflow: clip;
+  }
+  .bar > .trunc {
+    position: sticky;
+    left: 8px;
+  }
+  .tl-glbl {
+    display: flex;
+    position: sticky;
+    left: 0;
   }
   .tl {
     grid-template-columns: minmax(0, 1fr);
@@ -291,6 +366,54 @@
   }
   .palette {
     top: 8px;
+  }
+}
+/* Touch screens: nothing is reachable only by hovering. Controls that appear on hover are shown. */
+@media (hover: none) {
+  .kcard .hacts {
+    display: flex;
+    position: static;
+    justify-content: flex-end;
+    margin: 2px -4px -4px 0;
+    background: none;
+    box-shadow: none;
+  }
+  .kcard .hacts .ibtn {
+    width: 34px;
+    height: 34px;
+  }
+  .cday .add,
+  .pcard .more,
+  .fcard .more,
+  .sgroup-h .ibtn,
+  .subt .x,
+  .attc .x,
+  .bcol-h .acts,
+  .grp .ibtn {
+    opacity: 1;
+  }
+  .sitem .hov {
+    display: flex;
+  }
+  /* A project card's menu button is always shown here, so the title row keeps clear of it. */
+  .pcard > .row:first-child {
+    padding-right: calc(var(--h-sm) + 2px);
+  }
+  /* Keyboard hints (Enter, Esc, a menu item's shortcut) mean nothing without a keyboard. */
+  .khint,
+  .mi .r > kbd,
+  .pi .r > kbd {
+    display: none !important;
+  }
+}
+/* A phone's browser zooms into a focused field whose text is smaller than 16px, so fields are 16px
+   on a phone (narrow, or a phone on its side). A tablet doesn't need it, and keeps compact fields
+   (a date picker's time, a table cell) at their size. */
+@media (pointer: coarse) and (max-width: 640px), (pointer: coarse) and (max-height: 500px) {
+  input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']),
+  textarea:not(.ttl-edit),
+  [contenteditable='true'] {
+    font-size: 16px !important;
   }
 }
 @media (prefers-reduced-motion: reduce) {

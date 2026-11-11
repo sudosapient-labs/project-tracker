@@ -62,8 +62,14 @@ export const SET_NAV = [
     ],
   ],
 ];
+/* A setting: its title, a description, and the control. A `tog` or `sel` in the row is named by the
+   row's title (its `data-row-label` becomes aria-labelledby), so a screen reader says "Mentions",
+   not the setting's key. */
+let rows = 0;
 export function srow(t, d, ctl) {
-  return `<div class="srow"><div><div class="t">${t}</div>${d ? `<div class="d">${d}</div>` : ''}</div><div class="row">${ctl}</div></div>`;
+  const id = `srow-${++rows}`;
+  const named = ctl.replace(/ data-row-label\b/g, ` aria-labelledby="${id}"`);
+  return `<div class="srow"><div><div class="t"${named === ctl ? '' : ` id="${id}"`}>${t}</div>${d ? `<div class="d">${d}</div>` : ''}</div><div class="row">${named}</div></div>`;
 }
 /* Settings → Push: whether this device actually gets push. The toggles below are the account's;
    this says whether this browser is allowed and subscribed, and offers the one tap that fixes it. */
@@ -129,10 +135,9 @@ function pushDevice(np) {
     `<button class="btn btn-primary btn-sm" data-a="pushHere" ${pushHere.busy ? 'disabled' : ''}>${ic('bell', 14)}Turn on push on this device</button>`,
   );
 }
-export const tog = (k, on, src = 'pref') =>
-  `<input type="checkbox" class="toggle" data-in="${src}Toggle" data-k="${k}" ${on ? 'checked' : ''} aria-label="${k}">`;
+export const tog = (k, on, src = 'pref') => `<input type="checkbox" class="toggle" data-in="${src}Toggle" data-k="${k}" ${on ? 'checked' : ''} data-row-label>`;
 export const sel = (k, opts, v) =>
-  `<select class="select" style="width:auto;min-width:180px" data-in="prefSel" data-k="${k}" aria-label="${k}">${opts
+  `<select class="select" style="width:auto;min-width:180px" data-in="prefSel" data-k="${k}" data-row-label>${opts
     .map(o => {
       const [val, n] = Array.isArray(o) ? o : [o, o];
       return `<option value="${val}" ${String(v) === String(val) ? 'selected' : ''}>${n}</option>`;
@@ -156,7 +161,7 @@ export function pageSettings() {
   const sec = S.ui.params.sec || S.ui.settings || 'appearance';
   const title = SET_NAV.flatMap(g => g[1]).find(x => x[0] === sec) || ['appearance', 'Appearance'];
   return `<div class="set">
-    <nav class="set-nav" aria-label="Settings">${SET_NAV.map(([g, items]) => `<div class="gh">${g}</div>${items.map(([k, n, i]) => `<button class="sitem ${sec === k ? 'on' : ''}" data-a="go" data-r="settings" data-sec="${k}">${ic(i, 15)}<span>${n}</span></button>`).join('')}`).join('')}</nav>
+    <nav class="set-nav" aria-label="Settings" data-keep="set-nav">${SET_NAV.map(([g, items]) => `<div class="gh">${g}</div>${items.map(([k, n, i]) => `<button class="sitem ${sec === k ? 'on' : ''}" data-a="go" data-r="settings" data-sec="${k}">${ic(i, 15)}<span>${n}</span></button>`).join('')}`).join('')}</nav>
     <div class="set-body" data-keep="set:${esc(sec)}"><div class="set-in">${settingsBody(sec, title[1])}</div></div>
   </div>`;
 }

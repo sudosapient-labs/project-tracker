@@ -46,6 +46,7 @@ import './pages/design-system.js';
 import './actions/actions.js';
 import './actions/events.js';
 import './actions/keyboard.js';
+import './actions/back.js';
 import './actions/drag-drop.js';
 import './features/teams.js';
 import './features/subtasks.js';

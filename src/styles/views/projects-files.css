@@ -25,6 +25,13 @@
   border-color: var(--border-strong);
   box-shadow: 0 4px 12px -6px rgba(0, 0, 0, 0.1);
 }
+.pcard .popen {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: inherit;
+  text-align: left;
+  border-radius: 2px;
+}
 .pcard .desc {
   font-size: var(--fs-sm);
   color: var(--text-2);
@@ -65,7 +72,8 @@
   right: 10px;
   opacity: 0;
 }
-.pcard:hover .more {
+.pcard:hover .more,
+.pcard:focus-within .more {
   opacity: 1;
 }
 .pstatus {
