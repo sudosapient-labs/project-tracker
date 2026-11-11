@@ -220,18 +220,29 @@ used by touch and closed with the system Back button. "Touch screen" means `(hov
   own entry is then the page's, or the task's layer over the page shown, so Back closes the task
   and stays on that page. A task that's gone, or that you can't see, says so in
   a toast. A link that comes while the app is still loading, or before signing in, opens after.
-- **Nothing needs hover, drag or a right click.** Controls that appear on hover are shown. A board
+- **Nothing needs hover, drag or a right click.** Controls that appear on hover are shown, and a
+  project card's title row keeps clear of its menu button. Keyboard hints are left out: a menu
+  item's shortcut, the inline composers' "Enter to add · Esc to cancel" (mark such text `khint`). A board
   card's menu changes its status (its column); a list row's menu has Move up and Move down; a
   task is renamed in its drawer. The timeline is view-only by touch: a finger scrolls it, a tap
   opens the task, and bars are moved with a mouse or from the task's dates.
 - **Sizes.** Text fields are 16px on a phone (a touch screen up to 640px wide, or up to 500px tall
   on its side), so the browser doesn't zoom into them; a tablet keeps compact fields at their size; the page, modals and popovers
   are sized in `dvh`, so the browser's and the system's bars don't hide content; the top bar,
-  sidebar, drawer and bottom navigation keep clear of safe areas. `theme-color` (the status bar in
-  the Android app) follows the theme chosen in Settings.
+  sidebar, drawer and bottom navigation keep clear of safe areas.
+- **The system bars in the Android app.** The status bar follows the theme chosen in Settings:
+  `src/core/theme.js` sets every `theme-color` meta to the theme's background, and Chrome colours a
+  Trusted Web Activity's status bar from the page's `theme-color` on the app's verified origin. The
+  navigation bar doesn't: it follows the phone's light or dark setting, using the Android app's
+  `navigationColor` and `navigationColorDark` (`twa-manifest.json`), which the app hands Chrome at
+  launch. A page has no way to change it, in Chrome 113 or later: `theme-color` (its `media`
+  variants included) drives only the status bar, the web app manifest has no member for it, and
+  there is no web API for it. So with Dark chosen on a phone in light mode the navigation bar stays
+  light, and the reverse; with System, or a theme matching the phone's, both bars match.
 - **Narrow screens.** A tab strip too wide for the screen (Settings, a project's views) scrolls
   sideways, and brings the open tab into view when it opens; a render keeps where it was scrolled to. Calendar entries show their titles on up to two
-  lines. With the timeline's task column hidden, group names sit in the bars pane and a bar's title
+  lines, broken between words, and inside a word (hyphenated where the browser can) only when it
+  is wider than the entry. Settings scrolls only in its pane. With the timeline's task column hidden, group names sit in the bars pane and a bar's title
   stays at the left edge while the bar runs past it.
 - **Tests.** The `phone` Playwright project (Pixel 7) runs `e2e/phone/`, after the desktop
   journeys whose workspace it signs in to.
@@ -317,7 +328,13 @@ endpoints, `sync/` the bootstrap and sync engine, and `lib/` the pieces with no 
   `render()` rebuilds the shell and keeps focus and scroll positions. Everything people type is
   escaped when rendered (`esc`); task descriptions, the one rich-text field, go through DOMPurify.
 - **Interactions:** elements declare `data-a="actionName"`. `actions/events.js` delegates the click
-  to `A.actionName`. Inputs use `data-in`, blur handlers use `data-blur`.
+  to `A.actionName`. Inputs use `data-in`, blur handlers use `data-blur`. A `data-a` element that
+  isn't a native control is given a button (or link) role and a tab stop (`makeFocusable` in
+  `shell/render.js`), unless it is marked `data-tap-area`: a bigger tap target for a named button
+  inside it (a board card opens from anywhere, and its title is the button). A button's contents are
+  read as one name, so a card that was a button hid its other buttons from screen readers.
+- **Settings rows:** `srow(title, description, control)`. A `tog` or `sel` in the row is named by
+  the row's title, not by its setting key.
 - **Layout:** every page edge uses `var(--gutter)`, so the breadcrumb, page header, toolbar, list,
   table and board start on the same line.
 - **Dropdowns:** write a normal `<select class="select">`. `ui/select.js` renders it as the
