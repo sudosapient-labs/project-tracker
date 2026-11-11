@@ -33,7 +33,7 @@ import {
   takeKept,
 } from '../shell/sync.js';
 import { A, EMAIL_RE, confirmDlg } from './actions.js';
-import { disablePushHere, refreshPush } from './push.js';
+import { disablePushHere, onPushChange, refreshPush } from './push.js';
 
 const AUTH_SCREENS = ['login', 'signup', 'forgot'];
 const changes = n => (n === 1 ? '1 change' : `${n} changes`);
@@ -626,12 +626,15 @@ async function sessionEnded() {
 }
 
 onSync({ signedOut: sessionEnded, otherUser, stillMe, resync: reload });
+onPushChange(render);
 
 /* ---------- onboarding ---------- */
 async function finishSetup() {
   const errs = await commit();
   if (errs.length) toast(errs[0], { kind: 'err' });
   await post('/api/workspace/onboarded').catch(err => toast(err.message, { kind: 'err' }));
+  // Sign-in skipped this while setup was showing.
+  refreshPush();
 }
 const onbFinish = A.onbFinish;
 A.onbFinish = async () => {

@@ -10,6 +10,7 @@ import { av, pIcon } from '../ui/helpers.js';
 import { permsTable, teamsGrid } from './members.js';
 import { page404 } from './errors.js';
 import { SHORTCUTS } from '../overlays/modals.js';
+import { pushHere, pushPermission, pushSupport, wantsPush } from '../actions/push.js';
 
 /* The day a moment (Unix ms: a key made, a key that expires) falls on, on the reader's clock. */
 const when = ms => (ms ? fmtDate(dayKey(ms)) : '');
@@ -63,6 +64,51 @@ export const SET_NAV = [
 ];
 export function srow(t, d, ctl) {
   return `<div class="srow"><div><div class="t">${t}</div>${d ? `<div class="d">${d}</div>` : ''}</div><div class="row">${ctl}</div></div>`;
+}
+/* Settings → Push: whether this device actually gets push. The toggles below are the account's;
+   this says whether this browser is allowed and subscribed, and offers the one tap that fixes it. */
+function pushDevice(np) {
+  const box = (kind, icon, title, text, btn = '') =>
+    `<div class="alert ${kind}" data-push-here="${kind}" style="margin-bottom:18px">${ic(icon, 16)}<div class="grow"><b>${title}</b><div class="muted" style="margin-top:2px">${text}</div>${btn ? `<div style="margin-top:10px">${btn}</div>` : ''}</div></div>`;
+  const support = pushSupport();
+  if (support === 'insecure')
+    return box(
+      'info',
+      'info',
+      'Push isn’t available on this connection.',
+      'Browsers only allow push over HTTPS. Open Sudo Sapient at its https:// address to turn it on.',
+    );
+  if (support === 'ios')
+    return box(
+      'info',
+      'info',
+      'Add Sudo Sapient to your Home Screen first.',
+      'On iPhone and iPad, push works only in the installed app: tap Share, then Add to Home Screen, and open it from there.',
+    );
+  if (support !== 'ok')
+    return box('info', 'info', 'This browser doesn’t support push notifications.', 'Try a current version of Chrome, Edge, Firefox or Safari.');
+  const perm = pushPermission();
+  if (perm === 'denied')
+    return box(
+      'danger',
+      'bell-off',
+      'Notifications are blocked on this device.',
+      'To get push here, allow notifications for this site: in the browser, open the site settings (the icon next to the address) and set Notifications to Allow. For the installed app on Android, open App info → Notifications. Then come back to this page.',
+      `<button class="btn btn-secondary btn-sm" data-a="pushRecheck">Check again</button>`,
+    );
+  if (!wantsPush(np)) return box('info', 'bell-off', 'Push is off.', 'Turn on a kind of notification below to get push on this device.');
+  if (pushHere.subscribed) return box('ok', 'circle-check', 'Push is on for this device.', 'The notifications chosen below arrive here.');
+  if (pushHere.subscribed === null && perm === 'granted')
+    return box('info', 'loader', 'Checking this device…', 'Connecting this browser to push notifications.');
+  return box(
+    'warn',
+    'bell-off',
+    'Push isn’t on for this device yet.',
+    perm === 'default'
+      ? 'You won’t get the notifications chosen below here until you turn it on. Your browser will ask for permission.'
+      : 'You won’t get the notifications chosen below here until you turn it on.',
+    `<button class="btn btn-primary btn-sm" data-a="pushHere" ${pushHere.busy ? 'disabled' : ''}>${ic('bell', 14)}Turn on push on this device</button>`,
+  );
 }
 export const tog = (k, on, src = 'pref') =>
   `<input type="checkbox" class="toggle" data-in="${src}Toggle" data-k="${k}" ${on ? 'checked' : ''} aria-label="${k}">`;
@@ -275,17 +321,8 @@ export function settingsBody(sec, title) {
       );
     case 'notif-push':
       return (
-        H(
-          `Notifications on this device, even when Sudo Sapient is closed.${
-            !('PushManager' in window) || !window.Notification
-              ? ' This browser doesn’t support push notifications. On iPhone and iPad, add Sudo Sapient to your Home Screen first.'
-              : Notification.permission === 'denied'
-                ? ' Notifications are blocked for this site in your browser settings.'
-                : Notification.permission === 'default'
-                  ? ' Your browser will ask for permission when you turn one on.'
-                  : ''
-          }`,
-        ) +
+        H('Choose what’s pushed to your devices, even when Sudo Sapient is closed.') +
+        pushDevice(np) +
         srow('Mentions', '', tog('push_mention', np.push_mention, 'np')) +
         srow('Assignments', '', tog('push_assign', np.push_assign, 'np')) +
         srow('Comments', '', tog('push_comment', np.push_comment, 'np')) +

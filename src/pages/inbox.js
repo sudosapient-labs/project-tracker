@@ -5,6 +5,7 @@ import { D, S, commentsOf, mem, pColor, proj, task } from '../core/store.js';
 import { av, empty, fmtComment } from '../ui/helpers.js';
 import { cellAssignee, cellDue, cellPrio, cellStatus } from '../components/task-list.js';
 import { commentHtml } from '../overlays/drawer.js';
+import { showPushNudge } from '../actions/push.js';
 
 export function pageInbox() {
   const cats = [
@@ -30,6 +31,7 @@ export function pageInbox() {
           <label class="row" style="font-size:12px;color:var(--text-2);gap:6px;cursor:pointer"><input type="checkbox" class="toggle" data-a="toggleUnreadOnly" ${S.ui.inboxUnread ? 'checked' : ''}>Unread</label>
           <button class="ibtn ibtn-sm" data-a="markAllRead" data-tip="Mark all as read" aria-label="Mark all as read">${ic('check-check', 15)}</button></div>
         <div class="tabs inbox-tabs" role="tablist">${cats.map(([k, n]) => `<button role="tab" class="tab ${cat === k ? 'on' : ''}" data-a="set" data-k="inboxCat" data-v="${k}">${n}${count(k) ? `<span class="cnt">${count(k)}</span>` : ''}</button>`).join('')}</div>
+        ${pushNudge()}
         <div class="inbox-list" data-keep="inbox-list">
           ${ns.length ? ns.map(n => inboxItem(n, sel && sel.id === n.id)).join('') : empty('inbox', "You're all caught up.", S.ui.inboxUnread ? 'No unread notifications in this category.' : 'New mentions, assignments, and comments will show up here.', '', 'sm')}
         </div>
@@ -37,6 +39,11 @@ export function pageInbox() {
       <div class="inbox-prev" style="display:flex;flex-direction:column;min-height:0;overflow-y:auto">${sel ? inboxPreview(sel) : `<div class="fullstate"><div class="box"><div class="empty-state" style="padding:0"><div class="glyph">${ic('mail-open', 20)}</div><h2 class="es-h">Select a notification</h2><p>Read the conversation and reply without leaving your inbox.</p></div></div></div>`}</div>
     </div>
   </div>`;
+}
+/* The account wants push but this device doesn't get it yet: one tap turns it on (see actions/push.js). */
+function pushNudge() {
+  if (!showPushNudge()) return '';
+  return `<div class="alert info" data-push-nudge style="margin:10px var(--gutter) 0;align-items:center">${ic('bell', 15)}<span class="grow">Get notifications on this device, even when Sudo Sapient is closed.</span><button class="btn btn-primary btn-sm" data-a="pushHere">Turn on</button><button class="ibtn ibtn-xs" data-a="pushNudgeDismiss" aria-label="Dismiss" data-tip="Dismiss">${ic('x', 13)}</button></div>`;
 }
 export function notifText(n) {
   const t = n.task ? task(n.task) : null;

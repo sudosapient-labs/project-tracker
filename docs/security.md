@@ -222,7 +222,8 @@ a stub of it (Guests get nothing).
 
 Push subscriptions are only accepted on the browsers' push services (FCM, Mozilla, Apple, Windows),
 over HTTPS on the default port, so the server never posts to arbitrary hosts. A subscription belongs
-to the session that made it and is deleted when that session ends.
+to the session that made it and is deleted when that session ends. The app never asks for notification
+permission on its own: only a tap on a Push toggle or a "Turn on" button (Settings → Push, Inbox) does.
 
 ## Your data
 
