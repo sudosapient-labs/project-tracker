@@ -395,6 +395,16 @@
   .sitem .hov {
     display: flex;
   }
+  /* A project card's menu button is always shown here, so the title row keeps clear of it. */
+  .pcard > .row:first-child {
+    padding-right: calc(var(--h-sm) + 2px);
+  }
+  /* Keyboard hints (Enter, Esc, a menu item's shortcut) mean nothing without a keyboard. */
+  .khint,
+  .mi .r > kbd,
+  .pi .r > kbd {
+    display: none !important;
+  }
 }
 /* A phone's browser zooms into a focused field whose text is smaller than 16px, so fields are 16px
    on a phone (narrow, or a phone on its side). A tablet doesn't need it, and keeps compact fields

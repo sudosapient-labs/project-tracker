@@ -6,7 +6,7 @@ import { D, canEdit, canManage, canSee, me, mem, proj, task, visibleProjects } f
 
 export function ctxMenu(p) {
   const I = (act, icon, label, extra = '', r = '') =>
-    `<button class="mi ${extra}" data-a="${act}" data-id="${p.id}" data-key="${p.key || ''}">${ic(icon, 15)}${label}${r ? `<span class="r">${r}</span>` : ''}</button>`;
+    `<button class="mi ${extra}" data-a="${act}" data-id="${p.id}" data-key="${p.key || ''}">${ic(icon, 15)}${label}${r ? `<span class="r khint">${r}</span>` : ''}</button>`;
   const sep = '<div class="msep"></div>';
   if (p.ctx === 'task') {
     const t = task(p.id);
