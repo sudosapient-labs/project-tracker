@@ -28,6 +28,10 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: config.hos
     );
   else if (!config.resendApiKey) console.info('[api] RESEND_API_KEY not set: emails are logged to this console instead of sent');
   if (!config.secretKey && config.prod) console.warn('[api] WARNING: SECRET_KEY is not set, so two-factor secrets are stored unencrypted.');
+  if (!config.android.packageName !== !config.android.fingerprints.length)
+    console.warn(
+      '[api] WARNING: only one of ANDROID_PACKAGE_NAME and ANDROID_CERT_FINGERPRINTS is set, so /.well-known/assetlinks.json answers 404 and the Android app shows an address bar.',
+    );
 });
 
 function housekeeping() {
