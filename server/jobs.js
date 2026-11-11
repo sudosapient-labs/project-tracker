@@ -4,7 +4,7 @@
 import { canSeeProject } from '../src/core/access.js';
 import { dayOf, isOverdue, zoneParts } from '../packages/client/dates.js';
 import { clockOf } from './lib/clock.js';
-import { notify, notifPrefs } from './notify.js';
+import { notifLine, notify, notifPrefs } from './notify.js';
 import { MAX_ATTEMPTS } from './lib/mailer.js';
 import { RESTORE_MS } from './sync/engine.js';
 
@@ -68,8 +68,7 @@ export function runDigests({ db, repo, mailer, config }, now = Date.now()) {
     const line = n => {
       const t = n.task && repo.get('tasks', n.task);
       if (t && !canSeeProject(repo.get('projects', t.project), m)) return '• An update on work you no longer have access to';
-      const who = n.by ? repo.get('members', n.by)?.name || 'Someone' : '';
-      return `• ${[who, n.text, t ? `${t.key} ${t.title}` : ''].filter(Boolean).join(' ')}`;
+      return `• ${notifLine(n.by ? repo.get('members', n.by)?.name || 'Someone' : null, n.text, t, !!n.task)}`;
     };
     mailer.queue({
       to: m.email,

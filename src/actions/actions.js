@@ -13,7 +13,7 @@ import { post, upload } from '../core/api.js';
 import { autosize, focusKey, fxSet, go, render } from '../shell/render.js';
 import { applyRemote, commit, onSync, restoreSnapshot, retryNow, takeSnapshot } from '../shell/sync.js';
 import { MERGED, mergeField } from '../core/merge.js';
-import { enablePush } from './push.js';
+import { dismissPushNudge, enablePush, explainPush, refreshPush, turnOnPushHere } from './push.js';
 import { viewOf } from '../shell/view-engine.js';
 import { rowPlace } from '../components/task-list.js';
 import { TEMPLATES, closeModal, openModal } from '../overlays/modals.js';
@@ -2037,11 +2037,15 @@ IN.npToggle = el => {
   // Push toggles deliver through this browser's push subscription, which needs permission.
   if (el.checked && el.dataset.k.startsWith('push_'))
     enablePush({ prompt: true }).then(state => {
-      if (state === 'denied') toast('Notifications are blocked for this site. Allow them in your browser settings.', { kind: 'err', ms: 6000 });
-      else if (state === 'failed') toast("Couldn't turn on push notifications in this browser.", { kind: 'err' });
+      explainPush(state);
       render();
     });
+  else render();
 };
+/* Settings → Notifications → Push: subscribe this device (the tap allows the permission prompt). */
+A.pushHere = () => turnOnPushHere();
+A.pushRecheck = () => refreshPush();
+A.pushNudgeDismiss = () => dismissPushNudge();
 IN.prefSel = el => {
   const k = el.dataset.k;
   S.prefs[k] = k === 'weekStart' ? +el.value : el.value;

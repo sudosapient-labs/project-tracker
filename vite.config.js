@@ -47,8 +47,12 @@ function lucideSubset() {
   };
 }
 
+const API = { target: `http://127.0.0.1:${process.env.API_PORT || 8787}`, changeOrigin: false };
+
 export default defineConfig({
   plugins: [lucideSubset()],
-  // In development the API runs separately (pnpm dev starts both); Vite forwards /api to it.
-  server: { port: 5173, proxy: { '/api': { target: `http://127.0.0.1:${process.env.API_PORT || 8787}`, changeOrigin: false } } },
+  // In development the API runs separately (pnpm dev starts both); Vite forwards /api to it, and
+  // /.well-known (Android's assetlinks.json), which the server answers as in production. A key
+  // starting with ^ is a pattern: a plain one would also match /.well-knownx.
+  server: { port: 5173, proxy: { '/api': API, '^/\\.well-known(/|$)': API } },
 });

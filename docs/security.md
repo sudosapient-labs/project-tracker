@@ -222,7 +222,17 @@ a stub of it (Guests get nothing).
 
 Push subscriptions are only accepted on the browsers' push services (FCM, Mozilla, Apple, Windows),
 over HTTPS on the default port, so the server never posts to arbitrary hosts. A subscription belongs
-to the session that made it and is deleted when that session ends.
+to the session that made it and is deleted when that session ends. The app never asks for notification
+permission on its own: only a tap on a Push toggle or a "Turn on" button (Settings → Push, Inbox) does.
+The service worker re-subscribes on its own only when the push service replaces a subscription
+(`pushsubscriptionchange`), using the permission already given; it sends the new one like the app
+does, same-origin with the session cookie and the `X-Requested-With` header the API requires.
+
+## Android app links
+
+`/.well-known/assetlinks.json` is public and needs no session. It lists only the Android app's
+package name and the SHA-256 fingerprints of its public signing certificates, which anyone with the
+APK can read anyway; the signing key itself never touches the server.
 
 ## Your data
 
