@@ -209,6 +209,7 @@ export function render() {
       el.scrollLeft = l;
     }
   });
+  showOpenTabs();
   if (fid) {
     const el = document.getElementById(fid);
     if (el && el !== document.activeElement) {
@@ -277,4 +278,15 @@ export function countUp() {
 export function autosize(el) {
   el.style.height = 'auto';
   el.style.height = el.scrollHeight + 'px';
+}
+/* A strip of tabs too wide for the screen scrolls sideways (Settings and a project's views on a phone).
+   It is drawn anew each time, so bring the open tab into view rather than leave it past the edge. */
+function showOpenTabs() {
+  for (const on of $$('.tabs > .tab.on, .set-nav > .sitem.on')) {
+    const strip = /** @type {HTMLElement} */ (on.parentElement);
+    if (strip.scrollWidth <= strip.clientWidth) continue;
+    const s = strip.getBoundingClientRect(),
+      r = on.getBoundingClientRect();
+    if (r.left < s.left || r.right > s.right) strip.scrollLeft += r.left - s.left - (s.width - r.width) / 2;
+  }
 }

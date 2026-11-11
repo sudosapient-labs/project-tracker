@@ -257,16 +257,33 @@
   .cal-g {
     grid-auto-rows: minmax(72px, 1fr);
   }
-  .cev .trunc,
+  /* A day is a seventh of the screen: an entry is its title, on up to two lines, with the project's
+     colour down its side (the time, icon and person are in the task). */
+  .cday {
+    padding: 4px 2px;
+    gap: 2px;
+  }
+  .cev > svg,
   .cev .av,
   .cev .num {
     display: none;
   }
   .cev {
-    height: 8px;
-    padding: 0;
+    height: auto;
+    min-height: 16px;
+    padding: 1px 3px;
+    border-width: 0 0 0 3px;
+    border-color: var(--c);
     border-radius: 3px;
-    background: var(--c);
+    font-size: 10px;
+    line-height: 1.25;
+  }
+  .cev .trunc {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .week {
     grid-template-columns: minmax(0, 1fr);
@@ -278,6 +295,20 @@
   }
   .tl-left {
     display: none;
+  }
+  /* Without the task column, a bar's title and a group's name stay at the left edge of the screen while
+     the bar or group runs past it (clip, not hidden, so the timeline is what they stick to). */
+  .bar {
+    overflow: clip;
+  }
+  .bar > .trunc {
+    position: sticky;
+    left: 8px;
+  }
+  .tl-glbl {
+    display: flex;
+    position: sticky;
+    left: 0;
   }
   .tl {
     grid-template-columns: minmax(0, 1fr);

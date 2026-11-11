@@ -86,7 +86,8 @@ export function timelineHtml(ts, key, p) {
   const bars = rows
     .map((r, i) => {
       const y = i * RH;
-      if (r.type === 'g') return `<div class="tl-rowbg g" style="top:${y}px"></div>`;
+      if (r.type === 'g')
+        return `<div class="tl-rowbg g" style="top:${y}px"><span class="tl-glbl">${r.G.html || ''}${esc(r.G.name)}<span class="faint" style="font-weight:500">${r.G.tasks.length}</span></span></div>`;
       if (r.type === 'ms') return `<div class="tl-rowbg" style="top:${y}px"></div>` + msLane(ms, X, dw, y);
       const t = r.t;
       const pp = proj(t.project);

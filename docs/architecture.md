@@ -204,9 +204,14 @@ used by touch and closed with the system Back button. "Touch screen" means `(hov
   card's menu changes its status (its column); a list row's menu has Move up and Move down; a
   task is renamed in its drawer. The timeline is view-only by touch: a finger scrolls it, a tap
   opens the task, and bars are moved with a mouse or from the task's dates.
-- **Sizes.** Text fields are 16px, so Android doesn't zoom into them; modals and popovers are
-  sized in `dvh`; the top bar, sidebar, drawer and bottom navigation keep clear of safe areas.
-  `theme-color` (the status bar in the Android app) follows the theme chosen in Settings.
+- **Sizes.** Text fields are 16px, so Android doesn't zoom into them; the page, modals and popovers
+  are sized in `dvh`, so the browser's and the system's bars don't hide content; the top bar,
+  sidebar, drawer and bottom navigation keep clear of safe areas. `theme-color` (the status bar in
+  the Android app) follows the theme chosen in Settings.
+- **Narrow screens.** A tab strip too wide for the screen (Settings, a project's views) scrolls
+  sideways and is drawn with the open tab in view. Calendar entries show their titles on up to two
+  lines. With the timeline's task column hidden, group names sit in the bars pane and a bar's title
+  stays at the left edge while the bar runs past it.
 - **Tests.** The `phone` Playwright project (Pixel 7) runs `e2e/phone/`, after the desktop
   journeys whose workspace it signs in to.
 

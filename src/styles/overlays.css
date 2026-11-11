@@ -18,6 +18,7 @@
   align-items: flex-start;
   justify-content: center;
   padding: 10vh 16px 16px;
+  padding: 10dvh 16px 16px;
   overflow-y: auto;
 }
 .modal {
@@ -758,6 +759,7 @@
 .palette {
   position: fixed;
   top: 12vh;
+  top: 12dvh;
   left: 50%;
   transform: translateX(-50%);
   width: min(640px, calc(100vw - 32px));
