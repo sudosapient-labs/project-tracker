@@ -180,16 +180,72 @@ test('a task opened from a link: Back closes it and stays in the app', async ({ 
   await tab.goto(`/#task/${taskKey}`);
   await expect(tab.locator('.drawer')).toBeVisible();
   await expect(tab.locator('.drawer .ttl-edit')).toHaveValue('Gear two');
+  // The URL names the open task, after the page under it.
+  await expect.poll(() => hash(tab)).toMatch(new RegExp(`^#[a-z]+\\?task=${taskKey}$`));
   await tab.goBack();
   await expect(tab.locator('.drawer')).toHaveCount(0);
   await expect(tab.locator('.bottomnav')).toBeVisible();
-  expect(new URL(tab.url()).hash).not.toContain('task/');
+  expect(new URL(tab.url()).hash).not.toContain('task');
   // Reload keeps the page.
   const h = await hash(tab);
   await tab.reload();
   await expect(tab.locator('.bottomnav')).toBeVisible();
   expect(await hash(tab)).toBe(h);
   expect(await errors()).toEqual([]);
+});
+
+/* Android hands a notification or link for the app to the page already open: only the hash changes. */
+test('a link handed to the open app opens its task in place; Back closes it and stays on the page', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signInPhone(page);
+  await visit(page, `project/${key}/list`);
+  const list = `#project/${key}/list`;
+  await row(page, 'Gear three').locator('.ttl').tap();
+  const taskKey = (await drawer(page).locator('.drawer-h .mono').textContent()).trim();
+  await expect.poll(() => hash(page)).toBe(`${list}?task=${taskKey}`);
+  await page.goBack();
+  await expect(drawer(page)).toHaveCount(0);
+  await expect.poll(() => hash(page)).toBe(list);
+
+  // With a menu open, as when a notification comes in mid-task.
+  await row(page, 'Gear one').locator('[data-a="ctxBtn"]').tap();
+  await expect(popup(page)).toBeVisible();
+  await page.evaluate(k => (location.hash = `task/${k}`), taskKey);
+  await expect(drawer(page)).toBeVisible();
+  await expect(drawer(page).locator('.ttl-edit')).toHaveValue('Gear three');
+  await expect(popup(page)).toHaveCount(0);
+  await expect.poll(() => hash(page)).toBe(`${list}?task=${taskKey}`);
+  await page.goBack();
+  await expect(drawer(page)).toHaveCount(0);
+  await expect(page.locator('.bottomnav')).toBeVisible();
+  await expect.poll(() => hash(page)).toBe(list);
+  await expect(row(page, 'Gear one')).toBeVisible();
+
+  // A reload opens the task in the URL again, and Back still closes it onto the page.
+  await page.evaluate(k => (location.hash = `task/${k}`), taskKey);
+  await expect(drawer(page)).toBeVisible();
+  await page.reload();
+  await expect(drawer(page)).toBeVisible();
+  await expect(drawer(page).locator('.ttl-edit')).toHaveValue('Gear three');
+  expect(await hash(page)).toBe(`${list}?task=${taskKey}`);
+  await page.goBack();
+  await expect(drawer(page)).toHaveCount(0);
+  await expect.poll(() => hash(page)).toBe(list);
+
+  // Closed with X, the URL goes back to the page.
+  await page.evaluate(k => (location.hash = `task/${k}`), taskKey);
+  await expect(drawer(page)).toBeVisible();
+  await drawer(page).locator('.drawer-h [data-a="closeDrawer"]').tap();
+  await expect(drawer(page)).toHaveCount(0);
+  await expect.poll(() => hash(page)).toBe(list);
+
+  // A key that isn't there (deleted, or in a project this person can't see) says so; the page stays.
+  await page.evaluate(() => (location.hash = 'task/NOPE-404'));
+  await toastWith(page, "NOPE-404 can't be opened");
+  await expect(drawer(page)).toHaveCount(0);
+  await expect.poll(() => hash(page)).toBe(list);
+  await expect(row(page, 'Gear one')).toBeVisible();
+  expect(await errors(["NOPE-404 can't be opened"])).toEqual([]);
 });
 
 test('a list row moves up and down from its menu by touch', async ({ page }) => {
