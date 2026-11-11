@@ -26,6 +26,9 @@ export function ctxMenu(p) {
       I('ctxAssign', 'user', 'Assign to…') +
       I('ctxPrio', 'signal-high', 'Priority…') +
       I('ctxMove', 'folder-input', 'Move to project…') +
+      // A touch screen can't drag the row (see rowPlace): it moves from here.
+      (p.row?.up ? I('rowUp', 'arrow-up', 'Move up') : '') +
+      (p.row?.down ? I('rowDown', 'arrow-down', 'Move down') : '') +
       sep +
       I('toggleFavTask', 'star', t.fav ? 'Remove from favorites' : 'Add to favorites') +
       I('copyLink', 'link', 'Copy link') +

@@ -1,7 +1,7 @@
 /* =====================================================================
    PAGES
    ===================================================================== */
-import { ago, esc, fmtDateTime, relDate } from '../core/utils.js';
+import { ago, esc, fmtDateTime, relDate, touchUI } from '../core/utils.js';
 import { actExtra } from '../core/activity.js';
 import { ic } from '../core/icons.js';
 import { PR, ST } from '../core/constants.js';
@@ -10,6 +10,16 @@ import { av, botBadge, dueHtml, empty, lbl, prIcon, prPill, stIcon, stPill } fro
 import { fxc } from '../shell/render.js';
 
 /* ---------- shared list renderer ---------- */
+/* Where a list row opened from `el` can move by its menu on a touch screen, which can't drag it: the
+   rows shown just above and below it in its group (null where rows don't move by hand). */
+export function rowPlace(el) {
+  const row = touchUI() && el.closest?.('.trow[data-task-row]');
+  if (!row || row.closest('[data-ro]') || !row.querySelector('[data-drag-row][draggable="true"]')) return null;
+  const { group, lkey } = row.dataset;
+  const rows = [...document.querySelectorAll(`.trow[data-task-row][data-lkey="${CSS.escape(lkey)}"][data-group="${CSS.escape(group)}"]`)];
+  const i = rows.indexOf(row);
+  return { group, lkey, up: rows[i - 1]?.dataset.taskRow || null, down: rows[i + 1]?.dataset.taskRow || null };
+}
 export const LCOLS = {
   status: ['Status', '126px'],
   assignee: ['Assignee', '150px'],

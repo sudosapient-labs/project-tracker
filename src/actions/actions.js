@@ -15,6 +15,7 @@ import { applyRemote, commit, onSync, restoreSnapshot, retryNow, takeSnapshot } 
 import { MERGED, mergeField } from '../core/merge.js';
 import { enablePush } from './push.js';
 import { viewOf } from '../shell/view-engine.js';
+import { rowPlace } from '../components/task-list.js';
 import { TEMPLATES, closeModal, openModal } from '../overlays/modals.js';
 import { closePop, dateDirty, dpHead, openPop, tgt } from '../overlays/popovers.js';
 import { strengthMeter } from '../pages/settings.js';
@@ -273,7 +274,7 @@ A.ctxBtn = el => {
     closePop();
     return;
   }
-  S.ui.pop = { type: 'ctx', ctx: d.ctx, id: d.id, key: d.key, vid: d.vid, x: r.left, y: r.bottom + 4, top: r.top, w: r.width };
+  S.ui.pop = { type: 'ctx', ctx: d.ctx, id: d.id, key: d.key, vid: d.vid, x: r.left, y: r.bottom + 4, top: r.top, w: r.width, row: rowPlace(el) };
   render();
 };
 A.popPick = el => {

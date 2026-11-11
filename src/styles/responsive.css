@@ -330,6 +330,34 @@
     top: 8px;
   }
 }
+/* Touch screens: nothing is reachable only by hovering. Controls that appear on hover are shown. */
+@media (hover: none) {
+  .kcard .hacts {
+    display: flex;
+    position: static;
+    justify-content: flex-end;
+    margin: 2px -4px -4px 0;
+    background: none;
+    box-shadow: none;
+  }
+  .kcard .hacts .ibtn {
+    width: 34px;
+    height: 34px;
+  }
+  .cday .add,
+  .pcard .more,
+  .fcard .more,
+  .sgroup-h .ibtn,
+  .subt .x,
+  .attc .x,
+  .bcol-h .acts,
+  .grp .ibtn {
+    opacity: 1;
+  }
+  .sitem .hov {
+    display: flex;
+  }
+}
 /* Android zooms into a focused field whose text is smaller than 16px; fields are 16px on touch screens. */
 @media (pointer: coarse) {
   input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']),
