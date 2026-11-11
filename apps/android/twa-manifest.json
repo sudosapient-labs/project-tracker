@@ -19,7 +19,7 @@
   "monochromeIconUrl": "https://sudo-tracker-production.up.railway.app/icons/icon-monochrome-512.png",
   "splashScreenFadeOutDuration": 300,
   "appVersionCode": 1,
-  "appVersion": "1.0.0",
+  "appVersion": "0.1.0-beta",
   "shortcuts": [
     {
       "name": "Inbox",
