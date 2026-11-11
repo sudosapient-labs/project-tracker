@@ -1,7 +1,7 @@
 /* The app on a phone (Pixel 7: touch, no hover), as the Android app shows it: everything works by
    tap, the system Back button closes what's open before it leaves the page, nothing is wider than
    the screen. Runs after the desktop journeys, in the workspace they made. */
-import { expect, test } from '@playwright/test';
+import { devices, expect, test } from '@playwright/test';
 import { ownerNow, signIn, synced, toastWith, watchErrors } from '../helpers.js';
 
 const NAME = 'Pocket Engine';
@@ -757,5 +757,225 @@ test('fields are 16px on a touch screen, and the status bar colour follows the t
   await expect.poll(color).toEqual([light, light]);
   await page.locator(`[data-a="setTheme"][data-v="${was}"]`).tap();
   await synced(page);
+  expect(await errors()).toEqual([]);
+});
+
+/* The same workspace in a desktop browser (a mouse, hover), to check a phone fix leaves it as it was. */
+async function onDesktop(browser) {
+  const context = await browser.newContext({ ...devices['Desktop Chrome'], baseURL: test.info().project.use.baseURL });
+  const page = await context.newPage();
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  return { context, page };
+}
+
+test("a project card's menu button never covers its status, at 360px and 412px, light and dark", async ({ page, browser }) => {
+  const errors = watchErrors(page);
+  await signInPhone(page);
+  await visit(page, 'projects');
+  await page.locator('[data-k="projView"][data-v="grid"]').tap();
+  const clear = () =>
+    page.locator('.pcard').evaluateAll(cards =>
+      cards.map(c => {
+        const st = c.querySelector('.pstatus'),
+          more = c.querySelector('.more').getBoundingClientRect(),
+          card = c.getBoundingClientRect();
+        if (!st) return { name: c.textContent, ok: more.right <= card.right };
+        const s = st.getBoundingClientRect();
+        // Beside the button, not under it, and not cut short ("Planni").
+        return { name: st.textContent, ok: s.right <= more.left && st.scrollWidth <= st.clientWidth + 0.5 && more.right <= card.right };
+      }),
+    );
+  for (const width of [360, 412])
+    for (const colorScheme of /** @type {const} */ (['light', 'dark'])) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.emulateMedia({ colorScheme });
+      const cards = await clear();
+      expect(cards.length).toBeGreaterThan(0);
+      expect(
+        cards.filter(c => !c.ok),
+        `${width}px, ${colorScheme}`,
+      ).toEqual([]);
+    }
+  await page.emulateMedia({ colorScheme: 'light' });
+
+  // On a desktop the button still shows only on hover, over the card's corner, and the title row
+  // keeps its full width.
+  const desk = await onDesktop(browser);
+  await desk.page.evaluate(() => (location.hash = 'projects'));
+  await desk.page.locator('[data-k="projView"][data-v="grid"]').click();
+  const pc = desk.page.locator('.pcard').first();
+  expect(await pc.locator('.more').evaluate(el => getComputedStyle(el).opacity)).toBe('0');
+  expect(
+    await pc
+      .locator('> .row')
+      .first()
+      .evaluate(el => getComputedStyle(el).paddingRight),
+  ).toBe('0px');
+  await desk.context.close();
+  expect(await errors()).toEqual([]);
+});
+
+test('no edge of the closed sidebar shows down the side of the screen', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signInPhone(page);
+  const side = page.locator('.side');
+  const look = () => side.evaluate(el => ({ shadow: getComputedStyle(el).boxShadow, right: el.getBoundingClientRect().right }));
+  expect(await look()).toEqual({ shadow: 'none', right: 0 });
+  await page.locator('.bottomnav [data-a="openMnav"]').tap();
+  await expect(page.locator('.shell.mnav')).toBeVisible();
+  await expect.poll(async () => (await look()).shadow).not.toBe('none');
+  await page.goBack();
+  await expect(page.locator('.shell.mnav')).toHaveCount(0);
+  await expect.poll(look).toEqual({ shadow: 'none', right: 0 });
+  expect(await errors()).toEqual([]);
+});
+
+test('settings switches and lists are named by their labels, and a board card has each button reachable', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signInPhone(page);
+  await visit(page, 'settings/notif-push');
+  for (const name of ['Mentions', 'Assignments', 'Comments', 'Due date reminders'])
+    await expect(page.locator('.set-body').getByRole('checkbox', { name, exact: true })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: /^push_/ })).toHaveCount(0);
+  await visit(page, 'settings/language');
+  await expect(page.locator('.set-body').getByRole('button', { name: 'Language', exact: true })).toBeVisible();
+
+  // Board card: the card isn't one big button; its title opens it, and its other buttons are there
+  // with their names.
+  await visit(page, `project/${key}/board`);
+  const c = card(page, 'Gear one');
+  await expect(c).not.toHaveAttribute('role', 'button');
+  // (An earlier test renames it "Gear one, cast".)
+  const title = c.getByRole('button', { name: /^Gear one/ });
+  await expect(title).toBeVisible();
+  for (const name of ['Mark complete', 'Quick edit', 'More', 'Assignee']) await expect(c.getByRole('button', { name, exact: true })).toBeVisible();
+  await expect(c.getByRole('button', { name: /^Priority: / })).toBeVisible();
+  // A tap anywhere on the card still opens the task, and so do the keyboard's Enter and Space.
+  await c.locator('.key').tap();
+  await expect(drawer(page)).toBeVisible();
+  await page.goBack();
+  await expect(drawer(page)).toHaveCount(0);
+  for (const key of ['Enter', ' ']) {
+    await title.focus();
+    await page.keyboard.press(key);
+    await expect(drawer(page)).toContainText('Gear one');
+    await page.goBack();
+    await expect(drawer(page)).toHaveCount(0);
+  }
+  expect(await errors()).toEqual([]);
+});
+
+test('keyboard hints are left out on a touch screen, and kept on a desktop', async ({ page, browser }) => {
+  const errors = watchErrors(page);
+  await signInPhone(page);
+  // The board's inline composer, and a task's menu (Edit "E", Delete "Del").
+  await visit(page, `project/${key}/board`);
+  await page.locator('.bcol[data-drop-col="todo"] .addcard').tap();
+  await expect(page.locator('.composer')).toBeVisible();
+  await expect(page.locator('.composer')).not.toContainText('Enter to add', { useInnerText: true });
+  await page.goBack();
+  await expect(page.locator('.composer')).toHaveCount(0);
+  await card(page, 'Gear one').locator('.hacts [data-a="ctxBtn"]').tap();
+  // What is shown (innerText): the shortcut letters are in the markup, hidden here.
+  await expect(popup(page).locator('[data-a="editTask"]')).toHaveText('Edit', { useInnerText: true });
+  await expect(popup(page).locator('[data-a="delTask"]')).toHaveText('Delete', { useInnerText: true });
+  await page.goBack();
+  await expect(popup(page)).toHaveCount(0);
+  // The list's inline composer.
+  await visit(page, `project/${key}/list`);
+  await page.locator('.addrow[data-a="startComposer"]').first().tap();
+  await expect(page.locator('#composer-in')).toHaveAttribute('placeholder', 'Task name');
+  await page.goBack();
+
+  const desk = await onDesktop(browser);
+  await desk.page.evaluate(k => (location.hash = `project/${k}/board`), key);
+  await desk.page.locator('.bcol[data-drop-col="todo"] .addcard').click();
+  await expect(desk.page.locator('.composer')).toContainText('Enter to add · Esc to cancel', { useInnerText: true });
+  await desk.page.keyboard.press('Escape');
+  await desk.page.locator('.kcard', { hasText: 'Gear one' }).first().click({ button: 'right' });
+  await expect(desk.page.locator('.pop.floating [data-a="editTask"]')).toHaveText(/^Edit\s*E$/, { useInnerText: true });
+  await expect(desk.page.locator('.pop.floating [data-a="delTask"]')).toHaveText(/^Delete\s*Del$/, { useInnerText: true });
+  await desk.page.keyboard.press('Escape');
+  await desk.page.evaluate(k => (location.hash = `project/${k}/list`), key);
+  await desk.page.locator('.addrow[data-a="startComposer"]').first().click();
+  await expect(desk.page.locator('#composer-in')).toHaveAttribute('placeholder', /Enter to add/);
+  await desk.context.close();
+  expect(await errors()).toEqual([]);
+});
+
+test("the push settings say you'll be asked, which is true in a browser and in the Android app", async ({ page }) => {
+  const errors = watchErrors(page);
+  // Not asked yet (a fresh install).
+  await page.addInitScript(() => Object.defineProperty(Notification, 'permission', { get: () => 'default' }));
+  await signInPhone(page);
+  await visit(page, 'settings/notif-push');
+  await expect(page.locator('.set-in .lead')).toContainText('You’ll be asked to allow notifications when you turn one on.');
+  await expect(page.locator('.set-in .lead')).not.toContainText('browser will ask');
+  expect(await errors()).toEqual([]);
+});
+
+test('Settings scrolls in one place on a phone', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signInPhone(page);
+  for (const sec of ['appearance', 'preferences', 'language', 'account']) {
+    await visit(page, `settings/${sec}`);
+    await expect(page.locator('.set-in h1')).toBeVisible();
+    // Only the settings pane scrolls: nothing makes the page around it scroll too.
+    const scrollers = await page.evaluate(() =>
+      [...document.querySelectorAll('.main *')]
+        .filter(el => /(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight + 1)
+        .map(el => el.className),
+    );
+    expect(
+      scrollers.filter(c => c !== 'set-body'),
+      sec,
+    ).toEqual([]);
+  }
+  expect(await errors()).toEqual([]);
+});
+
+test('calendar titles break between words, and inside one only when it is wider than the entry', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signInPhone(page);
+  await visit(page, `project/${key}/list`);
+  await newTask(page, 'Map the new site');
+  await row(page, 'Map the new site').locator('.ttl').tap();
+  await drawer(page).locator('[data-a="pop"][data-pop="date"][data-field="due"]').first().tap();
+  await popup(page).locator('.dp-chip', { hasText: 'Today' }).tap();
+  await page.goBack();
+  await page.goBack();
+  await expect(drawer(page)).toHaveCount(0);
+  await synced(page);
+  for (const width of [360, 412]) {
+    await page.setViewportSize({ width, height: 800 });
+    await visit(page, `project/${key}/calendar`);
+    await expect(page.locator('.cev', { hasText: 'Map the new site' }).first()).toBeVisible();
+    const split = await page.locator('.cal-g .cev .trunc').evaluateAll(els =>
+      els.flatMap(el => {
+        const cs = getComputedStyle(el);
+        if (cs.overflowWrap !== 'break-word' || cs.hyphens !== 'auto') return [`${el.textContent}: ${cs.overflowWrap} ${cs.hyphens}`];
+        const text = el.firstChild;
+        if (!text || text.nodeType !== 3) return [];
+        const line = el.getBoundingClientRect().width;
+        const out = [];
+        for (const m of text.textContent.matchAll(/\S+/g)) {
+          const r = document.createRange();
+          r.setStart(text, m.index);
+          r.setEnd(text, m.index + m[0].length);
+          const lines = new Set([...r.getClientRects()].map(x => Math.round(x.top))).size;
+          // A word split over lines must be too wide for one.
+          const probe = Object.assign(document.createElement('span'), { textContent: m[0] });
+          probe.style.cssText = 'position:absolute;white-space:nowrap;visibility:hidden';
+          el.appendChild(probe);
+          const own = probe.getBoundingClientRect().width;
+          probe.remove();
+          if (lines > 1 && own <= line) out.push(`${el.textContent}: "${m[0]}"`);
+        }
+        return out;
+      }),
+    );
+    expect(split, `${width}px`).toEqual([]);
+  }
   expect(await errors()).toEqual([]);
 });
