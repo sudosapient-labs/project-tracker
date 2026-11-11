@@ -244,8 +244,10 @@ copy what applies (name, colours, shortcuts) into `twa-manifest.json`.
 
 - Needs Chrome (or another TWA-capable browser) on the phone. Without one, the app opens the site
   in whatever browser there is.
-- The status and navigation bars follow the phone's light or dark setting. If someone picks the
-  other theme in the app's settings, the bars keep the phone's colours.
+- The status bar follows the theme picked in the app's settings (the page's `theme-color`). The
+  navigation bar follows only the phone's light or dark setting (`navigationColor` and
+  `navigationColorDark`, fixed when the app starts Chrome): a page can't change it, so with the app
+  on the other theme it keeps the phone's colour.
 - The first launch needs a connection. After that, the service worker opens the app shell offline.
 - No themed (monochrome) launcher icon on Android 13+, since Bubblewrap doesn't generate one.
 - Google has announced developer verification for apps installed outside Play on certified Android
