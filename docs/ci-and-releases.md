@@ -93,6 +93,14 @@ deploys it like any other change.
   `RELEASE_PLEASE_TOKEN` secret (a PAT or app token with contents and pull-requests write); the
   workflow uses it when present.
 
+## Android app
+
+`apps/android` is outside the release flow: release-please ignores it (`exclude-paths`), so a
+commit that only touches it doesn't release the web app or add to its changelog, and CI doesn't
+build it. The app's own version is `appVersionCode` and `appVersion` in
+`apps/android/twa-manifest.json`, raised by hand when a new APK is built and handed out (see
+[its README](../apps/android/README.md#ship-an-update)). No signing key or secret is in GitHub.
+
 ## npm packages
 
 `packages/client`, `packages/cli` and `packages/mcp` are released on their own and published to npm as

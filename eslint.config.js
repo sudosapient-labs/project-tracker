@@ -2,7 +2,8 @@ import js from '@eslint/js';
 import globals from 'globals';
 
 export default [
-  { ignores: ['dist/', 'data/', 'test-results/', 'playwright-report/'] },
+  // apps/android/app and out: the generated Android project and its build output, not our JavaScript.
+  { ignores: ['dist/', 'data/', 'test-results/', 'playwright-report/', 'apps/android/app/', 'apps/android/out/'] },
   js.configs.recommended,
   {
     files: ['**/*.js'],
@@ -17,6 +18,7 @@ export default [
       'server/**/*.js',
       'scripts/**/*.js',
       'packages/**/*.js',
+      'apps/**/*.js',
       'test/**/*.js',
       'e2e/**/*.js',
     ],

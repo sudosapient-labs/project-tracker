@@ -1,0 +1,52 @@
+{
+  "packageId": "dev.sudosapient.app",
+  "host": "sudo-tracker-production.up.railway.app",
+  "name": "Sudo Sapient",
+  "launcherName": "Sudo Sapient",
+  "display": "standalone",
+  "orientation": "default",
+  "themeColor": "#FBFAF8",
+  "themeColorDark": "#1A1A19",
+  "navigationColor": "#FBFAF8",
+  "navigationColorDark": "#1A1A19",
+  "navigationDividerColor": "#FBFAF8",
+  "navigationDividerColorDark": "#1A1A19",
+  "backgroundColor": "#FBFAF8",
+  "enableNotifications": true,
+  "startUrl": "/",
+  "iconUrl": "https://sudo-tracker-production.up.railway.app/icons/icon-512.png",
+  "maskableIconUrl": "https://sudo-tracker-production.up.railway.app/icons/icon-maskable-512.png",
+  "monochromeIconUrl": "https://sudo-tracker-production.up.railway.app/icons/icon-monochrome-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "appVersionCode": 1,
+  "appVersion": "0.1.0-beta",
+  "shortcuts": [
+    {
+      "name": "Inbox",
+      "shortName": "Inbox",
+      "url": "https://sudo-tracker-production.up.railway.app/#inbox",
+      "chosenIconUrl": "https://sudo-tracker-production.up.railway.app/icons/icon-192.png",
+      "chosenMaskableIconUrl": "https://sudo-tracker-production.up.railway.app/icons/icon-maskable-512.png"
+    },
+    {
+      "name": "My Tasks",
+      "shortName": "My Tasks",
+      "url": "https://sudo-tracker-production.up.railway.app/#mytasks",
+      "chosenIconUrl": "https://sudo-tracker-production.up.railway.app/icons/icon-192.png",
+      "chosenMaskableIconUrl": "https://sudo-tracker-production.up.railway.app/icons/icon-maskable-512.png"
+    }
+  ],
+  "generatorApp": "bubblewrap-cli",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "minSdkVersion": 24,
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": []
+}
