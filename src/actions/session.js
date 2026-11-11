@@ -11,6 +11,7 @@ import { ApiError, get, post } from '../core/api.js';
 import { toast } from '../ui/toast.js';
 import { go, hashFor, layers, pageEntry, render, routeFromHash } from '../shell/render.js';
 import { keepAll } from './drafts.js';
+import { settle } from './back.js';
 import { parseHash } from '../core/links.js';
 import {
   OFFLINE_MSG,
@@ -168,7 +169,9 @@ function openRoute(h = '', { here = false } = {}) {
   if (here) {
     mark();
     // What the link names is what's shown: a link to a page closes the task open over this one.
-    // What was typed in a window or the composer it closes is kept (drafts.js).
+    // A date picked or a field being typed in is saved first, as Back does (back.js); what was
+    // typed in a window or the composer it closes is kept (drafts.js).
+    settle();
     keepAll();
     Object.assign(S.ui, {
       pop: null,

@@ -6,17 +6,19 @@
    discards it, and saving uses it up. Signing out reloads the page, so nothing is kept for the next
    person. */
 import { S } from '../core/store.js';
-import { $ } from '../core/utils.js';
+import { $, $$ } from '../core/utils.js';
 
 const kept = () => (S.ui.kept ??= {});
 const copy = o => ({ ...o, labels: o.labels && [...o.labels], subtasks: o.subtasks?.map(s => ({ ...s })), files: o.files && [...o.files] });
 // What a window's form holds, without what it notes about where it started.
 const fields = f => JSON.stringify(Object.fromEntries(Object.entries(f).filter(([k]) => !['opened', 'descOrig', 'descFrom', 'more', 'files'].includes(k))));
 
-/* Which form a modal edits, and the key its draft is kept under (none: nothing typed to keep). */
+/* Which form a modal edits, and the key its draft is kept under (none: nothing typed to keep). Each
+   modal holds its own form (openModal), so a window opened over another of its kind doesn't keep
+   the other's under its key. */
 function formOf(m) {
-  if (m?.type === 'task') return { f: S.ui.form, k: `task:${m.edit || ''}`, field: 'form' };
-  if (m?.type === 'project') return { f: S.ui.pform, k: `project:${m.edit || ''}`, field: 'pform' };
+  if (m?.type === 'task') return { f: m.form || S.ui.form, k: `task:${m.edit || ''}`, field: 'form' };
+  if (m?.type === 'project') return { f: m.form || S.ui.pform, k: `project:${m.edit || ''}`, field: 'pform' };
   return null;
 }
 /* Something was typed: a new window that isn't empty, an edit that changed something. */
@@ -32,12 +34,13 @@ export function keepModal(m = S.ui.modals[S.ui.modals.length - 1]) {
   if (!w) return;
   const f = w.f;
   // A field being typed in has its value in the form already (data-in); the topmost window's
-  // fields are read too, in case the last keystroke's input event hasn't run.
-  const top = m === S.ui.modals[S.ui.modals.length - 1];
-  const title = $(w.field === 'form' ? '#f-title' : '#p-name'),
-    desc = $(w.field === 'form' ? '#f-desc' : '#p-desc');
-  if (top && f && title) f[w.field === 'form' ? 'title' : 'name'] = title.value;
-  if (top && f && desc) f.desc = desc.value;
+  // fields are read too, in case the last keystroke's input event hasn't run: in that window only,
+  // as one under it can have fields with the same ids.
+  const el = m === S.ui.modals[S.ui.modals.length - 1] ? $$('.modal').at(-1) : null;
+  const title = /** @type {HTMLInputElement | null} */ (el?.querySelector(w.field === 'form' ? '#f-title' : '#p-name')),
+    desc = /** @type {HTMLTextAreaElement | null} */ (el?.querySelector(w.field === 'form' ? '#f-desc' : '#p-desc'));
+  if (f && title) f[w.field === 'form' ? 'title' : 'name'] = title.value;
+  if (f && desc) f.desc = desc.value;
   if (typed(f)) kept()[w.k] = copy(f);
   else delete kept()[w.k];
 }

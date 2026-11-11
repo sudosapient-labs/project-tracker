@@ -91,13 +91,15 @@ export function routeFromHash(h) {
    its own, so the system Back button closes it (actions/back.js sets these). `back` handles a
    popstate (true: nothing to route); `sync` adds or steps back over entries after each render;
    `added` is told when a page's entry is added (a tap adds one entry at most); `linkEntry` is the
-   state for an entry a link made over the page shown. */
+   state for an entry a link made over the page shown; `replacing` is told before a page takes over
+   the open layer's entry. */
 export const layers = {
   back: () => false,
   sync: () => {},
   onEntry: () => false,
   added: () => {},
   linkEntry: (/** @type {boolean} */ _samePage) => pageEntry(),
+  replacing: () => {},
 };
 /* Every history entry the app writes for a page has a state like this (a layer's: `{ layer: n }`,
    see actions/back.js), with an id of its own. One without a state was made by a link (a
@@ -113,8 +115,10 @@ function writeHash(route, params, replace) {
   if (location.hash === h) return;
   const url = location.pathname + location.search + h;
   // Going somewhere from an open layer takes over its entry, so Back returns to the page, not to it.
-  if (layers.onEntry()) history.replaceState(pageEntry(), '', url);
-  else if (replace) history.replaceState(history.state?.page ? history.state : pageEntry(), '', url);
+  if (layers.onEntry()) {
+    layers.replacing();
+    history.replaceState(pageEntry(), '', url);
+  } else if (replace) history.replaceState(history.state?.page ? history.state : pageEntry(), '', url);
   else {
     history.pushState(pageEntry(), '', url);
     layers.added();
@@ -239,9 +243,17 @@ export function render() {
     /* not supported here; safe to skip */
   }
   const keep = $$('[data-keep]').map(el => [el.dataset.keep, el.scrollTop, el.scrollLeft]);
+  // A field marked data-hold is read only when its form is saved (Settings → Profile): what's
+  // typed in it stays through a render, unless what it shows changed meanwhile (it was saved, or
+  // changed elsewhere).
+  const held = $$('[data-hold]').map(el => [el.id, /** @type {HTMLInputElement} */ (el).value, /** @type {HTMLInputElement} */ (el).defaultValue]);
   $('#app').innerHTML = S.ui.auth ? renderAuth() : renderShell();
   $('#layer').innerHTML = renderLayer();
   makeFocusable();
+  held.forEach(([id, v, was]) => {
+    const el = /** @type {HTMLInputElement | null} */ (document.getElementById(id));
+    if (el?.dataset.hold != null && el.defaultValue === was) el.value = v;
+  });
   keep.forEach(([k, t, l]) => {
     const el = document.querySelector(`[data-keep="${CSS.escape(k)}"]`);
     if (el) {

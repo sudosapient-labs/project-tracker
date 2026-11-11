@@ -206,6 +206,30 @@ test('closing with X leaves nothing behind for Back: it goes straight to the pag
   expect(await errors()).toEqual([]);
 });
 
+test('a page opened from the sidebar’s project menu: Back returns to the page before, Forward comes back to it', async ({ page }) => {
+  const errors = watchErrors(page);
+  await watchHistory(page);
+  await signInPhone(page);
+  await visit(page, 'mytasks');
+  await page.locator('.bottomnav [data-a="openMnav"]').tap();
+  await expect(page.locator('.shell.mnav')).toBeVisible();
+  await page.locator('.side .sitem', { hasText: NAME }).locator('.hov [data-a="ctxBtn"]').tap();
+  await popup(page).locator('[data-a="openProject"]').tap();
+  const opened = new RegExp(`^#project/${key}/`);
+  await expect.poll(() => hash(page)).toMatch(opened);
+  await expect(page.locator('.shell.mnav')).toHaveCount(0);
+  const there = await hash(page);
+  await page.goBack();
+  await expect.poll(() => hash(page)).toBe('#mytasks');
+  await expect(page.locator('.shell.mnav')).toHaveCount(0);
+  await page.goForward();
+  await expect.poll(() => hash(page)).toBe(there);
+  await expect(page.locator('.side [data-a="go"][data-r="mytasks"]')).not.toHaveAttribute('aria-current', 'page');
+  await page.goBack();
+  await expect.poll(() => hash(page)).toBe('#mytasks');
+  expect(await errors()).toEqual([]);
+});
+
 test('Back from an edit window closes it unsaved and keeps what was typed for next time; a picked date is saved', async ({ page }) => {
   const errors = watchErrors(page);
   await signInPhone(page);
@@ -437,6 +461,33 @@ test('a list row moves up and down from its menu by touch', async ({ page }) => 
   await popup(page).locator('[data-a="rowUp"]').tap();
   await expect.poll(async () => (await order()).indexOf('Gear two')).toBe(a);
   await synced(page);
+  expect(await errors()).toEqual([]);
+});
+
+test('sorted by hand in descending order, Move up and Move down move the row that way', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signInPhone(page);
+  await visit(page, `project/${key}/list`);
+  const sortBy = async label => {
+    await page.locator('.toolbar [data-pop="sort"]').first().tap();
+    await popup(page).getByRole('button', { name: label }).tap();
+  };
+  await sortBy('Manual');
+  await sortBy('Descending');
+  await expect(page.locator('.toolbar [data-pop="sort"]').first()).toBeVisible();
+  const order = () => page.locator('.trow[data-task-row] .tt').allTextContents();
+  const before = await order();
+  const [a, b] = [before.indexOf('Gear three'), before.indexOf('Gear two')];
+  expect(b).toBe(a + 1);
+
+  await row(page, 'Gear three').locator('[data-a="ctxBtn"]').tap();
+  await popup(page).locator('[data-a="rowDown"]').tap();
+  await expect.poll(async () => (await order()).indexOf('Gear three')).toBe(b);
+  await row(page, 'Gear three').locator('[data-a="ctxBtn"]').tap();
+  await popup(page).locator('[data-a="rowUp"]').tap();
+  await expect.poll(async () => (await order()).indexOf('Gear three')).toBe(a);
+  await synced(page);
+  await sortBy('Ascending');
   expect(await errors()).toEqual([]);
 });
 

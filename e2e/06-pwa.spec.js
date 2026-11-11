@@ -374,6 +374,26 @@ test('registering the worker stalls: Push stops checking after 10 seconds, and t
   await signOut(page);
 });
 
+test('the push check finishing while Profile is being edited leaves what was typed there', async ({ page }) => {
+  test.setTimeout(60_000);
+  // The silent subscribe after sign-in renders when it gives up on the worker, 10 seconds in.
+  await fakePush(page, { readyHangsOnce: true });
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  await page.goto('/#settings/profile');
+  const title = page.locator('#pf-title');
+  const was = await title.inputValue();
+  await title.fill('Typed, not saved');
+  await title.evaluate(el => (el.dataset.before = '1'));
+  // Drawn again (the push check's render), with what was typed still there.
+  await expect(page.locator('#pf-title:not([data-before])')).toHaveCount(1, { timeout: 20_000 });
+  await expect(title).toHaveValue('Typed, not saved');
+  // It wasn't saved: a reload shows what's saved.
+  await page.reload();
+  await expect(title).toHaveValue(was);
+  await signOut(page);
+});
+
 test('a browser that won’t run service workers here: Push says why, with no button and no Inbox offer', async ({ page }) => {
   const errors = watchErrors(page);
   await fakePush(page, { worker: 'blocked' });
