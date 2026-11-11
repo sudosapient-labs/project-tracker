@@ -134,8 +134,11 @@ script stops with a message if one is missing, or if the keystore or a password 
 repository. Passwords are only read by `apksigner` from their files. They never appear on a
 command line, in Gradle properties or in the logs.
 
-A production build compiles the committed project as it is. It warns if `apps/android` or
-`public/icons` has uncommitted changes, since a release should come from a commit. It then:
+A production build compiles the committed project as it is. It stops if that project doesn't match
+`twa-manifest.json` (package id, host, start URL, version code and name, names, colours,
+notifications, shortcuts), since then `node apps/android/generate.js` wasn't run and committed. It
+warns if `apps/android` or `public/icons` has uncommitted changes, since a release should come from
+a commit. It then:
 
 1. copies the project to `out/work/<target>/` and runs `./gradlew --no-daemon assembleRelease`
    (log: `out/gradle-<target>.log`; no Gradle daemon is left running);
@@ -161,7 +164,8 @@ Node.js, pnpm and a network connection the first time. A test build is a differe
 
 So it installs next to the real app, can't be mistaken for it, and can never replace it. Because
 each deployment serves one package name, the staging deployment's `ANDROID_PACKAGE_NAME` is
-`dev.sudosapient.app.staging`. `--package-id` and `--name` change the test identity. Signing a test
+`dev.sudosapient.app.staging`. `--package-id` and `--name` change the test identity; the production
+id `dev.sudosapient.app` is refused there, as that build would install over the real app. Signing a test
 build with the release key is fine, since the package id differs. A separate test key also works,
 as long as its fingerprint is the one set on that deployment.
 
