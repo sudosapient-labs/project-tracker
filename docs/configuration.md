@@ -83,10 +83,10 @@ only if `/.well-known/assetlinks.json` names its package and signing certificate
 that file from these two variables. Until both are set it answers `404`. A malformed value stops the
 server from starting, like a short `SECRET_KEY`, rather than serving a file Android would reject.
 
-| Variable                    | Default | Meaning                                                                                                                                                                                                                                                           |
-| --------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ANDROID_PACKAGE_NAME`      | none    | The app's package name (application id), e.g. `dev.sudosapient.app`.                                                                                                                                                                                              |
-| `ANDROID_CERT_FINGERPRINTS` | none    | SHA-256 fingerprints of the certificates the app is signed with, comma separated, as `keytool -list -v` prints them (32 hex bytes separated by `:`). Either case and spaces are fine; they are served in upper case. List both while moving to a new signing key. |
+| Variable                    | Default | Meaning                                                                                                                                                                                                                                                                                                  |
+| --------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANDROID_PACKAGE_NAME`      | none    | The app's package name (application id), e.g. `dev.sudosapient.app`.                                                                                                                                                                                                                                     |
+| `ANDROID_CERT_FINGERPRINTS` | none    | SHA-256 fingerprints of the certificates the app is signed with, comma separated, as `keytool -list -v` prints them (32 hex bytes separated by `:`). Either case is fine, and so are spaces around each one (not inside it); they are served in upper case. List both while moving to a new signing key. |
 
 ## Development and test only
 

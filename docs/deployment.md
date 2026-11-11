@@ -78,7 +78,10 @@ can't be verified), a missing `SECRET_KEY` means two-factor secrets are stored u
 To let the Android app open without an address bar, set `ANDROID_PACKAGE_NAME` (e.g.
 `dev.sudosapient.app`) and `ANDROID_CERT_FINGERPRINTS` (the SHA-256 fingerprint of the key the APK
 is signed with: `keytool -list -v -keystore <keystore> -alias <alias>`) on the service, and redeploy.
-A malformed value stops the new deployment from starting, so check its logs. Then:
+A malformed value stops the new deployment from starting, so check its logs. That is the right
+fingerprint for an APK we sign and hand out ourselves. If the app is ever published on Google Play
+with Play App Signing, the installed copy is signed with Google's key instead: add the fingerprint
+from Play Console → App integrity as well. Then:
 
 ```sh
 curl -si https://<your-domain>/.well-known/assetlinks.json
