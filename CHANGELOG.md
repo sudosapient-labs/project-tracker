@@ -5,6 +5,20 @@ All notable changes to this project are documented here. From 0.2.0 on this file
 when the release PR is merged (see [CI and releases](docs/ci-and-releases.md)), so don't edit those
 entries by hand. Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0](https://github.com/sudosapient-labs/project-tracker/compare/v0.3.2...v0.4.0) (2026-11-11)
+
+
+### Features
+
+* **android:** add the Android app, a Trusted Web Activity with build and signing scripts ([#49](https://github.com/sudosapient-labs/project-tracker/issues/49)) ([94b1121](https://github.com/sudosapient-labs/project-tracker/commit/94b1121e072da4a5f40aa7327c486ce88ed42b7f))
+* serve Android assetlinks.json from config and stop /.well-known falling back to the app ([#47](https://github.com/sudosapient-labs/project-tracker/issues/47)) ([6236f79](https://github.com/sudosapient-labs/project-tracker/commit/6236f79f68095b69ad6442da423ac7ac42402560))
+* **web:** work on phones and in the Android app: Back closes what's open, links open the task, phone layout ([#50](https://github.com/sudosapient-labs/project-tracker/issues/50)) ([5be3275](https://github.com/sudosapient-labs/project-tracker/commit/5be3275d22fe84e7199c27e35cdf623a85321ef0))
+
+
+### Bug Fixes
+
+* show whether this device gets push, turn it on with one tap, and finish every notification headline ([#48](https://github.com/sudosapient-labs/project-tracker/issues/48)) ([3ed67e2](https://github.com/sudosapient-labs/project-tracker/commit/3ed67e290766da2d99572c7e79d5ad48026b8e19))
+
 ## [0.3.2](https://github.com/sudosapient-labs/project-tracker/compare/v0.3.1...v0.3.2) (2026-11-10)
 
 
