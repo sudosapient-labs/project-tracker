@@ -965,8 +965,9 @@ test("the push settings say you'll be asked, which is true in a browser and in t
   await page.addInitScript(() => Object.defineProperty(Notification, 'permission', { get: () => 'default' }));
   await signInPhone(page);
   await visit(page, 'settings/notif-push');
-  await expect(page.locator('.set-in .lead')).toContainText('You’ll be asked to allow notifications when you turn one on.');
-  await expect(page.locator('.set-in .lead')).not.toContainText('browser will ask');
+  // The banner on whether this device gets push (data-push-here) is where permission is mentioned.
+  await expect(page.locator('[data-push-here]')).toContainText('You’ll be asked to allow notifications.');
+  await expect(page.locator('.set-in')).not.toContainText('browser will ask');
   expect(await errors()).toEqual([]);
 });
 
