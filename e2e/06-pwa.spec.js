@@ -92,8 +92,8 @@ test('turning on push subscribes this browser on the server; signing out removes
 const ENDPOINT = 'https://fcm.googleapis.com/fcm/send/e2e-device';
 const OLD_ENDPOINT = 'https://fcm.googleapis.com/fcm/send/e2e-device-old-key';
 /* `worker`: 'ok', 'fails' (registering throws while window.__swFail is true, as when the script
-   can't be fetched), 'failsOnce' (only the first time), or 'blocked' (SecurityError, as in a
-   private window). `readyHangsOnce`: the first wait for the worker never settles, as when it failed
+   can't be fetched), 'failsOnce' (only the first time), 'hangsOnce' (the first registration never
+   settles, as when fetching sw.js stalls) or 'blocked' (SecurityError, as in a private window). `readyHangsOnce`: the first wait for the worker never settles, as when it failed
    to install. `staleKey`: the browser already holds a subscription made with another server key. */
 function fakePush(page, { permission = 'granted', failFirst = false, worker = 'ok', readyHangsOnce = false, staleKey = false } = {}) {
   return page.addInitScript(
@@ -139,6 +139,7 @@ function fakePush(page, { permission = 'granted', failFirst = false, worker = 'o
       ServiceWorkerContainer.prototype.register = function (...args) {
         window.__registers++;
         if (worker === 'blocked') return Promise.reject(new DOMException('The operation is insecure.', 'SecurityError'));
+        if (worker === 'hangsOnce' && window.__registers === 1) return new Promise(() => {});
         if (window.__swFail) {
           if (worker === 'failsOnce') window.__swFail = false;
           return Promise.reject(new TypeError('Failed to register a ServiceWorker: A bad HTTP response code (503) was received.'));
@@ -357,6 +358,22 @@ test('a worker that never gets ready: Push stops checking and offers the button,
   await signOut(page);
 });
 
+test('registering the worker stalls: Push stops checking after 10 seconds, and the button registers again', async ({ page }) => {
+  test.setTimeout(60_000);
+  await fakePush(page, { worker: 'hangsOnce' });
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  await page.goto('/#settings/notif-push');
+  const state = page.locator('[data-push-here]');
+  await expect(state).toHaveAttribute('data-push-here', 'warn', { timeout: 20_000 });
+  expect(await page.evaluate(() => window.__registers)).toBe(1);
+  await page.getByRole('button', { name: 'Turn on push on this device' }).click();
+  await expect(state).toHaveAttribute('data-push-here', 'ok');
+  expect(await page.evaluate(() => window.__registers)).toBe(2);
+  expect(subsHere()).toBe(1);
+  await signOut(page);
+});
+
 test('a browser that won’t run service workers here: Push says why, with no button and no Inbox offer', async ({ page }) => {
   const errors = watchErrors(page);
   await fakePush(page, { worker: 'blocked' });
@@ -447,15 +464,22 @@ test('every kind of push off: Push says nothing is pushed, and turning one on br
 /* The push service replaced this browser's subscription while the app was closed: the service worker
    hands the new one to the server itself, with the session cookie and the API's CSRF header. A real
    event can't be raised here (no push service), so the worker is sent one; its handler is the real one. */
-test('the service worker passes a replaced subscription to the server', async ({ page, context }) => {
-  await fakePush(page);
-  await signIn(page, OWNER);
-  await expect(page.locator('.side')).toBeVisible();
-  await expect.poll(() => subsHere()).toBe(1);
-  const sw = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
-  const NEW = 'https://fcm.googleapis.com/fcm/send/e2e-device-renewed';
+/* Sends the worker a pushsubscriptionchange from `old` to `next`. `fail` lists what the worker's
+   first POSTs to /api/push/subscriptions get instead of the server's answer: 'offline' (the request
+   throws) or an HTTP status; window.__subPosts counts them all. */
+async function subscriptionChanged(sw, old, next, fail = []) {
   await sw.evaluate(
-    ([old, next]) => {
+    ([old, next, fail]) => {
+      const real = self.__realFetch || (self.__realFetch = self.fetch);
+      self.__subPosts = 0;
+      self.fetch = (url, opts) => {
+        if (String(url).endsWith('/api/push/subscriptions')) {
+          const f = fail[self.__subPosts++];
+          if (f === 'offline') return Promise.reject(new TypeError('Failed to fetch'));
+          if (f) return Promise.resolve(new Response('{}', { status: f }));
+        }
+        return real(url, opts);
+      };
       const e = new self.ExtendableEvent('pushsubscriptionchange');
       const sub = { endpoint: next, toJSON: () => ({ endpoint: next, keys: { p256dh: 'BNewKey', auth: 'newauth' } }) };
       Object.defineProperties(e, { oldSubscription: { value: { endpoint: old } }, newSubscription: { value: sub } });
@@ -466,9 +490,51 @@ test('the service worker passes a replaced subscription to the server', async ({
         /* see above */
       }
     },
-    [ENDPOINT, NEW],
+    [old, next, fail],
   );
+}
+
+test('the service worker passes a replaced subscription to the server', async ({ page, context }) => {
+  await fakePush(page);
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  await expect.poll(() => subsHere()).toBe(1);
+  const sw = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
+  const NEW = 'https://fcm.googleapis.com/fcm/send/e2e-device-renewed';
+  await subscriptionChanged(sw, ENDPOINT, NEW);
   await expect.poll(() => [subsHere(), subsHere(NEW)]).toEqual([0, 1]);
   await signOut(page);
   expect(subsHere(NEW)).toBe(0); // it belongs to this session, so signing out removes it
+});
+
+test('the service worker tries a replaced subscription again when the network or the server fails it', async ({ page, context }) => {
+  await fakePush(page);
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  await expect.poll(() => subsHere()).toBe(1);
+  const sw = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
+  const NEW = 'https://fcm.googleapis.com/fcm/send/e2e-device-retried';
+  await subscriptionChanged(sw, ENDPOINT, NEW, ['offline', 503]);
+  // Offline, then a 503, then the server takes it (retries after 1 and 4 seconds).
+  await expect.poll(() => [subsHere(), subsHere(NEW)], { timeout: 15_000 }).toEqual([0, 1]);
+  expect(await sw.evaluate(() => self.__subPosts)).toBe(3);
+  await signOut(page);
+  expect(subsHere(NEW)).toBe(0);
+});
+
+test('signed out (401), the service worker doesn’t try a replaced subscription again', async ({ page, context }) => {
+  await fakePush(page);
+  await signIn(page, OWNER);
+  await expect(page.locator('.side')).toBeVisible();
+  await expect.poll(() => subsHere()).toBe(1);
+  const sw = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
+  const NEW = 'https://fcm.googleapis.com/fcm/send/e2e-device-signed-out';
+  await subscriptionChanged(sw, ENDPOINT, NEW, [401]);
+  await expect.poll(() => sw.evaluate(() => self.__subPosts)).toBe(1);
+  // Past the first retry's second: still the one request.
+  await page.waitForTimeout(2000);
+  expect(await sw.evaluate(() => self.__subPosts)).toBe(1);
+  expect(subsHere(NEW)).toBe(0);
+  await sw.evaluate(() => (self.fetch = self.__realFetch));
+  await signOut(page);
 });
