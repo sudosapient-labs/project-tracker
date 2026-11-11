@@ -151,4 +151,37 @@ describe('web push', () => {
     ]);
     expect(to(2)).toEqual([expect.objectContaining({ title: 'Bob Lee requested access to Security', body: 'Bob Lee (bob@example.com)', url: '/#inbox' })]);
   });
+
+  /* Settings says "Push is off" when every kind is off, so nothing is pushed then, not even access
+     requests (which otherwise always push). They still reach the Inbox. */
+  it('with every kind of push off, nothing is pushed, access requests included', async () => {
+    const { ada, adaId, bob, sent, flush, t } = await pair();
+    await ada.post('/api/push/subscriptions', sub(2));
+    await ada.sync([{ c: 'notifPrefs', k: 'patch', v: { push_mention: false, push_assign: false, push_comment: false, push_due: false } }]);
+    const p2 = {
+      id: 'p2',
+      key: 'SEC',
+      name: 'Security',
+      icon: 'lock',
+      color: 'rose',
+      status: 'active',
+      team: '',
+      lead: adaId,
+      members: [],
+      desc: '',
+      milestones: [],
+      private: true,
+    };
+    expect((await ada.sync([{ c: 'projects', id: 'p2', k: 'put', v: p2 }])).body.results[0].ok).toBe(true);
+    expect((await bob.post('/api/projects/p2/request-access')).status).toBe(200);
+    await flush();
+    expect(sent).toEqual([]);
+    expect(t.db.get("SELECT COUNT(*) n FROM notifications WHERE user_id = ? AND data LIKE '%requested access%'", adaId).n).toBe(1);
+
+    // One kind back on: access requests push again.
+    await ada.sync([{ c: 'notifPrefs', k: 'patch', v: { push_due: true } }]);
+    expect((await bob.post('/api/projects/p2/request-access')).status).toBe(200);
+    await flush();
+    expect(sent.map(s => s.msg.title)).toEqual(['Bob Lee requested access to Security']);
+  });
 });

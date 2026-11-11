@@ -68,7 +68,7 @@ export function runDigests({ db, repo, mailer, config }, now = Date.now()) {
     const line = n => {
       const t = n.task && repo.get('tasks', n.task);
       if (t && !canSeeProject(repo.get('projects', t.project), m)) return '• An update on work you no longer have access to';
-      return `• ${notifLine(n.by ? repo.get('members', n.by)?.name || 'Someone' : null, n.text, t)}`;
+      return `• ${notifLine(n.by ? repo.get('members', n.by)?.name || 'Someone' : null, n.text, t, !!n.task)}`;
     };
     mailer.queue({
       to: m.email,

@@ -3,6 +3,7 @@
    recipient's notification preferences (Settings → Notifications). */
 import { newId } from './lib/crypto.js';
 import { canSeeProject } from '../src/core/access.js';
+import { wantsPush } from '../src/core/push-prefs.js';
 
 export const DEFAULT_NOTIF_PREFS = {
   email_mention: true,
@@ -33,7 +34,8 @@ const GATE = {
   due: 'push_due',
 };
 const EMAIL = { mention: 'email_mention', team: 'email_mention', everyone: 'email_mention', assign: 'email_assign', comment: 'email_comment' };
-// Push → … preferences. Access requests always push; status changes stay in the inbox.
+// Push → … preferences. Access requests push while any kind of push is on (`true`); status changes
+// stay in the inbox.
 const PUSH = {
   mention: 'push_mention',
   team: 'push_mention',
@@ -47,11 +49,18 @@ const PUSH = {
 
 /* One line saying what happened, used as the push title, the email subject and the digest line.
    Key information first, and always a complete phrase: "Ada mentioned you in WEB-12: Fix login",
-   "WEB-12 is due tomorrow: Fix login" (from the server itself, `who` is null), "Ada requested
-   access to Website". `text` is the notification's verb phrase ("mentioned you in", "is overdue"). */
-export function notifLine(who, text, t = null) {
-  if (!t) return [who, text].filter(Boolean).join(' ');
-  return who ? `${who} ${text} ${t.key}: ${t.title}` : `${t.key} ${text}: ${t.title}`;
+   "WEB-12 is due tomorrow: Fix login" (from the server itself, `who` is null), "Ada moved WEB-12 to
+   Review: Fix login", "Ada requested access to Website". `text` is the notification's verb phrase
+   ("mentioned you in", "is overdue", "moved to Review"). `about` says the notification was about
+   a task: when `t` is missing then, the task has since been deleted, and the line says so without
+   naming it. */
+export function notifLine(who, text, t = null, about = !!t) {
+  // "moved to Review" names its task between the verb and where it went.
+  const moved = /^moved to (.+)$/.exec(text);
+  const say = (/** @type {string} */ name) => (moved ? `moved ${name} to ${moved[1]}` : `${text} ${name}`);
+  if (t) return who ? `${who} ${say(t.key)}: ${t.title}` : `${t.key} ${text}: ${t.title}`;
+  if (about) return who ? `${who} ${say('a task that’s since been deleted')}` : `A task that’s since been deleted ${text}`;
+  return [who, text].filter(Boolean).join(' ');
 }
 
 /* `reason` picks the preference; `n` is the record the inbox renders ({ type, task, project, text, snippet }).
@@ -86,15 +95,14 @@ export function notify(ctx, to, reason, n, task = null) {
   const headline = notifLine(who, n.text, t);
   // Sent by engine.publish once the change is committed. Phones cut titles short, so the title is
   // the whole headline (who, what, which task first) and the body adds the comment or details.
-  const push =
-    want === true || (want && prefs[want])
-      ? {
-          title: headline,
-          body: n.snippet && n.snippet !== t?.title ? n.snippet : t ? repo.get('projects', t.project)?.name || '' : '',
-          tag: row.id,
-          url: t ? `/#task/${t.key}` : '/#inbox',
-        }
-      : null;
+  const push = (want === true ? wantsPush(prefs) : want && prefs[want])
+    ? {
+        title: headline,
+        body: n.snippet && n.snippet !== t?.title ? n.snippet : t ? repo.get('projects', t.project)?.name || '' : '',
+        tag: row.id,
+        url: t ? `/#task/${t.key}` : '/#inbox',
+      }
+    : null;
   ctx.changes.push({ c: 'notifs', id: row.id, v: row, uid: to, ...(push ? { push } : {}) });
 
   if (ctx.mailer && EMAIL[reason] && prefs[EMAIL[reason]]) {
