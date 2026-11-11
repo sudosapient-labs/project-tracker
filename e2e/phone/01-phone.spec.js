@@ -2,10 +2,15 @@
    tap, the system Back button closes what's open before it leaves the page, nothing is wider than
    the screen. Runs after the desktop journeys, in the workspace they made. */
 import { expect, test } from '@playwright/test';
-import { OWNER_AFTER_RESET as OWNER, signIn, synced, toastWith, watchErrors } from '../helpers.js';
+import { ownerNow, signIn, synced, toastWith, watchErrors } from '../helpers.js';
 
 const NAME = 'Pocket Engine';
+let OWNER; // whose password depends on how many journeys ran before (see ownerNow)
 let key = ''; // the project's key, lower case, as in its URL (see projectKey)
+
+test.beforeEach(async ({ request }) => {
+  OWNER ??= await ownerNow(request);
+});
 
 const drawer = page => page.locator('.drawer');
 const row = (page, title) => page.locator('.trow[data-task-row]', { hasText: title }).first();
@@ -320,6 +325,167 @@ test('nothing is wider than a 360px screen, and the drawer header fits', async (
   expect(await errors()).toEqual([]);
 });
 
+/* Each toolbar's buttons sit inside it without covering each other, and the next row starts below it. */
+const toolbarsFit = page =>
+  page.evaluate(() =>
+    [...document.querySelectorAll('.pbody .toolbar')].flatMap(bar => {
+      const b = bar.getBoundingClientRect();
+      const kids = [...bar.children].filter(c => c.getBoundingClientRect().width > 0).map(c => [c, c.getBoundingClientRect()]);
+      const bad = [];
+      for (const [c, r] of kids) if (r.bottom > b.bottom + 0.5 || r.right > innerWidth + 0.5) bad.push(`${c.className || c.tagName} leaves the toolbar`);
+      kids.forEach(([c, r], i) =>
+        kids.slice(i + 1).forEach(([d, q]) => {
+          if (r.left < q.right - 0.5 && q.left < r.right - 0.5 && r.top < q.bottom - 0.5 && q.top < r.bottom - 0.5)
+            bad.push(`${c.className || c.tagName} covers ${d.className || d.tagName}`);
+        }),
+      );
+      const next = bar.nextElementSibling;
+      if (next && next.getBoundingClientRect().top < b.bottom - 0.5) bad.push(`${next.className} starts under the toolbar`);
+      return bad;
+    }),
+  );
+
+test('the New task button keeps to its toolbar in List and Calendar at 360px and 412px', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signInPhone(page);
+  for (const width of [360, 412]) {
+    await page.setViewportSize({ width, height: 800 });
+    for (const tab of ['list', 'calendar']) {
+      await visit(page, `project/${key}/${tab}`);
+      const btn = page.locator('.pbody .toolbar [data-a="newTask"]').first();
+      await expect(btn).toBeVisible();
+      expect(await toolbarsFit(page), `${tab} at ${width}px`).toEqual([]);
+      const box = await btn.boundingBox();
+      expect(box.x + box.width, `${tab} at ${width}px`).toBeLessThanOrEqual(width);
+    }
+  }
+  // It still opens the new task window.
+  await page.locator('.pbody .toolbar [data-a="newTask"]').first().tap();
+  await expect(page.locator('.modal')).toBeVisible();
+  await page.goBack();
+  await expect(page.locator('.modal')).toHaveCount(0);
+  expect(await errors()).toEqual([]);
+});
+
+test('every Settings tab can be reached on a 360px screen, and the open one is in view', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.setViewportSize({ width: 360, height: 740 });
+  await signInPhone(page);
+  await visit(page, 'settings/appearance');
+  const nav = page.locator('.set-nav');
+  const secs = await nav.locator('.sitem').evaluateAll(els => els.map(el => el.dataset.sec));
+  expect(secs.length).toBeGreaterThan(5);
+  // More tabs than fit: the strip scrolls sideways.
+  expect(await nav.evaluate(el => el.scrollWidth > el.clientWidth && getComputedStyle(el).overflowX === 'auto')).toBe(true);
+  const inView = async () => {
+    const n = await nav.boundingBox(),
+      on = await nav.locator('.sitem.on').boundingBox();
+    return on.x >= n.x - 0.5 && on.x + on.width <= n.x + n.width + 0.5 && on.x + on.width <= 360.5;
+  };
+  for (const sec of secs) {
+    await nav.locator(`.sitem[data-sec="${sec}"]`).tap();
+    await expect.poll(() => hash(page)).toBe(`#settings/${sec}`);
+    await expect(nav.locator('.sitem.on')).toHaveAttribute('data-sec', sec);
+    expect(await inView(), sec).toBe(true);
+  }
+  // Opened from a link, the last tab is shown too, not left past the edge.
+  await visit(page, 'home');
+  await visit(page, `settings/${secs.at(-1)}`);
+  await expect(nav.locator('.sitem.on')).toHaveAttribute('data-sec', secs.at(-1));
+  expect(await inView()).toBe(true);
+  // So is a project's last view.
+  await visit(page, `project/${key}/activity`);
+  const tabs = page.locator('.tabs:has(.tab[data-tab="activity"])');
+  const n = await tabs.boundingBox(),
+    on = await tabs.locator('.tab.on').boundingBox();
+  expect(on.x + on.width).toBeLessThanOrEqual(n.x + n.width + 0.5);
+  expect(await errors()).toEqual([]);
+});
+
+test('timeline bars and calendar entries show their titles on a phone', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signInPhone(page);
+  await visit(page, `project/${key}/list`);
+  // A task over two weeks from today, and one due today.
+  await newTask(page, 'Long gear');
+  await newTask(page, 'Short gear');
+  const pick = async (title, field, chip) => {
+    await row(page, title).locator('.ttl').tap();
+    await drawer(page).locator(`[data-a="pop"][data-pop="date"][data-field="${field}"]`).first().tap();
+    await popup(page).locator('.dp-chip', { hasText: chip }).tap();
+    await page.goBack();
+    await expect(popup(page)).toHaveCount(0);
+    await page.goBack();
+    await expect(drawer(page)).toHaveCount(0);
+  };
+  await pick('Long gear', 'due', '2 weeks');
+  await pick('Long gear', 'start', 'Today');
+  await pick('Short gear', 'due', 'Today');
+  await synced(page);
+
+  // Timeline: the task column is hidden on a phone, so the bars and groups carry the names.
+  await visit(page, `project/${key}/timeline`);
+  const right = page.locator('#tl-right');
+  const bar = page.locator('.bar', { has: page.locator('.trunc', { hasText: 'Long gear' }) });
+  await expect(page.locator('.tl-left')).toBeHidden();
+  await expect(page.locator('.tl-glbl').first()).toBeVisible();
+  await expect(bar.locator('.trunc')).toBeVisible();
+  // Scrolled so the bar starts off the left edge: its title stays on screen, at the edge.
+  await bar.evaluate((el, r) => (r.scrollLeft = el.offsetLeft + 120), await right.elementHandle());
+  await page.waitForTimeout(100);
+  const r = await right.boundingBox(),
+    t = await bar.locator('.trunc').boundingBox(),
+    b = await bar.boundingBox();
+  expect(b.x).toBeLessThan(r.x);
+  expect(t.x).toBeGreaterThanOrEqual(r.x);
+  expect(t.width).toBeGreaterThan(30);
+
+  // Calendar: each entry shows its title (they were bare colour strips).
+  await visit(page, `project/${key}/calendar`);
+  const entry = page.locator('.cev', { hasText: 'Short gear' }).first();
+  await expect(entry.locator('.trunc')).toBeVisible();
+  const shown = await page.locator('.cal-g .cev').evaluateAll(els =>
+    els.map(el => {
+      const s = el.querySelector('.trunc');
+      return !!s && s.getBoundingClientRect().width > 20 && s.getBoundingClientRect().height >= 10 && el.title.startsWith(s.textContent);
+    }),
+  );
+  expect(shown.length).toBeGreaterThan(0);
+  expect(shown.every(Boolean)).toBe(true);
+  expect(await errors()).toEqual([]);
+});
+
+test('the page is sized to the visible screen (dvh), and the bottom bar covers nothing', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signInPhone(page);
+  await visit(page, `project/${key}/list`);
+  const rule = await page.evaluate(() =>
+    [...document.styleSheets].some(s => {
+      try {
+        return [...s.cssRules].some(r => r instanceof CSSStyleRule && r.selectorText === 'body' && r.style.height === '100dvh');
+      } catch {
+        return false;
+      }
+    }),
+  );
+  expect(rule).toBe(true);
+  expect(await page.evaluate(() => document.body.getBoundingClientRect().height === innerHeight)).toBe(true);
+  // Scrolled to the end, the last row of a page clears the bottom bar (it isn't hidden behind it).
+  const clears = sel =>
+    page.evaluate(sel => {
+      const last = [...document.querySelectorAll(sel)].at(-1);
+      for (let p = last.parentElement; p; p = p.parentElement) if (p.scrollHeight > p.clientHeight) p.scrollTop = p.scrollHeight;
+      const nav = document.querySelector('.bottomnav').getBoundingClientRect();
+      return nav.bottom <= innerHeight && last.getBoundingClientRect().bottom <= nav.top + 0.5;
+    }, sel);
+  expect(await clears('.trow[data-task-row]'), 'list').toBe(true);
+  await visit(page, 'settings/appearance');
+  expect(await clears('.set-in > *'), 'settings').toBe(true);
+  await visit(page, 'projects');
+  expect(await clears('.pcard'), 'projects').toBe(true);
+  expect(await errors()).toEqual([]);
+});
+
 test('fields are 16px on a touch screen, and the status bar colour follows the theme chosen in Settings', async ({ page }) => {
   const errors = watchErrors(page);
   await signInPhone(page);
@@ -340,6 +506,14 @@ test('fields are 16px on a touch screen, and the status bar colour follows the t
   const light = await bg();
   expect(light).not.toBe(dark);
   expect(await color()).toEqual([light, light]);
+  // System: it follows the phone's setting, and changes when the phone's does.
+  await page.locator('[data-a="setTheme"][data-v="system"]').tap();
+  await expect(page.locator('html')).not.toHaveAttribute('data-theme');
+  expect(await color()).toEqual([light, light]);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect.poll(color).toEqual([dark, dark]);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect.poll(color).toEqual([light, light]);
   await page.locator(`[data-a="setTheme"][data-v="${was}"]`).tap();
   await synced(page);
   expect(await errors()).toEqual([]);
