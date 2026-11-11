@@ -106,6 +106,8 @@ export const S = {
     collapsedCols: {},
     errors: {},
     drafts: {},
+    // what Back closed before it was saved, by window (actions/drafts.js)
+    kept: {},
   },
 };
 /* `save()` marks the store dirty. The sync layer (core/sync.js) registers the handler that diffs

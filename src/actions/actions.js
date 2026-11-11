@@ -19,6 +19,7 @@ import { rowPlace } from '../components/task-list.js';
 import { TEMPLATES, closeModal, openModal } from '../overlays/modals.js';
 import { closePop, dateDirty, dpHead, openPop, tgt } from '../overlays/popovers.js';
 import { strengthMeter } from '../pages/settings.js';
+import { takeComposer, takeForm } from './drafts.js';
 
 export const A = {},
   IN = {},
@@ -602,6 +603,14 @@ A.editTask = el => {
   if (!t) return;
   // A formatted description isn't offered as plain text (the modal links to the drawer editor
   // instead); descOrig is what the textarea starts with, so an untouched one is never rewritten.
+  // What was typed here before Back closed it comes back, with where it started (drafts.js).
+  const kept = takeForm('task', t.id);
+  if (kept) {
+    S.ui.form = kept;
+    S.ui.errors = {};
+    openModal({ type: 'task', edit: t.id });
+    return;
+  }
   const text = plainDescText(t.desc);
   S.ui.form = {
     title: t.title,
@@ -634,7 +643,8 @@ A.newTask = el => {
     projectFromKey(S.ui.composer?.ctx) ||
     (S.ui.drawer && task(S.ui.drawer)?.project) ||
     visibleProjects().find(p => canSee(p) && p.status !== 'complete')?.id;
-  S.ui.form = {
+  const kept = takeForm('task');
+  S.ui.form = kept || {
     title: '',
     desc: '',
     project: canSee(proj(pid)) ? pid : 'p1',
@@ -760,6 +770,10 @@ A.startComposer = el => {
   S.ui.composer = { ctx: el.dataset.ctx, group: el.dataset.group, gb: JSON.parse(el.dataset.gb || '{}') };
   S.ui.pop = null;
   render();
+  // The name typed before Back closed it comes back (drafts.js).
+  const v = takeComposer(el.dataset.ctx, el.dataset.group);
+  const i = /** @type {HTMLInputElement | null} */ ($('#composer-in'));
+  if (i && v) i.value = v;
   setTimeout(() => $('#composer-in')?.focus(), 0);
 };
 A.cancelComposer = () => {
@@ -1360,7 +1374,7 @@ A.clearProjFilters = () => {
   render();
 };
 A.newProject = () => {
-  S.ui.pform = { name: '', desc: '', icon: 'folder', color: 'indigo', team: me().team, lead: D().me, due: dOff(30), tmpl: 'blank' };
+  S.ui.pform = takeForm('project') || { name: '', desc: '', icon: 'folder', color: 'indigo', team: me().team, lead: D().me, due: dOff(30), tmpl: 'blank' };
   S.ui.errors = {};
   S.ui.pop = null;
   openModal({ type: 'project' });
@@ -1368,9 +1382,10 @@ A.newProject = () => {
 A.editProject = el => {
   const p = proj(el.dataset.id);
   S.ui.pop = null;
-  S.ui.pform = { name: p.name, desc: p.desc, icon: p.icon, color: p.color, team: p.team, lead: p.lead, due: p.due, tmpl: 'blank' };
+  const kept = takeForm('project', p.id);
+  S.ui.pform = kept || { name: p.name, desc: p.desc, icon: p.icon, color: p.color, team: p.team, lead: p.lead, due: p.due, tmpl: 'blank' };
   // What the window opened with: saving sends only what was changed here (see submitProject).
-  S.ui.pform.opened = { ...S.ui.pform };
+  if (!kept) S.ui.pform.opened = { ...S.ui.pform };
   S.ui.errors = {};
   openModal({ type: 'project', edit: p.id });
 };
