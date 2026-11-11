@@ -389,8 +389,10 @@
     display: flex;
   }
 }
-/* Android zooms into a focused field whose text is smaller than 16px; fields are 16px on touch screens. */
-@media (pointer: coarse) {
+/* A phone's browser zooms into a focused field whose text is smaller than 16px, so fields are 16px
+   on a phone (narrow, or a phone on its side). A tablet doesn't need it, and keeps compact fields
+   (a date picker's time, a table cell) at their size. */
+@media (pointer: coarse) and (max-width: 640px), (pointer: coarse) and (max-height: 500px) {
   input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']),
   textarea:not(.ttl-edit),
   [contenteditable='true'] {
