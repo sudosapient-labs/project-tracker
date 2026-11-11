@@ -114,6 +114,14 @@
   min-width: 0;
   word-wrap: break-word;
 }
+.kcard .kopen {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-weight: inherit;
+  line-height: inherit;
+  border-radius: 2px;
+}
 .kcard.done .title {
   color: var(--text-3);
   text-decoration: line-through;
@@ -129,7 +137,8 @@
   box-shadow: 0 0 0 1px var(--border);
   padding: 1px;
 }
-.kcard:hover .hacts {
+.kcard:hover .hacts,
+.kcard:focus-within .hacts {
   display: flex;
 }
 .kcard .labels {

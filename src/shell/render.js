@@ -198,9 +198,14 @@ export function pageTitle() {
   if (u.route === 'team' && team(u.params.id)) t = team(u.params.id).name;
   return `${t} · ${D().ws.name}`;
 }
-/* Anything clickable is keyboard-reachable: non-native [data-a] controls get a role and a tab stop. */
+/* Anything clickable is keyboard-reachable: non-native [data-a] controls get a role and a tab stop.
+   Not a tap area (`data-tap-area`): a bigger target for a button inside it, which a keyboard and a
+   screen reader use instead (a board card and its title). Made a button, it would hide its other
+   buttons from a screen reader. */
 export function makeFocusable() {
-  for (const el of document.querySelectorAll('[data-a]:not(button):not(a):not(input):not(label):not(select):not(textarea):not([tabindex])')) {
+  for (const el of document.querySelectorAll(
+    '[data-a]:not(button):not(a):not(input):not(label):not(select):not(textarea):not([tabindex]):not([data-tap-area])',
+  )) {
     if (el.matches('.scrim,.modal-wrap,.drawer-scrim,.side-scrim')) continue;
     el.tabIndex = 0;
     if (!el.hasAttribute('role')) el.setAttribute('role', el.dataset.a === 'go' ? 'link' : 'button');

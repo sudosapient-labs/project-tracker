@@ -16,10 +16,14 @@ export function enhanceSelects(root = document) {
     btn.setAttribute('style', sel.getAttribute('style') || '');
     btn.setAttribute('aria-haspopup', 'listbox');
     btn.setAttribute('aria-expanded', 'false');
-    btn.setAttribute(
-      'aria-label',
-      sel.getAttribute('aria-label') || (sel.id && document.querySelector(`label[for="${CSS.escape(sel.id)}"]`)?.textContent) || 'Choose',
-    );
+    // The visible button is the control people reach, so it takes the select's name.
+    const by = sel.getAttribute('aria-labelledby');
+    if (by) btn.setAttribute('aria-labelledby', by);
+    else
+      btn.setAttribute(
+        'aria-label',
+        sel.getAttribute('aria-label') || (sel.id && document.querySelector(`label[for="${CSS.escape(sel.id)}"]`)?.textContent) || 'Choose',
+      );
     if (sel.id) btn.dataset.for = sel.id;
     const sync = () => {
       btn.innerHTML = `<span class="trunc">${esc(sel.options[sel.selectedIndex]?.text || '')}</span>`;
