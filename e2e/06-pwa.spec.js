@@ -219,7 +219,7 @@ test('a browser that was never asked: Settings and the Inbox offer push, and the
   await expect(nudge).toContainText('Get notifications on this device');
   await page.screenshot(shot('inbox-offer'));
   await page.goto('/#settings/notif-push');
-  await expect(page.locator('[data-push-here]')).toContainText('Your browser will ask for permission.');
+  await expect(page.locator('[data-push-here]')).toContainText('You’ll be asked to allow notifications.');
   await page.screenshot(shot('never-asked'));
   expect(await page.evaluate(() => window.__prompts)).toBe(0); // nothing is asked without a tap
 

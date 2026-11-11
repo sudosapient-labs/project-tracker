@@ -124,7 +124,7 @@ function pushDevice(np) {
     'bell-off',
     'Push isn’t on for this device yet.',
     perm === 'default'
-      ? 'You won’t get the notifications chosen below here until you turn it on. Your browser will ask for permission.'
+      ? 'You won’t get the notifications chosen below here until you turn it on. You’ll be asked to allow notifications.'
       : 'You won’t get the notifications chosen below here until you turn it on.',
     `<button class="btn btn-primary btn-sm" data-a="pushHere" ${pushHere.busy ? 'disabled' : ''}>${ic('bell', 14)}Turn on push on this device</button>`,
   );
