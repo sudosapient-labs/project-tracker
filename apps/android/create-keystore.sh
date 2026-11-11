@@ -36,20 +36,35 @@ pass_len=$(head -n 1 "$pass_file" | tr -d '\r\n' | wc -c)
 [ "$pass_len" -ge 6 ] || die "the password in $pass_file is shorter than 6 characters (keytool's minimum)"
 [ "$pass_len" -ge 16 ] || echo "create-keystore: warning: a password under 16 characters is weak for a key that can't be replaced" >&2
 
+# Where a directory resolves to, even if it doesn't exist yet: its nearest existing parent, resolved,
+# plus the rest. So a path inside the repository is refused before anything is created.
+resolve_dir() {
+  d=$1 rest=
+  while [ ! -d "$d" ]; do rest=/$(basename "$d")$rest d=$(dirname "$d"); done
+  printf '%s%s\n' "$(cd "$d" && pwd -P)" "$rest"
+}
 repo=$(cd "$(dirname "$0")/../.." && pwd -P)
-ks_dir=$(mkdir -p "$(dirname "$keystore")" && cd "$(dirname "$keystore")" && pwd -P)
-pf_dir=$(cd "$(dirname "$pass_file")" && pwd -P)
+ks_dir=$(resolve_dir "$(dirname "$keystore")")
+pf_dir=$(resolve_dir "$(dirname "$pass_file")")
 for d in "$ks_dir" "$pf_dir"; do
   case "$d/" in "$repo"/*) die "$d is inside the repository; keep the key and its password outside it" ;; esac
 done
-keystore="$ks_dir/$(basename "$keystore")"
+if [ -n "$(find "$pass_file" -perm /077 2>/dev/null)" ]; then
+  echo "create-keystore: warning: $pass_file can be read by other users; chmod 600 it" >&2
+fi
 
+# Before mkdir, so a new key directory is private (700) as well as the keystore (600).
 umask 077
+mkdir -p "$ks_dir"
+keystore="$ks_dir/$(basename "$keystore")"
 # PKCS12 (keytool's default) has one password for the store and the key.
-"$JAVA_HOME/bin/keytool" -genkeypair -keystore "$keystore" -storetype PKCS12 -alias "$alias" \
+# keytool reads the password from the file, so its output holds no secret: show it when it fails.
+if ! kt_out=$("$JAVA_HOME/bin/keytool" -genkeypair -keystore "$keystore" -storetype PKCS12 -alias "$alias" \
   -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=Sudo Sapient, O=Sudo Sapient" \
-  -storepass:file "$pass_file" -keypass:file "$pass_file" >/dev/null 2>&1 ||
-  die "keytool failed (run with a readable password file and a JDK in JAVA_HOME)"
+  -storepass:file "$pass_file" -keypass:file "$pass_file" 2>&1); then
+  printf '%s\n' "$kt_out" >&2
+  die "keytool failed"
+fi
 
 fingerprint=$("$JAVA_HOME/bin/keytool" -list -v -keystore "$keystore" -alias "$alias" -storepass:file "$pass_file" |
   sed -n 's/^[[:space:]]*SHA256: //p')

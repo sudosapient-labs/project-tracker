@@ -106,6 +106,15 @@ try {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// Pin the Gradle download Bubblewrap's wrapper names (checksum from services.gradle.org), so a changed
+// file is refused instead of run.
+const wrapper = path.join(opts.out, 'gradle/wrapper/gradle-wrapper.properties');
+const GRADLE_SHA256 = { '8.11.1': 'f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6' };
+const props = fs.readFileSync(wrapper, 'utf8');
+const gradle = props.match(/gradle-([\d.]+)-bin\.zip/)?.[1];
+if (!gradle || !GRADLE_SHA256[gradle]) throw new Error(`No checksum for Gradle ${gradle}: add it to GRADLE_SHA256 in generate.js`);
+if (!props.includes('distributionSha256Sum')) fs.writeFileSync(wrapper, `${props.trimEnd()}\ndistributionSha256Sum=${GRADLE_SHA256[gradle]}\n`);
+
 for (const f of ['store_icon.png', 'manifest-checksum.txt']) fs.rmSync(path.join(opts.out, f), { force: true });
 const night = path.join(opts.out, 'app/src/main/res/values-night');
 fs.mkdirSync(night, { recursive: true });

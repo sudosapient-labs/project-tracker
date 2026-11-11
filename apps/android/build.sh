@@ -74,6 +74,9 @@ for f in "$keystore" "$store_pass_file" "$key_pass_file"; do
   real=$(cd "$(dirname "$f")" && pwd -P)/$(basename "$f")
   case "$real" in "$repo"/*) die "$f is inside the repository; keep keys and passwords outside it" ;; esac
 done
+for f in "$store_pass_file" "$key_pass_file"; do
+  [ -z "$(find "$f" -perm /077 2>/dev/null)" ] || echo "build: warning: $f can be read by other users; chmod 600 it" >&2
+done
 keystore=$(cd "$(dirname "$keystore")" && pwd -P)/$(basename "$keystore")
 store_pass_file=$(cd "$(dirname "$store_pass_file")" && pwd -P)/$(basename "$store_pass_file")
 key_pass_file=$(cd "$(dirname "$key_pass_file")" && pwd -P)/$(basename "$key_pass_file")
@@ -85,6 +88,16 @@ sdk=${ANDROID_HOME:-${ANDROID_SDK_ROOT-}}
 build_tools=$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -n 1)
 [ -n "$build_tools" ] && [ -x "$build_tools/apksigner" ] || die "no build-tools with apksigner in $sdk/build-tools"
 export JAVA_HOME ANDROID_HOME=$sdk PATH="$JAVA_HOME/bin:$PATH"
+
+# Production builds the committed project without regenerating it, so it must match twa-manifest.json.
+if [ "$target" = production ]; then
+  want=$(sed -n 's/^[[:space:]]*"appVersionCode":[[:space:]]*\([0-9]*\).*/\1/p' "$here/twa-manifest.json")
+  have=$(sed -n 's/^[[:space:]]*versionCode[[:space:]]*\([0-9]*\).*/\1/p' "$here/app/build.gradle")
+  [ "$want" = "$have" ] ||
+    die "twa-manifest.json has appVersionCode $want but the project has versionCode $have; run node apps/android/generate.js and commit"
+  [ ! "$here/twa-manifest.json" -nt "$here/app/build.gradle" ] ||
+    echo "build: warning: twa-manifest.json is newer than the project; run node apps/android/generate.js if you changed it" >&2
+fi
 
 if [ "$target" = production ] && [ -n "$(git -C "$repo" status --porcelain -- apps/android public/icons 2>/dev/null)" ]; then
   echo "build: warning: apps/android or public/icons has uncommitted changes; a release should come from a commit" >&2
@@ -116,13 +129,15 @@ fi
 
 unsigned="$work/app/build/outputs/apk/release/app-release-unsigned.apk"
 [ -f "$unsigned" ] || die "Gradle didn't produce $unsigned"
-version_code=$("$build_tools/aapt2" dump badging "$unsigned" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
-version_name=$("$build_tools/aapt2" dump badging "$unsigned" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
-apk_package=$("$build_tools/aapt2" dump badging "$unsigned" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+badging=$("$build_tools/aapt2" dump badging "$unsigned") || die "aapt2 couldn't read $unsigned"
+version_code=$(printf '%s\n' "$badging" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
+version_name=$(printf '%s\n' "$badging" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+apk_package=$(printf '%s\n' "$badging" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
 
 # --- align, sign, verify ----------------------------------------------------------------------------
 suffix=$([ "$target" = production ] && echo "" || echo "-$target")
 apk="$out/sudo-sapient$suffix-$version_name-$version_code.apk"
+[ ! -e "$apk" ] || echo "build: warning: replacing $apk; raise appVersionCode for a build you hand out" >&2
 aligned="$work/aligned.apk"
 "$build_tools/zipalign" -p -f 4 "$unsigned" "$aligned"
 # Passwords are passed as file: references, so they never appear on a command line or in a log.
