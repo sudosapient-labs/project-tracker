@@ -5,7 +5,7 @@ import { D, S, canEdit, proj, save, task } from '../core/store.js';
 import { mutate, toast } from '../ui/toast.js';
 import { fxSet, render } from '../shell/render.js';
 import { viewOf } from '../shell/view-engine.js';
-import { applyPatch, handleFiles, updateTask } from './actions.js';
+import { A, applyPatch, handleFiles, updateTask } from './actions.js';
 
 export let DRAG = null;
 export function clearDropMarks() {
@@ -157,34 +157,7 @@ document.addEventListener('drop', e => {
     });
     if (moved) toast(`Moved “${t.title}” to ${ST[d.col].name}`, { ms: 2200 });
   } else if (d.type === 'row' && d.target) {
-    const t = task(d.id),
-      tg = task(d.target);
-    const key = d.lkey;
-    const v = key ? viewOf(key) : null;
-    const all = D()
-      .tasks.filter(x => !x.archived && x.id !== t.id)
-      .sort((a, b) => a.order - b.order);
-    const i = all.findIndex(x => x.id === tg.id);
-    const nb = d.pos === 'before' ? all[i - 1] : all[i + 1];
-    const order = nb ? (tg.order + nb.order) / 2 : tg.order + (d.pos === 'before' ? -1 : 1);
-    const patch = {};
-    if (v && d.group) {
-      const g = v.group;
-      if (g === 'status' && ST[d.group]) patch.status = d.group;
-      if (g === 'priority' && PR[d.group]) patch.priority = d.group;
-      if (g === 'assignee') patch.assignee = d.group === 'none' ? null : d.group;
-      if (g === 'project' && proj(d.group)) patch.project = d.group;
-    }
-    let switched = false;
-    mutate(() => {
-      t.order = order;
-      applyPatch(t, patch);
-      if (v && v.sort.f !== 'manual') {
-        v.sort = { f: 'manual', dir: 1 };
-        switched = true;
-      }
-    });
-    if (switched) toast('Sorted manually to keep your order', { kind: 'info', ms: 2200 });
+    placeRow(d);
   } else if (d.type === 'cal' && d.day) {
     const t = task(d.id);
     if (dayKey(t.due) === d.day) return;
@@ -202,6 +175,50 @@ document.addEventListener('drop', e => {
     render();
   }
 });
+
+/* Put list row `d.id` before or after (`d.pos`) row `d.target` of group `d.group` in view `d.lkey`:
+   a drop, or Move up / down from the row's menu on a touch screen. */
+function placeRow(d) {
+  const t = task(d.id),
+    tg = task(d.target);
+  if (!t || !tg) return;
+  const key = d.lkey;
+  const v = key ? viewOf(key) : null;
+  const all = D()
+    .tasks.filter(x => !x.archived && x.id !== t.id)
+    .sort((a, b) => a.order - b.order);
+  const i = all.findIndex(x => x.id === tg.id);
+  const nb = d.pos === 'before' ? all[i - 1] : all[i + 1];
+  const order = nb ? (tg.order + nb.order) / 2 : tg.order + (d.pos === 'before' ? -1 : 1);
+  const patch = {};
+  if (v && d.group) {
+    const g = v.group;
+    if (g === 'status' && ST[d.group]) patch.status = d.group;
+    if (g === 'priority' && PR[d.group]) patch.priority = d.group;
+    if (g === 'assignee') patch.assignee = d.group === 'none' ? null : d.group;
+    if (g === 'project' && proj(d.group)) patch.project = d.group;
+  }
+  let switched = false;
+  mutate(() => {
+    t.order = order;
+    applyPatch(t, patch);
+    if (v && v.sort.f !== 'manual') {
+      v.sort = { f: 'manual', dir: 1 };
+      switched = true;
+    }
+  });
+  if (switched) toast('Sorted manually to keep your order', { kind: 'info', ms: 2200 });
+}
+/* Touch screens can't drag a row: its menu moves it past the row above or below (see rowPlace). */
+const rowMove = up => () => {
+  const p = S.ui.pop;
+  const target = p?.row?.[up ? 'up' : 'down'];
+  if (!target) return;
+  S.ui.pop = null;
+  placeRow({ id: p.id, target, pos: up ? 'before' : 'after', group: p.row.group, lkey: p.row.lkey });
+};
+A.rowUp = rowMove(true);
+A.rowDown = rowMove(false);
 
 /* timeline bar drag + table column resize (pointer events) */
 document.addEventListener('pointerdown', e => {
@@ -242,6 +259,8 @@ document.addEventListener('pointerdown', e => {
   const b = e.target.closest?.('[data-bar]');
   // Nothing moves in a project I can only view or comment in (the server would refuse it).
   if (!b || b.closest('[data-ro]') || !canEdit(proj(task(b.dataset.bar)?.project))) return;
+  // By touch the timeline is view-only: a swipe scrolls it and a tap opens the task.
+  if (e.pointerType === 'touch') return;
   const x0 = e.clientX;
   const l0 = parseFloat(b.style.left);
   const dw = +b.dataset.dw;

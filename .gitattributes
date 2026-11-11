@@ -1,2 +1,4 @@
 * text=auto eol=lf
 *.svg text eol=lf
+# Windows batch files (the Android project's gradlew.bat) need CRLF.
+*.bat text eol=crlf

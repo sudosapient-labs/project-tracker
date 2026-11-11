@@ -106,8 +106,39 @@ describe('scheduled jobs', () => {
     expect(runDigests(t, thu9)).toBe(1);
     expect(runDigests(t, thu9 + 600_000)).toBe(0); // already sent today
     expect(digests()).toHaveLength(1);
-    expect(digests()[0].body_text).toContain('Ada Owner assigned you WEB-201 Task t1');
+    expect(digests()[0].body_text).toContain('• Ada Owner assigned you WEB-201: Task t1');
     expect(runDigests(t, Date.parse('2026-11-07T03:30:00Z'))).toBe(0); // Saturday
+  });
+
+  /* The digest uses the push and email headline: a complete phrase for every kind, and one that
+     names nothing when the task has since been deleted. */
+  it('digest lines read as complete phrases, including status changes and deleted tasks', async () => {
+    const { t, ada, bob, mails } = await pair();
+    await bob.put('/api/me/state', { prefs: { tz: 'Asia/Kolkata' } });
+    await bob.sync([{ c: 'notifPrefs', k: 'patch', v: { email_digest: true } }]);
+    await ada.sync([
+      { c: 'tasks', id: 't1', k: 'put', v: T('t1', { assignee: 'mbob' }) },
+      { c: 'tasks', id: 't2', k: 'put', v: T('t2', { assignee: 'mbob', due: '2026-11-01' }) },
+      { c: 'tasks', id: 't3', k: 'put', v: T('t3', { title: 'Secret plan' }) },
+    ]);
+    await ada.sync([{ c: 'tasks', id: 't1', k: 'patch', v: { status: 'review' } }]);
+    await ada.sync([{ c: 'comments', id: 'c1', k: 'put', v: { id: 'c1', task: 't3', by: 'x', at: 1, text: 'See @Bob Lee', re: {} } }]);
+    // 00:30 on Wednesday in Kolkata is still Tuesday in UTC.
+    runReminders(t, Date.parse('2026-11-03T19:00:00Z'));
+    await ada.sync([
+      { c: 'tasks', id: 't2', k: 'del' },
+      { c: 'tasks', id: 't3', k: 'del' },
+    ]);
+    const thu9 = Date.parse('2026-11-05T03:30:00Z'); // Thursday 09:00 in Kolkata
+    t.db.run("UPDATE notifications SET created_at = ? WHERE user_id = 'mbob'", thu9 - 3_600_000);
+    expect(runDigests(t, thu9)).toBe(1);
+    const body = mails('bob@example.com').find(m => m.subject.startsWith('Your Sudo Sapient digest')).body_text;
+    expect(body).toContain('• Ada Owner moved WEB-201 to Review: Task t1');
+    expect(body).toContain('• Ada Owner assigned you WEB-201: Task t1');
+    expect(body).toContain('• Ada Owner mentioned you in a task that’s since been deleted');
+    expect(body).toContain('• A task that’s since been deleted is overdue');
+    expect(body).not.toContain('Secret plan');
+    expect(body).not.toMatch(/ in\n|• is overdue/);
   });
 
   it('reminds whoever an overdue task is reassigned to', async () => {

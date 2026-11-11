@@ -3,6 +3,13 @@ import { expect } from '@playwright/test';
 export const OWNER = { name: 'Ada Lovelace', email: 'ada@example.com', password: 'analytical-engine-1' };
 // 01-auth resets the owner's password to this; later journeys sign in with it.
 export const OWNER_AFTER_RESET = { ...OWNER, password: 'new-engine-pass-7' };
+/* The owner as the workspace has them now: 05-settings changes the password again, so a check that
+   runs after every journey (or after 01-auth only) asks the server which password is current. */
+export async function ownerNow(request) {
+  const later = { ...OWNER_AFTER_RESET, password: 'jacquard-loom-42' };
+  const r = await request.post('/api/auth/login', { headers: { 'x-requested-with': 'sudo-sapient' }, data: { email: later.email, password: later.password } });
+  return r.ok() ? later : OWNER_AFTER_RESET;
+}
 export const MATE = { name: 'Grace Hopper', email: 'grace@example.com', password: 'compiler-nanosecond-2' };
 
 /* Collect uncaught page errors and error toasts (e.g. a change the server rejected), so every

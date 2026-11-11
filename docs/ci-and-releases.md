@@ -49,15 +49,15 @@ build ─► e2e ─┤
 pr-title ─────┘
 ```
 
-| Job         | Runs                                                                  |
-| ----------- | --------------------------------------------------------------------- |
-| `lint`      | `pnpm lint` (ESLint) and `pnpm format:check` (Prettier)               |
-| `typecheck` | `pnpm typecheck` (see below)                                          |
-| `test`      | `pnpm test` (Vitest API tests)                                        |
-| `build`     | `pnpm build`; the `dist/` it makes is handed to `e2e`                 |
-| `e2e`       | `pnpm test:e2e:run`: the Playwright journeys against that build       |
-| `pr-title`  | the PR title is a Conventional Commit (pull requests only)            |
-| `ci-ok`     | passes when all of the above passed; this is the one check to require |
+| Job         | Runs                                                                                    |
+| ----------- | --------------------------------------------------------------------------------------- |
+| `lint`      | `pnpm lint` (ESLint) and `pnpm format:check` (Prettier)                                 |
+| `typecheck` | `pnpm typecheck` (see below)                                                            |
+| `test`      | `pnpm test` (Vitest API tests)                                                          |
+| `build`     | `pnpm build`; the `dist/` it makes is handed to `e2e`                                   |
+| `e2e`       | `pnpm test:e2e:run`: the Playwright journeys, then the phone checks, against that build |
+| `pr-title`  | the PR title is a Conventional Commit (pull requests only)                              |
+| `ci-ok`     | passes when all of the above passed; this is the one check to require                   |
 
 The jobs run in parallel apart from `e2e`, which waits for `build`. When branch protection becomes
 available, require only `ci-ok`.
@@ -92,6 +92,14 @@ deploys it like any other change.
   release PR; it only changes `package.json` and `CHANGELOG.md`. If you want it to run, add a
   `RELEASE_PLEASE_TOKEN` secret (a PAT or app token with contents and pull-requests write); the
   workflow uses it when present.
+
+## Android app
+
+`apps/android` is outside the release flow: release-please ignores it (`exclude-paths`), so a
+commit that only touches it doesn't release the web app or add to its changelog, and CI doesn't
+build it. The app's own version is `appVersionCode` and `appVersion` in
+`apps/android/twa-manifest.json`, raised by hand when a new APK is built and handed out (see
+[its README](../apps/android/README.md#ship-an-update)). No signing key or secret is in GitHub.
 
 ## npm packages
 

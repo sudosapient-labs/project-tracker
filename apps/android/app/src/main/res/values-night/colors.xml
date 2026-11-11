@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Written by apps/android/generate.js, not Bubblewrap: the splash screen background in dark
+     mode, themeColorDark in twa-manifest.json, so the splash matches the page in both themes. -->
+<resources>
+    <color name="backgroundColor">#1A1A19</color>
+</resources>

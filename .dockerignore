@@ -13,3 +13,5 @@ docs
 .env.*
 *.log
 .railway
+# The Android app is built and signed on its own (apps/android/build.sh); the server image never needs it.
+apps

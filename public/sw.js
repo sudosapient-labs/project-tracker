@@ -75,10 +75,37 @@ self.addEventListener('push', e => {
       body: m.body || '',
       tag: m.tag,
       icon: '/icons/icon-192.png',
+      // The small monochrome mark Android shows in the status bar (scripts/monochrome-icon.js).
+      badge: '/icons/badge-96.png',
       data: { url: m.url || '/' },
     }),
   );
 });
+
+/* The push service replaced or expired this browser's subscription (Firefox does this; Chrome
+   rarely). Subscribe again if the browser didn't already, and hand the new one to the server the
+   way the app does: same origin, so the session cookie goes with it, plus the header the API
+   requires on every change. Signed out (401), this does nothing and the next sign-in subscribes. */
+async function resubscribe(e) {
+  const api = (path, body) =>
+    fetch(path, {
+      method: body ? 'POST' : 'GET',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'sudo-sapient' },
+      body: body && JSON.stringify(body),
+    });
+  let sub = e.newSubscription;
+  if (!sub) {
+    const res = await api('/api/push/key');
+    if (!res.ok) return;
+    const { publicKey } = await res.json();
+    const s = atob((publicKey + '='.repeat((4 - (publicKey.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+    sub = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from(s, c => c.charCodeAt(0)) });
+  }
+  if (e.oldSubscription && e.oldSubscription.endpoint !== sub.endpoint) await api('/api/push/unsubscribe', { endpoint: e.oldSubscription.endpoint });
+  await api('/api/push/subscriptions', sub.toJSON());
+}
+self.addEventListener('pushsubscriptionchange', e => e.waitUntil(resubscribe(e).catch(() => {})));
 
 /* Clicking a notification focuses an open tab and takes it to the task, or opens a new one. */
 self.addEventListener('notificationclick', e => {

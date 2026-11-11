@@ -708,8 +708,12 @@
   height: 100%;
 }
 /* design-system select (see js/ui/select.js) */
+/* Pinned to the top left of its containing block: left where it sits in the flow, it would stretch
+   that block's scroll area (Settings showed a second scrollbar). */
 .select-native {
   position: absolute !important;
+  top: 0;
+  left: 0;
   width: 1px !important;
   height: 1px !important;
   opacity: 0;

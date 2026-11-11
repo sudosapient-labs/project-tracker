@@ -154,6 +154,25 @@ export function createApp({ db, config, log = console, pushSend }) {
   api.all('*', c => c.json({ error: 'Not found.' }, 404));
   app.route('/api', api);
 
+  // Digital Asset Links for the Android app (a Trusted Web Activity): Android shows it without an
+  // address bar only if this file lists its package and signing certificate. Built from config so a
+  // new key needs no build; re-checked on each load so a change rolls out. Any other /.well-known
+  // path is a 404, never the app's HTML (which a verifier would read as a broken file).
+  const { packageName, fingerprints } = config.android;
+  const notFound = c => c.json({ error: 'Not found.' }, 404);
+  app.get('/.well-known/assetlinks.json', c => {
+    if (!packageName || !fingerprints.length) return notFound(c);
+    c.header('Cache-Control', 'no-cache');
+    return c.json([
+      {
+        relation: ['delegate_permission/common.handle_all_urls'],
+        target: { namespace: 'android_app', package_name: packageName, sha256_cert_fingerprints: fingerprints },
+      },
+    ]);
+  });
+  app.all('/.well-known', notFound);
+  app.all('/.well-known/*', notFound);
+
   app.onError((err, c) => {
     log.error?.('[http]', c.req.method, c.req.path, err);
     return c.json({ error: 'Something went wrong on our side. Try again in a moment.' }, 500);

@@ -32,19 +32,19 @@ workspace **Owner** and goes through setup. Without `RESEND_API_KEY`, emails (ve
 invites) are printed with their links to the API console, and the verify and reset screens offer the
 link directly. The local database is `data/sudo-sapient.db`; delete `data/` to start over.
 
-| Script           | What it does                                                                                           |
-| ---------------- | ------------------------------------------------------------------------------------------------------ |
-| `pnpm dev`       | `dev:server` (API, `NODE_ENV=development`, restarts on change) + `dev:web` (Vite)                      |
-| `pnpm build`     | client production build in `dist/`                                                                     |
-| `pnpm start`     | production server (`NODE_ENV=production`): API + `dist/` on :8787                                      |
-| `pnpm preview`   | `build`, then `start`                                                                                  |
-| `pnpm db:seed`   | load the demo workspace into an empty development database                                             |
-| `pnpm db:backup` | copy the database and new uploads to `BACKUP_DIR` (see [operations](docs/operations.md#backups))       |
-| `pnpm test`      | API tests (Vitest, in-memory database); `pnpm test:watch` to re-run on change                          |
-| `pnpm test:e2e`  | build, start a throwaway server on :8790, run the Playwright journeys (`test:e2e:run` skips the build) |
-| `pnpm lint`      | ESLint                                                                                                 |
-| `pnpm typecheck` | `tsc` on the files that opt in with `// @ts-check`                                                     |
-| `pnpm format`    | Prettier (`pnpm format:check` only checks, as CI does)                                                 |
+| Script           | What it does                                                                                                                                  |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev`       | `dev:server` (API, `NODE_ENV=development`, restarts on change) + `dev:web` (Vite)                                                             |
+| `pnpm build`     | client production build in `dist/`                                                                                                            |
+| `pnpm start`     | production server (`NODE_ENV=production`): API + `dist/` on :8787                                                                             |
+| `pnpm preview`   | `build`, then `start`                                                                                                                         |
+| `pnpm db:seed`   | load the demo workspace into an empty development database                                                                                    |
+| `pnpm db:backup` | copy the database and new uploads to `BACKUP_DIR` (see [operations](docs/operations.md#backups))                                              |
+| `pnpm test`      | API tests (Vitest, in-memory database); `pnpm test:watch` to re-run on change                                                                 |
+| `pnpm test:e2e`  | build, start a throwaway server on :8790, run the Playwright journeys, then the phone checks in `e2e/phone/` (`test:e2e:run` skips the build) |
+| `pnpm lint`      | ESLint                                                                                                                                        |
+| `pnpm typecheck` | `tsc` on the files that opt in with `// @ts-check`                                                                                            |
+| `pnpm format`    | Prettier (`pnpm format:check` only checks, as CI does)                                                                                        |
 
 The e2e journeys need a browser once: `pnpm exec playwright install chromium`.
 
@@ -71,6 +71,7 @@ to file tasks, update them or ask about work. It acts as a bot member, within wh
   ([evaluation](docs/api-mcp-cli-eval.md))
 - [Operations](docs/operations.md): backups and restore, logging, scheduled jobs, known limits
 - [CI and releases](docs/ci-and-releases.md): the checks, versioning, the `main` → `prod` rename
+- [Android app](apps/android/README.md): the Trusted Web Activity, building and signing the APK, installing it
 - [Changelog](CHANGELOG.md)
 
 ## Project structure
@@ -118,6 +119,8 @@ packages/
   mcp/                  @sudosapient/mcp: MCP server (stdio `sudo-mcp`; hosted at /api/mcp)
   cli/                  @sudosapient/cli: the `sudo-cli` command
   slack-bot/            @sudosapient/slack-bot: Sudo Tracker, the Slack agent (LangChain; its own service)
+apps/
+  android/              the Android app: a Trusted Web Activity generated by Bubblewrap; build.sh signs the APK
 test/server/            API tests (Vitest); packages/*/test hold the MCP and CLI tests
 e2e/                    user journeys (Playwright); serve.js starts the throwaway server
 docs/                   documentation and the README screenshot

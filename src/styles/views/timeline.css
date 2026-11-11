@@ -139,6 +139,18 @@
 .tl-rowbg.g {
   background: color-mix(in srgb, var(--sunken) 70%, transparent);
 }
+/* A group's name in the bars pane, for when the task column is hidden (phones). */
+.tl-glbl {
+  display: none;
+  width: max-content;
+  height: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-2);
+}
 .bar {
   position: absolute;
   height: 24px;
