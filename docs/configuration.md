@@ -76,14 +76,26 @@ without it all fail closed. `pnpm start` and the Docker image set `production`.
 | ---------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `API_RATE_LIMIT` | `120`   | Requests a minute each person's API keys may make together to `/api/v1`, and separately to `/api/mcp` (MCP tool calls count as the API requests they make). Counted in memory, per process. |
 
+## Android app
+
+The Android app is a Trusted Web Activity: it opens the web app full screen, without an address bar,
+only if `/.well-known/assetlinks.json` names its package and signing certificate. The server builds
+that file from these two variables. Until both are set it answers `404`. A malformed value stops the
+server from starting, like a short `SECRET_KEY`, rather than serving a file Android would reject.
+
+| Variable                    | Default | Meaning                                                                                                                                                                                                                                                           |
+| --------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANDROID_PACKAGE_NAME`      | none    | The app's package name (application id), e.g. `dev.sudosapient.app`.                                                                                                                                                                                              |
+| `ANDROID_CERT_FINGERPRINTS` | none    | SHA-256 fingerprints of the certificates the app is signed with, comma separated, as `keytool -list -v` prints them (32 hex bytes separated by `:`). Either case and spaces are fine; they are served in upper case. List both while moving to a new signing key. |
+
 ## Development and test only
 
-| Variable             | Default            | Meaning                                                                                   |
-| -------------------- | ------------------ | ----------------------------------------------------------------------------------------- |
-| `DISABLE_RATE_LIMIT` | `false`            | Turns off every in-memory rate limit. The e2e server sets it; never set it in production. |
-| `DEMO_PASSWORD`      | `sapient-demo-123` | Password for the demo people `pnpm db:seed` creates.                                      |
-| `API_PORT`           | `8787`             | Where Vite's dev server proxies `/api`. Set it if the API runs on another `PORT`.         |
-| `E2E_PORT`           | `8790`             | Port of the throwaway server `pnpm test:e2e` starts.                                      |
+| Variable             | Default            | Meaning                                                                                              |
+| -------------------- | ------------------ | ---------------------------------------------------------------------------------------------------- |
+| `DISABLE_RATE_LIMIT` | `false`            | Turns off every in-memory rate limit. The e2e server sets it; never set it in production.            |
+| `DEMO_PASSWORD`      | `sapient-demo-123` | Password for the demo people `pnpm db:seed` creates.                                                 |
+| `API_PORT`           | `8787`             | Where Vite's dev server proxies `/api` and `/.well-known`. Set it if the API runs on another `PORT`. |
+| `E2E_PORT`           | `8790`             | Port of the throwaway server `pnpm test:e2e` starts.                                                 |
 
 ## The Docker image
 

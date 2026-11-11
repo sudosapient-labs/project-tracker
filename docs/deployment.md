@@ -73,6 +73,22 @@ reusable invite link.
 Check the startup log for warnings: a missing `RESEND_API_KEY` means no email goes out (and sign-up
 can't be verified), a missing `SECRET_KEY` means two-factor secrets are stored unencrypted.
 
+### The Android app
+
+To let the Android app open without an address bar, set `ANDROID_PACKAGE_NAME` (e.g.
+`dev.sudosapient.app`) and `ANDROID_CERT_FINGERPRINTS` (the SHA-256 fingerprint of the key the APK
+is signed with: `keytool -list -v -keystore <keystore> -alias <alias>`) on the service, and redeploy.
+A malformed value stops the new deployment from starting, so check its logs. Then:
+
+```sh
+curl -si https://<your-domain>/.well-known/assetlinks.json
+```
+
+should answer `200` with `Content-Type: application/json` and your package name and fingerprint,
+with no redirect in between. A `404` means one of the two variables isn't set. Android and Chrome
+remember the result of the check for a while, so after changing the file, reinstall the app (or
+clear its data) to see the change at once. See [configuration](configuration.md#android-app).
+
 ### Backups on Railway
 
 A Railway service has a single volume, so `BACKUP_DIR` can't be a second volume on the same service.

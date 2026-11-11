@@ -185,6 +185,13 @@ the server can't be reached); API responses are never cached. In development it'
 manifest are served with `Cache-Control: no-cache` so updates roll out; hashed `/assets/*` are cached
 for a year.
 
+The Android app is a Trusted Web Activity around this PWA. The server answers
+`/.well-known/assetlinks.json` from `ANDROID_PACKAGE_NAME` and `ANDROID_CERT_FINGERPRINTS` (see
+[configuration](configuration.md#android-app)), before static files, so it works with or without
+`SERVE_STATIC`; every other `/.well-known` path is a `404`, never `index.html`. The monochrome
+icons (`public/icons/icon-monochrome-512.png`, `badge-96.png`) are made from the favicon's outline
+by `node scripts/monochrome-icon.js`.
+
 ## Permission model
 
 ### Workspace roles
