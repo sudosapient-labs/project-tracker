@@ -92,6 +92,10 @@ with no redirect in between. A `404` means one of the two variables isn't set. A
 remember the result of the check for a while, so after changing the file, reinstall the app (or
 clear its data) to see the change at once. See [configuration](configuration.md#android-app).
 
+Building, signing and installing the app is in [apps/android](../apps/android/README.md);
+`apps/android/build.sh` prints both values for the APK it builds. A staging build is a separate app,
+`dev.sudosapient.app.staging`, so on the staging service `ANDROID_PACKAGE_NAME` is that.
+
 ### Backups on Railway
 
 A Railway service has a single volume, so `BACKUP_DIR` can't be a second volume on the same service.
