@@ -76,11 +76,33 @@ proxies `/api` to the API on :8787.
   `server/lib/mailer.js`) and Web Push.
 - **Jobs** (`server/jobs.js`) send due-date reminders, overdue alerts and daily digests; see
   [operations](operations.md#scheduled-jobs).
-- **Push.** Turning on a Push preference subscribes the browser (Web Push, VAPID); notifications
-  arrive even when the app is closed, and clicking one opens the task. Browsers only allow push on
-  HTTPS (or localhost); on iPhone/iPad the app must be added to the Home Screen first. A subscription
+- **Push.** The Push preferences belong to the account and say which kinds of notification are
+  pushed; each browser gets them only once it's allowed notifications and the server holds its
+  subscription (Web Push, VAPID). Notifications arrive even when the app is closed, and clicking one
+  opens the task. Settings → Notifications → Push shows this device's state above the toggles
+  (`src/actions/push.js`): on; not on yet, with a "Turn on push on this device" button that asks
+  for permission from that tap (browsers refuse the prompt without one) and subscribes; blocked, with
+  how to allow it again; off, when every Push preference is off (then nothing is pushed to any of the
+  person's devices, access requests included; with any one on, access requests to projects they lead
+  push too); or unsupported (no service worker or PushManager, an insecure origin, an iPhone/iPad app
+  not opened from the Home Screen, or a browser that refuses to run the service worker here). Push
+  needs the service worker: if registering it failed, each "Turn on" registers it again, and the
+  wait for it to be ready is capped at 10 seconds, so Settings never stays on "Checking this
+  device…" and the button never stays disabled. A browser subscription made with a different VAPID
+  key than the server's is replaced, not handed to the server. When the push service replaces a
+  subscription while the app is closed, the service worker (`public/sw.js`, `pushsubscriptionchange`)
+  posts the new one itself, with the session cookie and the API's `X-Requested-With` header. The
+  Inbox offers the same button until it's dismissed on that browser. Browsers only allow push on
+  HTTPS (or localhost). A subscription
   belongs to the session that made it and is deleted when that session ends (sign out, revoked,
-  password change or reset, expiry, removal); the browser subscribes again after its next sign-in.
+  password change or reset, expiry, removal). After each sign-in, load or finished setup, a browser
+  that already allows notifications, for an account that wants push, hands its subscription to the
+  server again (making one if it has none) without asking; one that was never asked waits for the
+  tap. A push's title is the whole headline, key information first ("Ada mentioned you in WEB-12:
+  Fix login", "WEB-12 is due tomorrow: Fix login", "Ada moved WEB-12 to Review: Fix login"), because
+  phones cut titles short; the body adds the comment or details. A task deleted since reads as "a
+  task that's since been deleted". Email subjects and the daily digest use the same line (`notifLine` in
+  `server/notify.js`).
 
 ## Dates and times
 
