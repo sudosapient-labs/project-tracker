@@ -15,6 +15,7 @@ export default [
       'playwright.config.js',
       'eslint.config.js',
       'server/**/*.js',
+      'scripts/**/*.js',
       'packages/**/*.js',
       'test/**/*.js',
       'e2e/**/*.js',

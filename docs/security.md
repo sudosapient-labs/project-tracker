@@ -224,6 +224,12 @@ Push subscriptions are only accepted on the browsers' push services (FCM, Mozill
 over HTTPS on the default port, so the server never posts to arbitrary hosts. A subscription belongs
 to the session that made it and is deleted when that session ends.
 
+## Android app links
+
+`/.well-known/assetlinks.json` is public and needs no session. It lists only the Android app's
+package name and the SHA-256 fingerprints of its public signing certificates, which anyone with the
+APK can read anyway; the signing key itself never touches the server.
+
 ## Your data
 
 Settings → Account downloads your data as JSON. The Owner's export also covers the workspace, but only

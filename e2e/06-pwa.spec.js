@@ -13,6 +13,9 @@ test('installable: manifest, icons and the Sudo Sapient brand', async ({ page, r
   expect(manifest).toMatchObject({ name: 'Sudo Sapient', display: 'standalone', start_url: '/' });
   for (const icon of manifest.icons) expect((await request.get(icon.src)).status()).toBe(200);
   expect(manifest.icons.some(i => i.purpose === 'maskable')).toBe(true);
+  // Android's status bar and notifications (and the Android app's notification icon) need it.
+  expect(manifest.icons.find(i => i.purpose === 'monochrome')).toMatchObject({ type: 'image/png', sizes: '512x512' });
+  expect((await request.get('/icons/badge-96.png')).headers()['content-type']).toBe('image/png');
 
   await page.goto('/');
   await expect(page.locator('link[rel="manifest"]')).toHaveAttribute('href', '/manifest.webmanifest');

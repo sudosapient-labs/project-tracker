@@ -8,6 +8,33 @@ import fs from 'node:fs';
 /* A size setting in MB: a non-negative number (fractions allowed), else `fallback`. */
 const megabytes = (v, fallback) => (v != null && v !== '' && Number(v) >= 0 ? Number(v) : fallback);
 
+/* The Android app (a Trusted Web Activity) that /.well-known/assetlinks.json vouches for. A wrong
+   value would make Android quietly show the address bar, so a malformed one stops the server from
+   starting instead, like a short SECRET_KEY. Fingerprints are keytool's SHA-256 form (32
+   colon-separated hex bytes), comma separated; either case and spaces are accepted. */
+const ANDROID_PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
+const CERT_SHA256 = /^[0-9A-F]{2}(:[0-9A-F]{2}){31}$/;
+function androidApp(env) {
+  const packageName = (env.ANDROID_PACKAGE_NAME || '').trim();
+  if (packageName && !ANDROID_PACKAGE.test(packageName))
+    throw new Error(`ANDROID_PACKAGE_NAME must be an Android application id such as dev.sudosapient.app (got "${packageName}").`);
+  const raw = (env.ANDROID_CERT_FINGERPRINTS || '').trim();
+  const fingerprints = [
+    ...new Set(
+      raw
+        .split(',')
+        .map(f => f.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  ];
+  const bad = fingerprints.find(f => !CERT_SHA256.test(f));
+  if (bad || (raw && !fingerprints.length))
+    throw new Error(
+      `ANDROID_CERT_FINGERPRINTS must be SHA-256 certificate fingerprints (32 colon-separated hex bytes, as keytool prints them), comma separated (got "${bad ?? raw}").`,
+    );
+  return { packageName, fingerprints };
+}
+
 export function loadConfig(env = process.env) {
   const nodeEnv = env.NODE_ENV || 'production';
   const dev = nodeEnv === 'development' || nodeEnv === 'test';
@@ -61,5 +88,8 @@ export function loadConfig(env = process.env) {
     rateLimit: env.DISABLE_RATE_LIMIT !== 'true',
     // Requests per minute for each person's API keys together (/api/v1 and /api/mcp), counted in this process.
     apiRateLimit: Math.max(1, Math.floor(Number(env.API_RATE_LIMIT) || 120)),
+    // ANDROID_PACKAGE_NAME and ANDROID_CERT_FINGERPRINTS: served as /.well-known/assetlinks.json
+    // when both are set.
+    android: androidApp(env),
   };
 }
