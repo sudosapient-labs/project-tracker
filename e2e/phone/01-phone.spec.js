@@ -866,6 +866,61 @@ test('settings switches and lists are named by their labels, and a board card ha
   expect(await errors()).toEqual([]);
 });
 
+test("a project card's name opens it and its menu button is reachable, by touch, keyboard and on a desktop", async ({ page, browser }) => {
+  const errors = watchErrors(page);
+  await signInPhone(page);
+  await visit(page, 'projects');
+  await page.locator('[data-k="projView"][data-v="grid"]').tap();
+  const pc = page.locator('.pcard', { hasText: NAME }).first();
+  const opened = new RegExp(`#project/${key}(/|$)`);
+  // The card isn't one big link; its name is the link that opens it, and the menu button is there
+  // with its name.
+  await expect(pc).not.toHaveAttribute('role', 'link');
+  await expect(pc).not.toHaveAttribute('tabindex');
+  const name = pc.getByRole('link', { name: NAME, exact: true });
+  await expect(name).toBeVisible();
+  const more = pc.getByRole('button', { name: 'Project options', exact: true });
+  await expect(more).toBeVisible();
+  // A tap anywhere on the card still opens the project; the menu button opens the menu instead.
+  await pc.locator('.desc').tap();
+  await expect(page).toHaveURL(opened);
+  await page.goBack();
+  await expect(page).toHaveURL(/#projects$/);
+  await more.tap();
+  await expect(popup(page).locator('[data-a="openProject"]')).toBeVisible();
+  await expect(page).toHaveURL(/#projects$/);
+  await page.goBack();
+  await expect(popup(page)).toHaveCount(0);
+  // The keyboard's Enter on the name opens it.
+  await name.focus();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(opened);
+  await page.goBack();
+  await expect(page).toHaveURL(/#projects$/);
+
+  // On a desktop: a click on the card opens it, Tab goes from the name to the menu button, which
+  // shows while focus is in the card, and Enter opens the menu.
+  const desk = await onDesktop(browser);
+  await desk.page.evaluate(() => (location.hash = 'projects'));
+  await desk.page.locator('[data-k="projView"][data-v="grid"]').click();
+  const dc = desk.page.locator('.pcard', { hasText: NAME }).first();
+  const dmore = dc.getByRole('button', { name: 'Project options', exact: true });
+  const opacity = () => dmore.evaluate(el => getComputedStyle(el).opacity);
+  expect(await opacity()).toBe('0');
+  await dc.getByRole('link', { name: NAME, exact: true }).focus();
+  await expect.poll(opacity).toBe('1');
+  await desk.page.keyboard.press('Tab');
+  await expect(dmore).toBeFocused();
+  expect(await opacity()).toBe('1');
+  await desk.page.keyboard.press('Enter');
+  await expect(desk.page.locator('.pop.floating [data-a="openProject"]')).toBeVisible();
+  await desk.page.keyboard.press('Escape');
+  await dc.locator('.desc').click();
+  await expect(desk.page).toHaveURL(opened);
+  await desk.context.close();
+  expect(await errors()).toEqual([]);
+});
+
 test('keyboard hints are left out on a touch screen, and kept on a desktop', async ({ page, browser }) => {
   const errors = watchErrors(page);
   await signInPhone(page);

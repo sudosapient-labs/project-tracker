@@ -331,7 +331,8 @@ endpoints, `sync/` the bootstrap and sync engine, and `lib/` the pieces with no 
   to `A.actionName`. Inputs use `data-in`, blur handlers use `data-blur`. A `data-a` element that
   isn't a native control is given a button (or link) role and a tab stop (`makeFocusable` in
   `shell/render.js`), unless it is marked `data-tap-area`: a bigger tap target for a named button
-  inside it (a board card opens from anywhere, and its title is the button). A button's contents are
+  inside it (a board card opens from anywhere, and its title is the button; a project card, and its
+  name is the link). A button's contents are
   read as one name, so a card that was a button hid its other buttons from screen readers.
 - **Settings rows:** `srow(title, description, control)`. A `tog` or `sel` in the row is named by
   the row's title, not by its setting key.

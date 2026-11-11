@@ -5,13 +5,16 @@ import { PSTAT } from '../core/constants.js';
 import { S, TM, canManage, canSee, mem, progressOf, tasksOf, visibleProjects } from '../core/store.js';
 import { av, avStack, empty, pIcon, pStatus, progBar } from '../ui/helpers.js';
 
+/* A project card. A tap anywhere on it opens the project (the card's data-a); for a keyboard or a
+   screen reader the name is the link that opens it, beside the card's menu button. The card isn't a
+   link itself: its contents would be read as one name, and the menu button inside would be lost. */
 export function projectCard(p) {
   const ts = tasksOf(p.id);
   const pr = progressOf(p.id);
   const open = ts.filter(t => t.status !== 'done').length;
   const locked = !canSee(p);
-  return `<div class="pcard" data-a="go" data-r="project" data-id="${p.id}" data-ctx="project" role="link" tabindex="0" aria-label="${esc(p.name)}">
-    <div class="row">${pIcon(p)}<div class="grow" style="min-width:0"><div class="row" style="gap:6px"><b class="trunc" style="font-weight:600;font-size:14px">${esc(p.name)}</b>${p.fav ? `<span style="color:var(--amber)">${ic('star', 12)}</span>` : ''}${p.private ? `<span class="faint" data-tip="Private project">${ic('lock', 12)}</span>` : ''}</div></div>${pStatus(p.status)}</div>
+  return `<div class="pcard" data-a="go" data-r="project" data-id="${p.id}" data-ctx="project" data-tap-area>
+    <div class="row">${pIcon(p)}<div class="grow" style="min-width:0"><div class="row" style="gap:6px"><button class="popen trunc" data-a="go" data-r="project" data-id="${p.id}" role="link">${esc(p.name)}</button>${p.fav ? `<span style="color:var(--amber)">${ic('star', 12)}</span>` : ''}${p.private ? `<span class="faint" data-tip="Private project">${ic('lock', 12)}</span>` : ''}</div></div>${pStatus(p.status)}</div>
     <div class="desc">${esc(p.desc)}</div>
     ${locked ? `<div class="row faint" style="font-size:12px">${ic('lock', 12)}Restricted — request access to see tasks${canManage(p) ? `<span class="sp"></span><button class="btn btn-secondary btn-sm" data-a="share" data-id="${p.id}">Manage access</button>` : ''}</div>` : `<div class="row" style="gap:10px">${progBar(pr, p.status === 'complete' ? 'green' : p.status === 'risk' ? 'red' : '')}<span class="num" style="font-size:12px;font-weight:500">${pr}%</span></div>`}
     <div class="foot"><span class="row" style="gap:4px">${ic('circle-check', 12)}${locked ? '—' : `${ts.length - open}/${ts.length}`}</span><span class="row" style="gap:4px">${ic('calendar', 12)}${fmtDate(p.due)}</span><span class="row hide-m" style="gap:4px">${ic('clock', 12)}${p.last == null ? '—' : ago(minsAgo(p.last))}</span><span class="sp"></span>${avStack(p.members, 3)}</div>
