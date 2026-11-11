@@ -185,6 +185,31 @@ the server can't be reached); API responses are never cached. In development it'
 manifest are served with `Cache-Control: no-cache` so updates roll out; hashed `/assets/*` are cached
 for a year.
 
+### Phones
+
+On a phone, and in the Android app, which is this web app shown full screen by Chrome, the app is
+used by touch and closed with the system Back button. "Touch screen" means `(hover: none)`
+(`touchUI` in `src/core/utils.js`, the same test the CSS uses); desktop browsers behave as before.
+
+- **Back closes what's open first.** While a menu, popover, modal, the command palette, the task
+  drawer or the sidebar is open, the page has one extra history entry with the same URL
+  (`{ layer: true }`). Back leaves it and the topmost layer closes, in the order Escape closes them
+  (`closeTop` in `src/actions/back.js`, used by both); Back then navigates. Back does what a tap
+  outside does first (a date picked is saved, a field being typed in saves on blur), and an edit
+  window closes exactly as its X closes it. Closing the last layer another way removes the entry,
+  so Back never seems to do nothing; going to a page from an open layer replaces it; Forward onto
+  an old one steps back over it. A task opened from a `#task/KEY` link closes back to the page
+  under it. A reload starts with nothing open.
+- **Nothing needs hover, drag or a right click.** Controls that appear on hover are shown. A board
+  card's menu changes its status (its column); a list row's menu has Move up and Move down; a
+  task is renamed in its drawer. The timeline is view-only by touch: a finger scrolls it, a tap
+  opens the task, and bars are moved with a mouse or from the task's dates.
+- **Sizes.** Text fields are 16px, so Android doesn't zoom into them; modals and popovers are
+  sized in `dvh`; the top bar, sidebar, drawer and bottom navigation keep clear of safe areas.
+  `theme-color` (the status bar in the Android app) follows the theme chosen in Settings.
+- **Tests.** The `phone` Playwright project (Pixel 7) runs `e2e/phone/`, after the desktop
+  journeys whose workspace it signs in to.
+
 ## Permission model
 
 ### Workspace roles

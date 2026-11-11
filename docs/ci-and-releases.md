@@ -49,15 +49,15 @@ build ─► e2e ─┤
 pr-title ─────┘
 ```
 
-| Job         | Runs                                                                  |
-| ----------- | --------------------------------------------------------------------- |
-| `lint`      | `pnpm lint` (ESLint) and `pnpm format:check` (Prettier)               |
-| `typecheck` | `pnpm typecheck` (see below)                                          |
-| `test`      | `pnpm test` (Vitest API tests)                                        |
-| `build`     | `pnpm build`; the `dist/` it makes is handed to `e2e`                 |
-| `e2e`       | `pnpm test:e2e:run`: the Playwright journeys against that build       |
-| `pr-title`  | the PR title is a Conventional Commit (pull requests only)            |
-| `ci-ok`     | passes when all of the above passed; this is the one check to require |
+| Job         | Runs                                                                                    |
+| ----------- | --------------------------------------------------------------------------------------- |
+| `lint`      | `pnpm lint` (ESLint) and `pnpm format:check` (Prettier)                                 |
+| `typecheck` | `pnpm typecheck` (see below)                                                            |
+| `test`      | `pnpm test` (Vitest API tests)                                                          |
+| `build`     | `pnpm build`; the `dist/` it makes is handed to `e2e`                                   |
+| `e2e`       | `pnpm test:e2e:run`: the Playwright journeys, then the phone checks, against that build |
+| `pr-title`  | the PR title is a Conventional Commit (pull requests only)                              |
+| `ci-ok`     | passes when all of the above passed; this is the one check to require                   |
 
 The jobs run in parallel apart from `e2e`, which waits for `build`. When branch protection becomes
 available, require only `ci-ok`.
