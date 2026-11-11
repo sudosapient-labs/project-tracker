@@ -85,6 +85,13 @@ function pushDevice(np) {
       'Add Sudo Sapient to your Home Screen first.',
       'On iPhone and iPad, push works only in the installed app: tap Share, then Add to Home Screen, and open it from there.',
     );
+  if (support === 'noworker')
+    return box(
+      'info',
+      'info',
+      'This browser isn’t letting Sudo Sapient run in the background.',
+      'Push needs that, and this browser blocks it here (private windows and some privacy settings do). Open Sudo Sapient in a normal window, or allow this site to store data, then reload.',
+    );
   if (support !== 'ok')
     return box('info', 'info', 'This browser doesn’t support push notifications.', 'Try a current version of Chrome, Edge, Firefox or Safari.');
   const perm = pushPermission();
@@ -96,8 +103,20 @@ function pushDevice(np) {
       'To get push here, allow notifications for this site: in the browser, open the site settings (the icon next to the address) and set Notifications to Allow. For the installed app on Android, open App info → Notifications. Then come back to this page.',
       `<button class="btn btn-secondary btn-sm" data-a="pushRecheck">Check again</button>`,
     );
-  if (!wantsPush(np)) return box('info', 'bell-off', 'Push is off.', 'Turn on a kind of notification below to get push on this device.');
-  if (pushHere.subscribed) return box('ok', 'circle-check', 'Push is on for this device.', 'The notifications chosen below arrive here.');
+  if (!wantsPush(np))
+    return box(
+      'info',
+      'bell-off',
+      'Push is off.',
+      'Nothing is pushed to your devices, access requests included. Turn on a kind of notification below to get push again.',
+    );
+  if (pushHere.subscribed)
+    return box(
+      'ok',
+      'circle-check',
+      'Push is on for this device.',
+      'The notifications chosen below arrive here, and so do requests for access to projects you lead.',
+    );
   if (pushHere.subscribed === null && perm === 'granted')
     return box('info', 'loader', 'Checking this device…', 'Connecting this browser to push notifications.');
   return box(

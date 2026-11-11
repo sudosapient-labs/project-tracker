@@ -5,7 +5,7 @@ import { D, S, commentsOf, mem, pColor, proj, task } from '../core/store.js';
 import { av, empty, fmtComment } from '../ui/helpers.js';
 import { cellAssignee, cellDue, cellPrio, cellStatus } from '../components/task-list.js';
 import { commentHtml } from '../overlays/drawer.js';
-import { showPushNudge } from '../actions/push.js';
+import { pushHere, showPushNudge } from '../actions/push.js';
 
 export function pageInbox() {
   const cats = [
@@ -43,7 +43,7 @@ export function pageInbox() {
 /* The account wants push but this device doesn't get it yet: one tap turns it on (see actions/push.js). */
 function pushNudge() {
   if (!showPushNudge()) return '';
-  return `<div class="alert info" data-push-nudge style="margin:10px var(--gutter) 0;align-items:center">${ic('bell', 15)}<span class="grow">Get notifications on this device, even when Sudo Sapient is closed.</span><button class="btn btn-primary btn-sm" data-a="pushHere">Turn on</button><button class="ibtn ibtn-xs" data-a="pushNudgeDismiss" aria-label="Dismiss" data-tip="Dismiss">${ic('x', 13)}</button></div>`;
+  return `<div class="alert info" data-push-nudge style="margin:10px var(--gutter) 0;align-items:center">${ic('bell', 15)}<span class="grow">Get notifications on this device, even when Sudo Sapient is closed.</span><button class="btn btn-primary btn-sm" data-a="pushHere" ${pushHere.busy ? 'disabled' : ''}>Turn on</button><button class="ibtn ibtn-xs" data-a="pushNudgeDismiss" aria-label="Dismiss" data-tip="Dismiss">${ic('x', 13)}</button></div>`;
 }
 export function notifText(n) {
   const t = n.task ? task(n.task) : null;
