@@ -287,7 +287,10 @@
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     white-space: normal;
-    overflow-wrap: anywhere;
+    /* Break between words; inside a word only when it's longer than the line, hyphenated if the
+       browser can (Chrome on Android can, from the page's lang). */
+    overflow-wrap: break-word;
+    hyphens: auto;
   }
   .week {
     grid-template-columns: minmax(0, 1fr);
