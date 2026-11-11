@@ -167,8 +167,17 @@
     display: none;
   }
   .tlist .trow .ttl {
-    flex: 1 1 calc(100% - 30px);
+    flex: 1 1 calc(100% - 72px);
     order: 1;
+  }
+  /* The row's menu sits at the end of the title line. */
+  .tlist .trow .c-more {
+    order: 1;
+    margin-left: auto;
+  }
+  .tlist .trow .c-more .ibtn {
+    width: 36px;
+    height: 36px;
   }
   .tlist .trow .c-check {
     order: 0;
@@ -192,7 +201,32 @@
   }
   .drawer-b,
   .drawer.full .drawer-b {
-    padding: 16px 16px 40px;
+    padding: 16px 16px calc(40px + env(safe-area-inset-bottom, 0px));
+  }
+  /* The header fits 360px: the project name gives way, the key stays on one line. */
+  .drawer-h {
+    height: calc(52px + env(safe-area-inset-top, 0px));
+    padding: env(safe-area-inset-top, 0px) 4px 0 12px;
+    gap: 2px;
+  }
+  .drawer-h > .pillbtn {
+    min-width: 0;
+    flex-shrink: 1;
+    overflow: hidden;
+  }
+  .drawer-h > .mono {
+    white-space: nowrap;
+  }
+  .drawer-h .ibtn {
+    width: 36px;
+    height: 36px;
+  }
+  .topbar {
+    height: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .side {
+    padding-top: env(safe-area-inset-top, 0px);
   }
   .modal-wrap {
     padding: 0;
@@ -200,7 +234,9 @@
   }
   .modal {
     max-height: 92vh;
+    max-height: 92dvh;
     border-radius: 14px 14px 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   .opts,
   .tmpls {
@@ -222,7 +258,8 @@
     grid-auto-rows: minmax(72px, 1fr);
   }
   .cev .trunc,
-  .cev .av {
+  .cev .av,
+  .cev .num {
     display: none;
   }
   .cev {
@@ -291,6 +328,14 @@
   }
   .palette {
     top: 8px;
+  }
+}
+/* Android zooms into a focused field whose text is smaller than 16px; fields are 16px on touch screens. */
+@media (pointer: coarse) {
+  input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']),
+  textarea:not(.ttl-edit),
+  [contenteditable='true'] {
+    font-size: 16px !important;
   }
 }
 @media (prefers-reduced-motion: reduce) {

@@ -216,6 +216,8 @@
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
   min-height: 44px;
+  /* In a column of the page it keeps every wrapped row (a narrow screen wraps it to two). */
+  flex-shrink: 0;
 }
 .toolbar .btn-ghost {
   height: var(--h-sm);
@@ -223,6 +225,7 @@
   padding: 0 8px;
 }
 .chipsbar {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 6px;
