@@ -85,13 +85,19 @@ export function routeFromHash(h) {
   if (r === 'settings') return { route: 'settings', params: /^[a-z0-9-]{1,40}$/.test(a || '') ? { sec: a } : {} };
   return ROUTE_NAMES[r] && r !== 'member' && r !== 'team' ? { route: r, params: {} } : null;
 }
+/* On touch screens an open drawer, modal, menu or sidebar has a history entry of its own, so the
+   system Back button closes it (actions/back.js sets these). `back` handles a popstate that was
+   about one (true: nothing to route); `sync` adds or drops that entry after each render. */
+export const layers = { back: () => false, sync: () => {}, onEntry: () => false };
 function writeHash(route, params, replace) {
   const h = '#' + hashFor(route, params);
   if (location.hash === h) return;
-  history[replace ? 'replaceState' : 'pushState'](null, '', location.pathname + location.search + h);
+  // Going somewhere from an open layer takes over its entry, so Back returns to the page, not to it.
+  history[replace || layers.onEntry() ? 'replaceState' : 'pushState'](null, '', location.pathname + location.search + h);
 }
 // Browser back / forward: follow the URL without adding another history entry.
 addEventListener('popstate', () => {
+  if (layers.back()) return;
   if (S.ui.auth) return;
   const r = routeFromHash(location.hash.slice(1));
   if (r) go(r.route, r.params, { back: true, fromUrl: true });
@@ -236,6 +242,7 @@ export function render() {
     if (live && !S.ui.loading) live.textContent = title.split(' · ').slice(0, -1).join(', ');
   }
   afterRender();
+  layers.sync();
 }
 export function afterRender() {
   selectMenu.close();

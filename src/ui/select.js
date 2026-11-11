@@ -47,6 +47,8 @@ export const selectMenu = {
   el: null,
   sel: null,
   btn: null,
+  // Told when the menu opens or closes (actions/back.js: Back closes it on touch screens).
+  changed: () => {},
   toggle(sel, btn) {
     this.sel === sel && this.el ? this.close() : this.open(sel, btn);
   },
@@ -94,6 +96,7 @@ export const selectMenu = {
     Object.assign(this, { el: menu, sel, btn });
     btn.setAttribute('aria-expanded', 'true');
     (menu.querySelector('[aria-selected="true"]') || menu.querySelector('.mi'))?.focus({ preventScroll: true });
+    this.changed();
   },
   pick(i) {
     const { sel, btn } = this;
@@ -110,6 +113,7 @@ export const selectMenu = {
     this.btn?.setAttribute('aria-expanded', 'false');
     if (refocus && this.btn?.isConnected) this.btn.focus({ preventScroll: true });
     this.el = this.sel = this.btn = null;
+    this.changed();
   },
 };
 document.addEventListener(
