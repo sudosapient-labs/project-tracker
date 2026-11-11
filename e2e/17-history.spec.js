@@ -1,13 +1,13 @@
 /* Back and forward on a desktop browser follow the pages visited, as they always have: an open task
    drawer is not a history entry here (on a phone it is: see e2e/phone/). */
 import { expect, test } from '@playwright/test';
-import { OWNER_AFTER_RESET as OWNER, signIn, watchErrors } from './helpers.js';
+import { ownerNow, signIn, watchErrors } from './helpers.js';
 
 const hash = page => page.evaluate(() => location.hash);
 
-test('back and forward move between pages; the drawer and Escape leave history alone', async ({ page }) => {
+test('back and forward move between pages; the drawer and Escape leave history alone', async ({ page, request }) => {
   const errors = watchErrors(page);
-  await signIn(page, OWNER);
+  await signIn(page, await ownerNow(request));
   await expect(page.locator('.side')).toBeVisible();
   await page.locator('.side [data-a="go"][data-r="mytasks"]').click();
   await expect.poll(() => hash(page)).toBe('#mytasks');
