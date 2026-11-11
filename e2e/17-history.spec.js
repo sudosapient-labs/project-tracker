@@ -4,11 +4,26 @@ import { expect, test } from '@playwright/test';
 import { ownerNow, signIn, toastWith, watchErrors } from './helpers.js';
 
 const hash = page => page.evaluate(() => location.hash);
+/* Every pushState, with whether the page had a user activation and whether it ran inside a
+   popstate: Chrome lets Back skip an entry that had another pushed over it with no click since. */
+const watchPushes = page =>
+  page.addInitScript(() => {
+    const push = history.pushState.bind(history);
+    /** @type {any} */ (window).__pushes = [];
+    history.pushState = (...a) => {
+      /** @type {any} */ (window).__pushes.push({ click: navigator.userActivation.isActive, inBack: window.event?.type === 'popstate' });
+      return push(...a);
+    };
+  });
+const pushes = page => page.evaluate(() => /** @type {any} */ (window).__pushes.splice(0));
 
 test('back and forward move between pages; the drawer and Escape leave history alone', async ({ page, request }) => {
   const errors = watchErrors(page);
+  await watchPushes(page);
   await signIn(page, await ownerNow(request));
   await expect(page.locator('.side')).toBeVisible();
+  await pushes(page);
+  const start = await page.evaluate(() => history.length);
   await page.locator('.side [data-a="go"][data-r="mytasks"]').click();
   await expect.poll(() => hash(page)).toBe('#mytasks');
   await page.locator('.side [data-drag-proj]').filter({ hasText: 'Difference Engine' }).click();
@@ -36,6 +51,10 @@ test('back and forward move between pages; the drawer and Escape leave history a
   await expect.poll(() => hash(page)).toMatch(/^#project\/[a-z0-9]+\/board$/);
   await page.goBack();
   await expect.poll(() => hash(page)).toBe('#mytasks');
+  // One entry per page clicked to (My tasks, the project, its list), each in its click; Back,
+  // Forward, the drawer and Escape added none.
+  expect(await pushes(page)).toEqual(Array(3).fill({ click: true, inBack: false }));
+  expect(await page.evaluate(() => history.length)).toBe(start + 3);
 
   // Reload keeps the page.
   await page.reload();

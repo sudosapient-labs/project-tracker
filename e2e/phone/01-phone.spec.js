@@ -22,6 +22,39 @@ async function visit(page, h) {
   await page.evaluate(h => (location.hash = h), h);
   await expect.poll(() => hash(page)).toBe('#' + h);
 }
+/* The history the app writes, as Chrome on Android sees it. Chrome lets Back skip an entry the page
+   added another one on top of with no tap since, and page.goBack() doesn't skip, so the tests read
+   the structure itself: every pushState is recorded with whether the page had a user activation
+   and whether it ran inside a popstate (Back), and history.length and the entry's state
+   (`{ layer: n, id, below }`, see src/actions/back.js) are checked after each step. */
+async function watchHistory(page) {
+  await page.addInitScript(() => {
+    const push = history.pushState.bind(history);
+    /** @type {any} */ (window).__pushes = [];
+    history.pushState = (...a) => {
+      /** @type {any} */ (window).__pushes.push({ tap: navigator.userActivation.isActive, inBack: window.event?.type === 'popstate', layer: a[0]?.layer || 0 });
+      return push(...a);
+    };
+  });
+}
+/* history.length, the entry's state, and the pushes since the last call (taken). */
+const entries = page => page.evaluate(() => ({ length: history.length, state: history.state, pushes: /** @type {any} */ (window).__pushes.splice(0) }));
+/* The entry shown is `n` layers over the page entry `base`, and history has `length` entries. Each
+   push since the last check came with a tap and outside Back; `pushes` says how many there were. */
+async function expectEntry(page, { length, base, n, pushes = 0 }) {
+  await expect.poll(async () => await page.evaluate(() => history.state?.layer || 0)).toBe(n);
+  const h = await entries(page);
+  expect(h.length).toBe(length);
+  expect(
+    h.pushes.filter(p => !p.tap || p.inBack),
+    'a push with no tap, or during Back',
+  ).toEqual([]);
+  expect(h.pushes.length).toBe(pushes);
+  if (n) expect(h.state.below).toEqual([base, ...h.state.below.slice(1)]);
+  if (n) expect(h.state.below).toHaveLength(n);
+  else expect(h.state.id).toBe(base);
+  return h.state.id;
+}
 /* Signed in on the phone, with `key` known (each test finds it, so one failing doesn't stop the rest). */
 async function signInPhone(page) {
   await signIn(page, OWNER);
@@ -59,50 +92,97 @@ test('a project and its tasks are made by touch', async ({ page }) => {
   expect(await errors()).toEqual([]);
 });
 
-test('Back closes the menu, then the edit window, then the drawer, then goes back a page', async ({ page }) => {
+test('Back closes the menu, then the edit window, then the drawer, then goes back a page; one entry per tap', async ({ page }) => {
   const errors = watchErrors(page);
+  await watchHistory(page);
   await signInPhone(page);
   await visit(page, `project/${key}/board`);
+  const board = (await entries(page)).state.id;
   await page.locator('.tab[data-tab="list"]').tap();
   await expect.poll(() => hash(page)).toBe(`#project/${key}/list`);
+  const { length, state } = await entries(page);
+  const list = state.id;
 
+  // Each layer opened by a tap adds one entry, in that tap.
   await row(page, 'Gear one').locator('.ttl').tap();
   await expect(drawer(page)).toBeVisible();
+  const l1 = await expectEntry(page, { length: length + 1, base: list, n: 1, pushes: 1 });
   await drawer(page).locator('.drawer-h [data-a="ctxBtn"]').tap();
+  await expect(popup(page)).toBeVisible();
+  const l2 = await expectEntry(page, { length: length + 2, base: list, n: 2, pushes: 1 });
+  // The menu gives way to the edit window: still two layers, no new entry.
   await popup(page).locator('[data-a="editTask"]').tap();
   await expect(page.locator('.modal')).toBeVisible();
+  await expectEntry(page, { length: length + 2, base: list, n: 2 });
   await page.locator('.modal [data-a="pop"][data-pop="status"]').tap();
   await expect(popup(page)).toBeVisible();
+  await expectEntry(page, { length: length + 3, base: list, n: 3, pushes: 1 });
 
+  // Back only steps back: no entry is added, so none under it is one Chrome would skip.
   await page.goBack();
   await expect(popup(page)).toHaveCount(0);
   await expect(page.locator('.modal')).toBeVisible();
+  expect(await expectEntry(page, { length: length + 3, base: list, n: 2 })).toBe(l2);
   await page.goBack();
   await expect(page.locator('.modal')).toHaveCount(0);
   await expect(drawer(page)).toBeVisible();
+  expect(await expectEntry(page, { length: length + 3, base: list, n: 1 })).toBe(l1);
   await page.goBack();
   await expect(drawer(page)).toHaveCount(0);
+  await expectEntry(page, { length: length + 3, base: list, n: 0 });
   expect(await hash(page)).toBe(`#project/${key}/list`);
   await page.goBack();
   await expect.poll(() => hash(page)).toBe(`#project/${key}/board`);
   await expect(page.locator('.board')).toBeVisible();
+  await expectEntry(page, { length: length + 3, base: board, n: 0 });
 
   // Forward returns to the list; the drawer that was closed doesn't come back.
   await page.goForward();
   await expect.poll(() => hash(page)).toBe(`#project/${key}/list`);
   await page.goForward();
-  await page.waitForTimeout(300);
+  await expect.poll(() => page.evaluate(() => history.state?.id)).toBe(list);
   expect(await hash(page)).toBe(`#project/${key}/list`);
   await expect(drawer(page)).toHaveCount(0);
   await expect(page.locator('.modal')).toHaveCount(0);
   await expect(row(page, 'Gear one')).toBeVisible();
+  await expectEntry(page, { length: length + 3, base: list, n: 0 });
 
   // The sidebar is closed by Back too, and the page stays.
   await page.locator('.bottomnav [data-a="openMnav"]').tap();
   await expect(page.locator('.shell.mnav')).toBeVisible();
+  // Its entry replaces the ones Forward had: history is the list and the sidebar's.
+  await expectEntry(page, { length: length + 1, base: list, n: 1, pushes: 1 });
   await page.goBack();
   await expect(page.locator('.shell.mnav')).toHaveCount(0);
   expect(await hash(page)).toBe(`#project/${key}/list`);
+  await expectEntry(page, { length: length + 1, base: list, n: 0 });
+  expect(await errors()).toEqual([]);
+});
+
+/* The case Chrome's history intervention broke: with the drawer and an edit window open, Back closed
+   the window and added the entry back with no tap, so Chrome skipped the page under it and the next
+   Back left the page with the drawer still drawn. */
+test('Back from an edit window over the drawer, then Back again, closes the drawer on its page', async ({ page }) => {
+  const errors = watchErrors(page);
+  await watchHistory(page);
+  await signInPhone(page);
+  await visit(page, `project/${key}/board`);
+  await visit(page, `project/${key}/list`);
+  const { length, state } = await entries(page);
+  await row(page, 'Gear two').locator('.ttl').tap();
+  await drawer(page).locator('.drawer-h [data-a="ctxBtn"]').tap();
+  await popup(page).locator('[data-a="editTask"]').tap();
+  await expect(page.locator('.modal')).toBeVisible();
+  await expectEntry(page, { length: length + 2, base: state.id, n: 2, pushes: 2 });
+  await page.goBack();
+  await expect(page.locator('.modal')).toHaveCount(0);
+  await expectEntry(page, { length: length + 2, base: state.id, n: 1 });
+  await page.goBack();
+  await expect(drawer(page)).toHaveCount(0);
+  await expectEntry(page, { length: length + 2, base: state.id, n: 0 });
+  // The screen and the URL agree: the list, nothing over it.
+  expect(await hash(page)).toBe(`#project/${key}/list`);
+  await expect(row(page, 'Gear two')).toBeVisible();
   expect(await errors()).toEqual([]);
 });
 
@@ -126,7 +206,7 @@ test('closing with X leaves nothing behind for Back: it goes straight to the pag
   expect(await errors()).toEqual([]);
 });
 
-test('Back from an edit window does what its X does; typed text and a picked date are kept', async ({ page }) => {
+test('Back from an edit window closes it unsaved and keeps what was typed for next time; a picked date is saved', async ({ page }) => {
   const errors = watchErrors(page);
   await signInPhone(page);
   await visit(page, `project/${key}/list`);
@@ -145,6 +225,16 @@ test('Back from an edit window does what its X does; typed text and a picked dat
   await expect(row(page, 'Gear one')).toBeVisible();
   await expect(page.locator('.trow', { hasText: 'edited by' })).toHaveCount(0);
   expect(await hash(page)).toBe(`#project/${key}/list`);
+  // What Back closed comes back when the window opens again; its X discards it.
+  await row(page, 'Gear one').locator('[data-a="ctxBtn"]').tap();
+  await popup(page).locator('[data-a="editTask"]').tap();
+  await expect(page.locator('#f-title')).toHaveValue('Gear one, edited by Back');
+  await page.locator('.modal [data-a="closeModal"]').first().tap();
+  await row(page, 'Gear one').locator('[data-a="ctxBtn"]').tap();
+  await popup(page).locator('[data-a="editTask"]').tap();
+  await expect(page.locator('#f-title')).toHaveValue('Gear one');
+  await page.locator('.modal [data-a="closeModal"]').first().tap();
+  await expect(page.locator('.modal')).toHaveCount(0);
 
   // The drawer's title being typed is saved, as when it loses focus, and the drawer closes.
   await row(page, 'Gear one').locator('.ttl').tap();
@@ -169,7 +259,51 @@ test('Back from an edit window does what its X does; typed text and a picked dat
   expect(await errors()).toEqual([]);
 });
 
-test('a task opened from a link: Back closes it and stays in the app', async ({ page, context }) => {
+test('a new task and the inline composer keep what was typed through Back, and show it when reopened', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signInPhone(page);
+  await visit(page, `project/${key}/list`);
+  const tasks = () => page.locator('.trow[data-task-row]').count();
+  const before = await tasks();
+
+  // The New task window.
+  await page.locator('.toolbar [data-a="newTask"]').first().tap();
+  await page.fill('#f-title', 'Half a gear');
+  await page.fill('#f-desc', 'Teeth still to cut');
+  await page.goBack();
+  await expect(page.locator('.modal')).toHaveCount(0);
+  expect(await tasks()).toBe(before);
+  await page.locator('.toolbar [data-a="newTask"]').first().tap();
+  await expect(page.locator('#f-title')).toHaveValue('Half a gear');
+  await expect(page.locator('#f-desc')).toHaveValue('Teeth still to cut');
+  // Closed with its X on purpose, it's gone.
+  await page.locator('.modal [data-a="closeModal"]').first().tap();
+  await page.locator('.toolbar [data-a="newTask"]').first().tap();
+  await expect(page.locator('#f-title')).toHaveValue('');
+  await page.locator('.modal [data-a="closeModal"]').first().tap();
+  await expect(page.locator('.modal')).toHaveCount(0);
+
+  // The inline composer, in the same group.
+  const add = page.locator('.addrow[data-a="startComposer"]').first();
+  const group = await add.getAttribute('data-group');
+  await add.tap();
+  await page.locator('#composer-in').fill('Composer gear');
+  await page.goBack();
+  await expect(page.locator('#composer-in')).toHaveCount(0);
+  expect(await tasks()).toBe(before);
+  await page.locator(`.addrow[data-a="startComposer"][data-group="${group}"]`).tap();
+  await expect(page.locator('#composer-in')).toHaveValue('Composer gear');
+  await page.locator('#composer-in').press('Escape');
+  await expect(page.locator('#composer-in')).toHaveCount(0);
+  await page.locator(`.addrow[data-a="startComposer"][data-group="${group}"]`).tap();
+  await expect(page.locator('#composer-in')).toHaveValue('');
+  await page.goBack();
+  await expect(page.locator('#composer-in')).toHaveCount(0);
+  expect(await tasks()).toBe(before);
+  expect(await errors()).toEqual([]);
+});
+
+test('a task opened from a link: after a tap, Back closes it and stays in the app', async ({ page, context }) => {
   await signInPhone(page);
   await visit(page, `project/${key}/list`);
   await row(page, 'Gear two').locator('.ttl').tap();
@@ -177,15 +311,24 @@ test('a task opened from a link: Back closes it and stays in the app', async ({ 
 
   const tab = await context.newPage();
   const errors = watchErrors(tab);
+  await watchHistory(tab);
   await tab.goto(`/#task/${taskKey}`);
   await expect(tab.locator('.drawer')).toBeVisible();
   await expect(tab.locator('.drawer .ttl-edit')).toHaveValue('Gear two');
   // The URL names the open task, after the page under it.
   await expect.poll(() => hash(tab)).toMatch(new RegExp(`^#[a-z]+\\?task=${taskKey}$`));
+  // Opened with no tap, the drawer has no entry of its own yet: adding one now would let Chrome
+  // skip the page's. The first tap adds it.
+  const start = await entries(tab);
+  expect(start.pushes).toEqual([]);
+  expect(start.state.page).toBe(true);
+  await tab.locator('.drawer .ttl-edit').tap();
+  await expectEntry(tab, { length: start.length + 1, base: start.state.id, n: 1, pushes: 1 });
   await tab.goBack();
   await expect(tab.locator('.drawer')).toHaveCount(0);
   await expect(tab.locator('.bottomnav')).toBeVisible();
-  expect(new URL(tab.url()).hash).not.toContain('task');
+  await expect.poll(() => hash(tab)).not.toContain('task');
+  await expectEntry(tab, { length: start.length + 1, base: start.state.id, n: 0 });
   // Reload keeps the page.
   const h = await hash(tab);
   await tab.reload();
@@ -197,7 +340,9 @@ test('a task opened from a link: Back closes it and stays in the app', async ({ 
 /* Android hands a notification or link for the app to the page already open: only the hash changes. */
 test('a link handed to the open app opens its task in place; Back closes it and stays on the page', async ({ page }) => {
   const errors = watchErrors(page);
+  await watchHistory(page);
   await signInPhone(page);
+  await visit(page, `project/${key}/board`);
   await visit(page, `project/${key}/list`);
   const list = `#project/${key}/list`;
   await row(page, 'Gear three').locator('.ttl').tap();
@@ -207,29 +352,52 @@ test('a link handed to the open app opens its task in place; Back closes it and 
   await expect(drawer(page)).toHaveCount(0);
   await expect.poll(() => hash(page)).toBe(list);
 
-  // With a menu open, as when a notification comes in mid-task.
+  // With a menu open, as when a notification comes in mid-task. The link's own entry becomes the
+  // task's layer over the page (no entry is added for it), and the menu's is left behind it.
+  // (history.length counts the drawer's entry Back left, until a new entry replaces it.)
+  const { length, state } = await entries(page);
   await row(page, 'Gear one').locator('[data-a="ctxBtn"]').tap();
   await expect(popup(page)).toBeVisible();
+  await expectEntry(page, { length, base: state.id, n: 1, pushes: 1 });
   await page.evaluate(k => (location.hash = `task/${k}`), taskKey);
   await expect(drawer(page)).toBeVisible();
   await expect(drawer(page).locator('.ttl-edit')).toHaveValue('Gear three');
   await expect(popup(page)).toHaveCount(0);
   await expect.poll(() => hash(page)).toBe(`${list}?task=${taskKey}`);
+  await expectEntry(page, { length: length + 1, base: state.id, n: 1 });
   await page.goBack();
   await expect(drawer(page)).toHaveCount(0);
   await expect(page.locator('.bottomnav')).toBeVisible();
   await expect.poll(() => hash(page)).toBe(list);
   await expect(row(page, 'Gear one')).toBeVisible();
+  // Back stepped over the menu's old entry too, onto the page's.
+  await expectEntry(page, { length: length + 1, base: state.id, n: 0 });
 
-  // A reload opens the task in the URL again, and Back still closes it onto the page.
+  // A reload opens the task in the URL again, on the entry it had, and Back still closes it onto the
+  // page, in one Back.
   await page.evaluate(k => (location.hash = `task/${k}`), taskKey);
   await expect(drawer(page)).toBeVisible();
+  await expectEntry(page, { length, base: state.id, n: 1 });
   await page.reload();
   await expect(drawer(page)).toBeVisible();
   await expect(drawer(page).locator('.ttl-edit')).toHaveValue('Gear three');
   expect(await hash(page)).toBe(`${list}?task=${taskKey}`);
+  await expectEntry(page, { length, base: state.id, n: 1 });
   await page.goBack();
   await expect(drawer(page)).toHaveCount(0);
+  await expect.poll(() => hash(page)).toBe(list);
+  await expectEntry(page, { length, base: state.id, n: 0 });
+
+  // A reload with a menu open: nothing but the URL's task opens again, so the page steps back onto
+  // its own entry; the next Back leaves the page at once (there's no second entry for it).
+  await row(page, 'Gear one').locator('[data-a="ctxBtn"]').tap();
+  await expectEntry(page, { length, base: state.id, n: 1, pushes: 1 });
+  await page.reload();
+  await expect(row(page, 'Gear one')).toBeVisible();
+  await expectEntry(page, { length, base: state.id, n: 0 });
+  await page.goBack();
+  await expect.poll(() => hash(page)).toBe(`#project/${key}/board`);
+  await page.goForward();
   await expect.poll(() => hash(page)).toBe(list);
 
   // Closed with X, the URL goes back to the page.
@@ -444,6 +612,16 @@ test('every Settings tab can be reached on a 360px screen, and the open one is i
     await expect(nav.locator('.sitem.on')).toHaveAttribute('data-sec', sec);
     expect(await inView(), sec).toBe(true);
   }
+  // Scrolled by hand, the strip stays where it was through a render (it jumped back to the open tab).
+  await nav.locator('.sitem[data-sec="appearance"]').tap();
+  await expect(nav.locator('.sitem.on')).toHaveAttribute('data-sec', 'appearance');
+  const scrolled = await nav.evaluate(el => (el.scrollLeft = Math.min(200, el.scrollWidth - el.clientWidth)));
+  expect(scrolled).toBeGreaterThan(0);
+  const theme = await page.locator('[data-a="setTheme"][aria-checked="true"]').getAttribute('data-v');
+  await page.locator(`[data-a="setTheme"][data-v="${theme}"]`).tap();
+  await page.locator('[data-a="setTheme"]').first().focus();
+  await page.waitForTimeout(100);
+  expect(await nav.evaluate(el => el.scrollLeft)).toBeCloseTo(scrolled, 0);
   // Opened from a link, the last tab is shown too, not left past the edge.
   await visit(page, 'home');
   await visit(page, `settings/${secs.at(-1)}`);
@@ -547,6 +725,13 @@ test('fields are 16px on a touch screen, and the status bar colour follows the t
   await signInPhone(page);
   await visit(page, `project/${key}/list`);
   expect(await page.locator('.toolbar input.search-sm').evaluate(el => getComputedStyle(el).fontSize)).toBe('16px');
+  // On a phone on its side too; a tablet keeps compact fields at their own size.
+  const size = () => page.locator('.toolbar input.search-sm').evaluate(el => getComputedStyle(el).fontSize);
+  await page.setViewportSize({ width: 915, height: 412 });
+  expect(await size()).toBe('16px');
+  await page.setViewportSize({ width: 800, height: 1280 });
+  expect(await size()).not.toBe('16px');
+  await page.setViewportSize({ width: 412, height: 839 });
 
   const color = () => page.evaluate(() => [...document.querySelectorAll('meta[name="theme-color"]')].map(m => m.content));
   const bg = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim());
