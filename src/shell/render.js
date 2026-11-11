@@ -87,26 +87,43 @@ export function routeFromHash(h) {
   if (r === 'settings') return { route: 'settings', params: /^[a-z0-9-]{1,40}$/.test(a || '') ? { sec: a } : {} };
   return ROUTE_NAMES[r] && r !== 'member' && r !== 'team' ? { route: r, params: {} } : null;
 }
-/* On touch screens an open drawer, modal, menu or sidebar has a history entry of its own, so the
-   system Back button closes it (actions/back.js sets these). `back` handles a popstate that was
-   about one (true: nothing to route); `sync` adds or drops that entry after each render. */
-export const layers = { back: () => false, sync: () => {}, onEntry: () => false };
-/* Every history entry the app writes for a page has this state. One without a state was made by a
-   link (a notification or URL Android hands the open app, a hash typed or pasted): the popstate it
-   fires is left alone, and the hashchange after it opens the link (openLink in actions/session.js). */
-export const PAGE = { page: true };
+/* On touch screens each open drawer, modal, menu or sidebar opened by a tap has a history entry of
+   its own, so the system Back button closes it (actions/back.js sets these). `back` handles a
+   popstate (true: nothing to route); `sync` adds or steps back over entries after each render;
+   `added` is told when a page's entry is added (a tap adds one entry at most); `linkEntry` is the
+   state for an entry a link made over the page shown. */
+export const layers = {
+  back: () => false,
+  sync: () => {},
+  onEntry: () => false,
+  added: () => {},
+  linkEntry: (/** @type {boolean} */ _samePage) => pageEntry(),
+};
+/* Every history entry the app writes for a page has a state like this (a layer's: `{ layer: n }`,
+   see actions/back.js), with an id of its own. One without a state was made by a link (a
+   notification or URL Android hands the open app, a hash typed or pasted): the popstate it fires is
+   left alone, and the hashchange after it opens the link (openLink in actions/session.js). */
+let seq = 0;
+export const entryId = () => `${Date.now().toString(36)}.${(++seq).toString(36)}.${Math.random().toString(36).slice(2, 6)}`;
+export const pageEntry = () => ({ page: true, id: entryId() });
 /* The hash for what's shown: the page, and the task open over it. */
 export const urlHash = () => withTask(hashFor(S.ui.route, S.ui.params), S.ui.drawer ? task(S.ui.drawer)?.key : null);
 function writeHash(route, params, replace) {
   const h = '#' + hashFor(route, params);
   if (location.hash === h) return;
+  const url = location.pathname + location.search + h;
   // Going somewhere from an open layer takes over its entry, so Back returns to the page, not to it.
-  history[replace || layers.onEntry() ? 'replaceState' : 'pushState'](PAGE, '', location.pathname + location.search + h);
+  if (layers.onEntry()) history.replaceState(pageEntry(), '', url);
+  else if (replace) history.replaceState(history.state?.page ? history.state : pageEntry(), '', url);
+  else {
+    history.pushState(pageEntry(), '', url);
+    layers.added();
+  }
 }
 /* After each render the URL names the open task, on the entry shown, adding no history entry. On a
-   touch screen that is the open layer's entry (layers.sync has just added it), so the page's own
-   entry under it keeps the page's URL and Back goes there. An entry a link made is left for the
-   link to open first. */
+   touch screen that is usually the open layer's entry (layers.sync has just added it in a tap), so
+   the page's own entry under it keeps the page's URL and Back goes there; an entry Back lands on is
+   rewritten to what's still open. An entry a link made is left for the link to open first. */
 function showUrl() {
   if (S.ui.auth || !history.state) return;
   const h = '#' + urlHash();

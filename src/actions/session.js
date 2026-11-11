@@ -9,7 +9,8 @@ import { browserTz, zoneOf } from '../core/clock.js';
 import { D, DEFAULT_PREFS, PREFS_KEY, S, allTasks, canSee, emptyData, me, proj } from '../core/store.js';
 import { ApiError, get, post } from '../core/api.js';
 import { toast } from '../ui/toast.js';
-import { PAGE, go, hashFor, render, routeFromHash } from '../shell/render.js';
+import { go, hashFor, layers, pageEntry, render, routeFromHash } from '../shell/render.js';
+import { keepAll } from './drafts.js';
 import { parseHash } from '../core/links.js';
 import {
   OFFLINE_MSG,
@@ -158,12 +159,17 @@ function openRoute(h = '', { here = false } = {}) {
   const { page, task: key, file: fid } = parseHash(h);
   const r = page ? routeFromHash(page) : null;
   const base = location.pathname + location.search + '#';
-  // Mark the entry as the app's first (a link's has no state), so nothing below takes it for a link.
-  // A reloaded task's layer entry (actions/back.js) stays one: the task opens on it again.
-  const mark = () => history.replaceState(history.state || PAGE, '', base + hashFor(S.ui.route, S.ui.params));
+  // Give the entry a state (a link's has none), so nothing below takes it for a link. A reloaded
+  // layer's entry (actions/back.js) stays one: the task opens on it again. A link that stays on the
+  // page shown makes its entry a layer over that page, so Back closes what it opens and stays here.
+  const same = !r || hashFor(r.route, r.params) === hashFor(S.ui.route, S.ui.params);
+  const state = history.state || (here ? layers.linkEntry(same) : pageEntry());
+  const mark = () => history.replaceState(state, '', base + hashFor(S.ui.route, S.ui.params));
   if (here) {
     mark();
     // What the link names is what's shown: a link to a page closes the task open over this one.
+    // What was typed in a window or the composer it closes is kept (drafts.js).
+    keepAll();
     Object.assign(S.ui, {
       pop: null,
       palette: null,

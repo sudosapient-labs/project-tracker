@@ -191,32 +191,46 @@ On a phone, and in the Android app, which is this web app shown full screen by C
 used by touch and closed with the system Back button. "Touch screen" means `(hover: none)`
 (`touchUI` in `src/core/utils.js`, the same test the CSS uses); desktop browsers behave as before.
 
-- **Back closes what's open first.** While a menu, popover, modal, the command palette, the task
-  drawer or the sidebar is open, the page has one extra history entry with the page's URL, or the
-  open task's (`{ layer: true }`). Back leaves it and the topmost layer closes, in the order Escape closes them
-  (`closeTop` in `src/actions/back.js`, used by both); Back then navigates. Back does what a tap
-  outside does first (a date picked is saved, a field being typed in saves on blur), and an edit
-  window closes exactly as its X closes it. Closing the last layer another way removes the entry,
-  so Back never seems to do nothing; going to a page from an open layer replaces it; Forward onto
-  an old one steps back over it. A task opened from a `#task/KEY` link closes back to the page
-  under it. A reload starts with nothing open but the task in the URL.
+- **Back closes what's open first.** Each menu, popover, modal, the command palette, the task
+  drawer or the sidebar opened by a tap gets a history entry of its own, with the page's URL or the
+  open task's (`{ layer: n, id, below }`: n layers deep, over the page entry `below[0]`). Back
+  takes the top one away and the topmost layer closes, in the order Escape closes them (`closeTop`
+  in `src/actions/back.js`, used by both); Back then navigates. Back differs from Escape in what it
+  keeps: a date picked is saved and a field or table cell being typed in saves as on blur (as a tap
+  outside does), where Escape cancels them; a new task, a task or project being edited and the
+  inline composer close unsaved but keep what was typed, which comes back when the same window
+  opens again (`src/actions/drafts.js`; their X, Cancel or Escape discards it).
+- **History is only added in a tap.** Chrome (and so the Android app) marks an entry as one Back
+  skips when the page pushes another over it with no user activation since. So the app pushes one
+  entry per tap at most (a page's or a layer's), never while handling Back: Back only steps back,
+  and the state of the entry it lands on says how many layers stay open. Closing a layer another
+  way (X, a backdrop, a pick) steps back over its entry, so Back never seems to do nothing; going to
+  a page from an open layer replaces its entry; Forward onto an entry whose layer was closed steps
+  back over it. A layer opened with no tap gets no entry of its own: a link that stays on the page
+  makes its own entry that layer (`layers.linkEntry`), a reload keeps the entry it had (stepping
+  back to the page's when only the URL's task opens again), and otherwise the next tap adds it.
+  Until then Back closes it with the layer under it; in a tab opened on a `#task/KEY` link, Back
+  before the first tap leaves the app, as there's no entry under it.
 - **Links open in the open app.** Android hands a notification or link for the app (`#task/KEY`) to
   the page already open, which only changes its hash; so does a hash typed or pasted on a desktop.
   The app tells these from its own entries by their history state (every entry it writes has one,
-  `PAGE` or `{ layer: true }`; a link's has none) and opens them where you are, as at the start
-  (`openLink` in `src/actions/session.js`): it closes what's open, goes to the page the link names
-  if it names one, and opens the task over it. A task that's gone, or that you can't see, says so in
+  `pageEntry()` or a layer's; a link's has none) and opens them where you are, as at the start
+  (`openLink` in `src/actions/session.js`): it closes what's open (keeping what was typed, as Back
+  does), goes to the page the link names if it names one, and opens the task over it. The link's
+  own entry is then the page's, or the task's layer over the page shown, so Back closes the task
+  and stays on that page. A task that's gone, or that you can't see, says so in
   a toast. A link that comes while the app is still loading, or before signing in, opens after.
 - **Nothing needs hover, drag or a right click.** Controls that appear on hover are shown. A board
   card's menu changes its status (its column); a list row's menu has Move up and Move down; a
   task is renamed in its drawer. The timeline is view-only by touch: a finger scrolls it, a tap
   opens the task, and bars are moved with a mouse or from the task's dates.
-- **Sizes.** Text fields are 16px, so Android doesn't zoom into them; the page, modals and popovers
+- **Sizes.** Text fields are 16px on a phone (a touch screen up to 640px wide, or up to 500px tall
+  on its side), so the browser doesn't zoom into them; a tablet keeps compact fields at their size; the page, modals and popovers
   are sized in `dvh`, so the browser's and the system's bars don't hide content; the top bar,
   sidebar, drawer and bottom navigation keep clear of safe areas. `theme-color` (the status bar in
   the Android app) follows the theme chosen in Settings.
 - **Narrow screens.** A tab strip too wide for the screen (Settings, a project's views) scrolls
-  sideways and is drawn with the open tab in view. Calendar entries show their titles on up to two
+  sideways, and brings the open tab into view when it opens; a render keeps where it was scrolled to. Calendar entries show their titles on up to two
   lines. With the timeline's task column hidden, group names sit in the bars pane and a bar's title
   stays at the left edge while the bar runs past it.
 - **Tests.** The `phone` Playwright project (Pixel 7) runs `e2e/phone/`, after the desktop
