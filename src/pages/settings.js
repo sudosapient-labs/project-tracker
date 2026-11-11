@@ -285,9 +285,9 @@ export function settingsBody(sec, title) {
             !('PushManager' in window) || !window.Notification
               ? ' This browser doesn’t support push notifications. On iPhone and iPad, add Sudo Sapient to your Home Screen first.'
               : Notification.permission === 'denied'
-                ? ' Notifications are blocked for this site in your browser settings.'
+                ? ' Notifications are blocked for Sudo Sapient. Allow them in your browser’s or phone’s settings.'
                 : Notification.permission === 'default'
-                  ? ' Your browser will ask for permission when you turn one on.'
+                  ? ' You’ll be asked to allow notifications when you turn one on.'
                   : ''
           }`,
         ) +
