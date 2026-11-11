@@ -91,7 +91,7 @@ export function pageSettings() {
   const sec = S.ui.params.sec || S.ui.settings || 'appearance';
   const title = SET_NAV.flatMap(g => g[1]).find(x => x[0] === sec) || ['appearance', 'Appearance'];
   return `<div class="set">
-    <nav class="set-nav" aria-label="Settings">${SET_NAV.map(([g, items]) => `<div class="gh">${g}</div>${items.map(([k, n, i]) => `<button class="sitem ${sec === k ? 'on' : ''}" data-a="go" data-r="settings" data-sec="${k}">${ic(i, 15)}<span>${n}</span></button>`).join('')}`).join('')}</nav>
+    <nav class="set-nav" aria-label="Settings" data-keep="set-nav">${SET_NAV.map(([g, items]) => `<div class="gh">${g}</div>${items.map(([k, n, i]) => `<button class="sitem ${sec === k ? 'on' : ''}" data-a="go" data-r="settings" data-sec="${k}">${ic(i, 15)}<span>${n}</span></button>`).join('')}`).join('')}</nav>
     <div class="set-body" data-keep="set:${esc(sec)}"><div class="set-in">${settingsBody(sec, title[1])}</div></div>
   </div>`;
 }

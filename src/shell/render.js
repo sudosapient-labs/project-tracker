@@ -316,13 +316,27 @@ export function autosize(el) {
   el.style.height = el.scrollHeight + 'px';
 }
 /* A strip of tabs too wide for the screen scrolls sideways (Settings and a project's views on a phone).
-   It is drawn anew each time, so bring the open tab into view rather than leave it past the edge. */
+   Bring the open tab into view when it changes, or the strip is new. A strip that keeps its scroll
+   across renders (data-keep) is otherwise left where it was scrolled to; one drawn anew each time
+   is brought to its open tab each time, rather than left past the edge. */
+const openTabs = new Map(); // data-keep: the open tab last brought into view in that strip
 function showOpenTabs() {
+  const seen = new Set();
   for (const on of $$('.tabs > .tab.on, .set-nav > .sitem.on')) {
     const strip = /** @type {HTMLElement} */ (on.parentElement);
+    const k = strip.dataset.keep,
+      v = /** @type {HTMLElement} */ (on).dataset.tab || /** @type {HTMLElement} */ (on).dataset.sec || on.textContent;
+    if (k) {
+      seen.add(k);
+      const same = openTabs.get(k) === v;
+      openTabs.set(k, v);
+      if (same) continue;
+    }
     if (strip.scrollWidth <= strip.clientWidth) continue;
     const s = strip.getBoundingClientRect(),
       r = on.getBoundingClientRect();
     if (r.left < s.left || r.right > s.right) strip.scrollLeft += r.left - s.left - (s.width - r.width) / 2;
   }
+  // A strip that's gone starts again when it's back.
+  for (const k of [...openTabs.keys()]) if (!seen.has(k)) openTabs.delete(k);
 }
