@@ -2,7 +2,8 @@
    SHELL: render loop, router, sidebar, topbar, skeletons, filter engine
    ===================================================================== */
 import { $, $$ } from '../core/utils.js';
-import { D, S, mem, proj, team } from '../core/store.js';
+import { D, S, mem, proj, task, team } from '../core/store.js';
+import { parseHash, withTask } from '../core/links.js';
 import { applyPrefs } from '../core/theme.js';
 import { enhanceSelects, selectMenu } from '../ui/select.js';
 import { renderShell } from './layout.js';
@@ -56,7 +57,8 @@ export const ROUTE_ICONS = {
 };
 
 /* ---------- URL ↔ route ----------
-   #home · #project/web/list · #member/<id> · #team/<id> · #settings/<section> */
+   #home · #project/web/list · #member/<id> · #team/<id> · #settings/<section>, and the open task
+   after the page (#project/web/list?task=WEB-12; see core/links.js). */
 export function hashFor(route, params = {}) {
   if (route === 'project') {
     const p = proj(params.id);
@@ -89,17 +91,33 @@ export function routeFromHash(h) {
    system Back button closes it (actions/back.js sets these). `back` handles a popstate that was
    about one (true: nothing to route); `sync` adds or drops that entry after each render. */
 export const layers = { back: () => false, sync: () => {}, onEntry: () => false };
+/* Every history entry the app writes for a page has this state. One without a state was made by a
+   link (a notification or URL Android hands the open app, a hash typed or pasted): the popstate it
+   fires is left alone, and the hashchange after it opens the link (openLink in actions/session.js). */
+export const PAGE = { page: true };
+/* The hash for what's shown: the page, and the task open over it. */
+export const urlHash = () => withTask(hashFor(S.ui.route, S.ui.params), S.ui.drawer ? task(S.ui.drawer)?.key : null);
 function writeHash(route, params, replace) {
   const h = '#' + hashFor(route, params);
   if (location.hash === h) return;
   // Going somewhere from an open layer takes over its entry, so Back returns to the page, not to it.
-  history[replace || layers.onEntry() ? 'replaceState' : 'pushState'](null, '', location.pathname + location.search + h);
+  history[replace || layers.onEntry() ? 'replaceState' : 'pushState'](PAGE, '', location.pathname + location.search + h);
 }
-// Browser back / forward: follow the URL without adding another history entry.
+/* After each render the URL names the open task, on the entry shown, adding no history entry. On a
+   touch screen that is the open layer's entry (layers.sync has just added it), so the page's own
+   entry under it keeps the page's URL and Back goes there. An entry a link made is left for the
+   link to open first. */
+function showUrl() {
+  if (S.ui.auth || !history.state) return;
+  const h = '#' + urlHash();
+  if (location.hash !== h) history.replaceState(history.state, '', location.pathname + location.search + h);
+}
+// Browser back / forward: follow the URL without adding another history entry. The open task
+// isn't followed: on a desktop it stays open as before, and showUrl then writes it into the URL.
 addEventListener('popstate', () => {
   if (layers.back()) return;
-  if (S.ui.auth) return;
-  const r = routeFromHash(location.hash.slice(1));
+  if (S.ui.auth || !history.state) return;
+  const r = routeFromHash(parseHash(location.hash).page);
   if (r) go(r.route, r.params, { back: true, fromUrl: true });
 });
 
@@ -244,6 +262,7 @@ export function render() {
   }
   afterRender();
   layers.sync();
+  showUrl();
 }
 export function afterRender() {
   selectMenu.close();

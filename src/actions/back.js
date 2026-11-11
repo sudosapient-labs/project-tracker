@@ -7,7 +7,8 @@
    then navigates at once. Desktop browsers keep Back as navigation only: none of this runs there. */
 import { touchUI } from '../core/utils.js';
 import { S, task } from '../core/store.js';
-import { hashFor, layers, render } from '../shell/render.js';
+import { PAGE, hashFor, layers, render } from '../shell/render.js';
+import { parseHash } from '../core/links.js';
 import { selectMenu } from '../ui/select.js';
 import { closeModal } from '../overlays/modals.js';
 import { closePop } from '../overlays/popovers.js';
@@ -120,12 +121,13 @@ layers.back = () => {
     leaving--;
     // A page opened while the entry was being taken away (a menu item that navigates) replaced it,
     // so this went back one page too far: put the page shown back on top.
-    const h = '#' + hashFor(S.ui.route, S.ui.params);
-    if (!S.ui.auth && location.hash !== h) history.pushState(null, '', location.pathname + location.search + h);
+    const h = hashFor(S.ui.route, S.ui.params);
+    if (!S.ui.auth && parseHash(location.hash).page !== h) history.pushState(PAGE, '', location.pathname + location.search + '#' + h);
     sync();
     return true;
   }
-  if (S.ui.auth || !touchUI()) return false;
+  // An entry with no state was made by a link, not by Back: the link opens it (openLink).
+  if (S.ui.auth || !touchUI() || !history.state) return false;
   if (onEntry()) {
     // Forward onto an entry whose layer was closed since: step back over it, nothing reopens.
     if (!anyOpen()) {
@@ -146,5 +148,6 @@ layers.back = () => {
 };
 selectMenu.changed = sync;
 
-// A reload, or a restored tab, starts with nothing open; an entry left from before is just the page.
-if (onEntry()) history.replaceState(null, '', location.href);
+// A reload, or a restored tab, starts with nothing open but the task its URL names; an entry left
+// from before is just the page, unless it is that task's (it opens again, and keeps its entry).
+if (onEntry() && !parseHash(location.hash).task) history.replaceState(PAGE, '', location.href);

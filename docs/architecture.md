@@ -192,14 +192,21 @@ used by touch and closed with the system Back button. "Touch screen" means `(hov
 (`touchUI` in `src/core/utils.js`, the same test the CSS uses); desktop browsers behave as before.
 
 - **Back closes what's open first.** While a menu, popover, modal, the command palette, the task
-  drawer or the sidebar is open, the page has one extra history entry with the same URL
-  (`{ layer: true }`). Back leaves it and the topmost layer closes, in the order Escape closes them
+  drawer or the sidebar is open, the page has one extra history entry with the page's URL, or the
+  open task's (`{ layer: true }`). Back leaves it and the topmost layer closes, in the order Escape closes them
   (`closeTop` in `src/actions/back.js`, used by both); Back then navigates. Back does what a tap
   outside does first (a date picked is saved, a field being typed in saves on blur), and an edit
   window closes exactly as its X closes it. Closing the last layer another way removes the entry,
   so Back never seems to do nothing; going to a page from an open layer replaces it; Forward onto
   an old one steps back over it. A task opened from a `#task/KEY` link closes back to the page
-  under it. A reload starts with nothing open.
+  under it. A reload starts with nothing open but the task in the URL.
+- **Links open in the open app.** Android hands a notification or link for the app (`#task/KEY`) to
+  the page already open, which only changes its hash; so does a hash typed or pasted on a desktop.
+  The app tells these from its own entries by their history state (every entry it writes has one,
+  `PAGE` or `{ layer: true }`; a link's has none) and opens them where you are, as at the start
+  (`openLink` in `src/actions/session.js`): it closes what's open, goes to the page the link names
+  if it names one, and opens the task over it. A task that's gone, or that you can't see, says so in
+  a toast. A link that comes while the app is still loading, or before signing in, opens after.
 - **Nothing needs hover, drag or a right click.** Controls that appear on hover are shown. A board
   card's menu changes its status (its column); a list row's menu has Move up and Move down; a
   task is renamed in its drawer. The timeline is view-only by touch: a finger scrolls it, a tap
@@ -304,7 +311,10 @@ endpoints, `sync/` the bootstrap and sync engine, and `lib/` the pieces with no 
 - **Icons:** call `ic('name')` with any [Lucide](https://lucide.dev) icon name. The `virtual:icons`
   plugin in `vite.config.js` bundles only the icons the source names.
 - **Routing:** the URL hash follows navigation (`#project/<key>/list`, `#settings/sessions`, …), so a
-  reload keeps your place and back/forward work.
+  reload keeps your place and back/forward work. While a task is open the hash names it after the
+  page (`#project/<key>/list?task=WEB-12`, read by `parseHash` in `src/core/links.js`), so a copied
+  URL or a reload opens it too; the hash is rewritten in place for it (`showUrl` in
+  `src/shell/render.js`), adding no history entry. On a desktop, back and forward follow pages only.
 - **Server writes:** sync rules throw `Reject` to refuse a single operation without failing the batch;
   route handlers validate bodies with zod through `parseBody`.
 - **Migrations:** files in `server/migrations/` run once each, in name order, inside a transaction,
