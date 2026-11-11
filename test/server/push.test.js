@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../server/config.js';
 import { openDb } from '../../server/db.js';
 import { createPusher } from '../../server/lib/push.js';
+import { runReminders } from '../../server/jobs.js';
 import { account, setup } from './helpers.js';
 
 const sub = n => ({ endpoint: `https://fcm.googleapis.com/fcm/send/${n}`, keys: { p256dh: 'BKey' + n, auth: 'auth' + n } });
@@ -56,7 +57,7 @@ async function pair(statuses = []) {
         },
       },
     ]);
-  return { t, ada: ada.c, bob: bob.c, sent, assign, flush: () => new Promise(r => setTimeout(r, 20)) };
+  return { t, ada: ada.c, adaId: ada.user.id, bob: bob.c, sent, assign, flush: () => new Promise(r => setTimeout(r, 20)) };
 }
 
 describe('web push', () => {
@@ -77,8 +78,7 @@ describe('web push', () => {
     await assign('t1');
     await flush();
     expect(sent.map(s => s.endpoint).sort()).toEqual([sub(1).endpoint, sub(2).endpoint]);
-    expect(sent[0].msg).toMatchObject({ title: 'Ada Owner assigned you', url: '/#task/WEB-201' });
-    expect(sent[0].msg.body).toContain('WEB-201 Hero');
+    expect(sent[0].msg).toMatchObject({ title: 'Ada Owner assigned you WEB-201: Hero', body: 'High priority', url: '/#task/WEB-201' });
   });
 
   it('respects the Push preference and forgets subscriptions the push service says are gone', async () => {
@@ -103,5 +103,52 @@ describe('web push', () => {
     await assign('t1');
     await flush();
     expect(sent).toEqual([]);
+  });
+
+  /* Phones cut a notification's title short, so each kind's title is a complete phrase that starts
+     with who and what and names the task; the body adds the comment or details. */
+  it('every kind of push has a complete title, key information first', async () => {
+    const { t, ada, adaId, bob, sent, assign, flush } = await pair();
+    await bob.post('/api/push/subscriptions', sub(1));
+    await ada.post('/api/push/subscriptions', sub(2));
+    const to = e => sent.filter(s => s.endpoint === sub(e).endpoint).map(s => s.msg);
+    await assign('t1');
+    await ada.sync([{ c: 'comments', id: 'c1', k: 'put', v: { id: 'c1', task: 't1', by: 'x', at: 1, text: 'Ping @Bob Lee about the hero copy', re: {} } }]);
+    await ada.sync([{ c: 'comments', id: 'c2', k: 'put', v: { id: 'c2', task: 't1', by: 'x', at: 2, text: 'Looks good now', re: {} } }]);
+    await ada.sync([{ c: 'tasks', id: 't1', k: 'patch', v: { due: '2026-11-05' } }]);
+    runReminders(t, Date.parse('2026-11-04T12:00:00Z'));
+    runReminders(t, Date.parse('2026-11-06T12:00:00Z'));
+    const made = await ada.sync([
+      {
+        c: 'projects',
+        id: 'p2',
+        k: 'put',
+        v: {
+          id: 'p2',
+          key: 'SEC',
+          name: 'Security',
+          icon: 'lock',
+          color: 'rose',
+          status: 'active',
+          team: '',
+          lead: adaId,
+          members: [],
+          desc: '',
+          milestones: [],
+          private: true,
+        },
+      },
+    ]);
+    expect(made.body.results[0].ok).toBe(true);
+    expect((await bob.post('/api/projects/p2/request-access')).status).toBe(200);
+    await flush();
+    expect(to(1).map(m => [m.title, m.body])).toEqual([
+      ['Ada Owner assigned you WEB-201: Hero', 'High priority'],
+      ['Ada Owner mentioned you in WEB-201: Hero', 'Ping @Bob Lee about the hero copy'],
+      ['Ada Owner commented on WEB-201: Hero', 'Looks good now'],
+      ['WEB-201 is due tomorrow: Hero', 'Web'],
+      ['WEB-201 is overdue: Hero', 'Web'],
+    ]);
+    expect(to(2)).toEqual([expect.objectContaining({ title: 'Bob Lee requested access to Security', body: 'Bob Lee (bob@example.com)', url: '/#inbox' })]);
   });
 });

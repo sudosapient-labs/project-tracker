@@ -106,7 +106,7 @@ describe('scheduled jobs', () => {
     expect(runDigests(t, thu9)).toBe(1);
     expect(runDigests(t, thu9 + 600_000)).toBe(0); // already sent today
     expect(digests()).toHaveLength(1);
-    expect(digests()[0].body_text).toContain('Ada Owner assigned you WEB-201 Task t1');
+    expect(digests()[0].body_text).toContain('• Ada Owner assigned you WEB-201: Task t1');
     expect(runDigests(t, Date.parse('2026-11-07T03:30:00Z'))).toBe(0); // Saturday
   });
 

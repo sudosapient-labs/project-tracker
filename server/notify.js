@@ -45,6 +45,15 @@ const PUSH = {
   access: true,
 };
 
+/* One line saying what happened, used as the push title, the email subject and the digest line.
+   Key information first, and always a complete phrase: "Ada mentioned you in WEB-12: Fix login",
+   "WEB-12 is due tomorrow: Fix login" (from the server itself, `who` is null), "Ada requested
+   access to Website". `text` is the notification's verb phrase ("mentioned you in", "is overdue"). */
+export function notifLine(who, text, t = null) {
+  if (!t) return [who, text].filter(Boolean).join(' ');
+  return who ? `${who} ${text} ${t.key}: ${t.title}` : `${t.key} ${text}: ${t.title}`;
+}
+
 /* `reason` picks the preference; `n` is the record the inbox renders ({ type, task, project, text, snippet }).
    Pass the task itself as `task` when it may not be saved yet (e.g. while it's being created).
    Nothing is sent about a project the recipient can't see, except an access request to its lead.
@@ -72,14 +81,16 @@ export function notify(ctx, to, reason, n, task = null) {
     read: false,
   };
   repo.put('notifs', row, to);
-  const who = ctx.uid ? repo.get('members', ctx.uid)?.name || 'Someone' : 'Sudo Sapient';
+  const who = ctx.uid ? repo.get('members', ctx.uid)?.name || 'Someone' : null;
   const want = PUSH[reason];
-  // Sent by engine.publish once the change is committed.
+  const headline = notifLine(who, n.text, t);
+  // Sent by engine.publish once the change is committed. Phones cut titles short, so the title is
+  // the whole headline (who, what, which task first) and the body adds the comment or details.
   const push =
     want === true || (want && prefs[want])
       ? {
-          title: ctx.uid ? `${who} ${n.text}` : `${t ? t.title : 'Sudo Sapient'} ${n.text}`,
-          body: n.snippet && ctx.uid ? (t ? `${t.key} ${t.title} — ${n.snippet}` : n.snippet) : t ? t.key : n.snippet || '',
+          title: headline,
+          body: n.snippet && n.snippet !== t?.title ? n.snippet : t ? repo.get('projects', t.project)?.name || '' : '',
           tag: row.id,
           url: t ? `/#task/${t.key}` : '/#inbox',
         }
@@ -87,11 +98,10 @@ export function notify(ctx, to, reason, n, task = null) {
   ctx.changes.push({ c: 'notifs', id: row.id, v: row, uid: to, ...(push ? { push } : {}) });
 
   if (ctx.mailer && EMAIL[reason] && prefs[EMAIL[reason]]) {
-    const subject = t ? `${who} ${n.text} ${t.key}: ${t.title}` : `${who} ${n.text}`;
     ctx.mailer.queue({
       to: m.email,
-      subject: subject.slice(0, 200),
-      intro: n.snippet ? `${subject}\n\n“${n.snippet}”` : subject,
+      subject: headline.slice(0, 200),
+      intro: n.snippet ? `${headline}\n\n“${n.snippet}”` : headline,
       action: t ? 'Open task' : 'Open Sudo Sapient',
       link: `${ctx.config.appUrl}/#${t ? `task/${t.key}` : 'inbox'}`,
       outro: 'You can change which emails you get in Settings → Notifications.',
