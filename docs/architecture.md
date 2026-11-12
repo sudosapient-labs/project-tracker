@@ -236,7 +236,7 @@ used by touch and closed with the system Back button. "Touch screen" means `(hov
   and the state of the entry it lands on says how many layers stay open. Closing a layer another
   way (X, a backdrop, a pick) steps back over its entry, so Back never seems to do nothing; going to
   a page from an open layer replaces its entry; Forward onto an entry whose layer was closed steps
-  back over it. A layer opened with no tap gets no entry of its own: a link that stays on the page
+  back over it, or on to the page gone to from it (the sidebar's project menu → Open). A layer opened with no tap gets no entry of its own: a link that stays on the page
   makes its own entry that layer (`layers.linkEntry`), a reload keeps the entry it had (stepping
   back to the page's when only the URL's task opens again), and otherwise the next tap adds it.
   Until then Back closes it with the layer under it; in a tab opened on a `#task/KEY` link, Back
@@ -245,9 +245,9 @@ used by touch and closed with the system Back button. "Touch screen" means `(hov
   the page already open, which only changes its hash; so does a hash typed or pasted on a desktop.
   The app tells these from its own entries by their history state (every entry it writes has one,
   `pageEntry()` or a layer's; a link's has none) and opens them where you are, as at the start
-  (`openLink` in `src/actions/session.js`): it closes what's open (keeping what was typed, as Back
-  does), goes to the page the link names if it names one, and opens the task over it. The link's
-  own entry is then the page's, or the task's layer over the page shown, so Back closes the task
+  (`openLink` in `src/actions/session.js`): it closes what's open (saving a date picked or a cell
+  being typed in, and keeping what was typed in a window, as Back does), goes to the page the link
+  names if it names one, and opens the task over it. The link's own entry is then the page's, or the task's layer over the page shown, so Back closes the task
   and stays on that page. A task that's gone, or that you can't see, says so in
   a toast. A link that comes while the app is still loading, or before signing in, opens after.
 - **Nothing needs hover, drag or a right click.** Controls that appear on hover are shown, and a

@@ -16,7 +16,7 @@ import { MERGED, mergeField } from '../core/merge.js';
 import { dismissPushNudge, enablePush, explainPush, refreshPush, turnOnPushHere } from './push.js';
 import { viewOf } from '../shell/view-engine.js';
 import { rowPlace } from '../components/task-list.js';
-import { TEMPLATES, closeModal, openModal } from '../overlays/modals.js';
+import { TEMPLATES, closeModal, openModal, popModal } from '../overlays/modals.js';
 import { closePop, dateDirty, dpHead, openPop, tgt } from '../overlays/popovers.js';
 import { strengthMeter } from '../pages/settings.js';
 import { takeComposer, takeForm } from './drafts.js';
@@ -738,7 +738,7 @@ A.submitTask = () => {
     )
       return;
     attach(t);
-    S.ui.modals.pop();
+    popModal();
     render();
     if (clash) descConflict(t, desc);
     else toast('Changes saved');
@@ -759,7 +759,7 @@ A.submitTask = () => {
     toast(`Created ${t.key}`, { ms: 2000 });
     return;
   }
-  S.ui.modals.pop();
+  popModal();
   fxSet({ added: t.id });
   render();
   toast(`Created ${t.key} in ${proj(t.project).name}`, { action: 'Open', onAction: () => A.openTask({ dataset: { id: t.id } }) });
@@ -1480,7 +1480,7 @@ A.submitProject = () => {
     // A new lead joins the project (added to the members as they are now).
     if ('lead' in patch && !p.members.includes(f.lead)) patch.members = [...p.members, f.lead];
     if (mutate(() => Object.assign(p, patch))) {
-      S.ui.modals.pop();
+      popModal();
       render();
       toast('Project updated');
     }
@@ -1493,7 +1493,7 @@ A.submitProject = () => {
     })
   )
     return;
-  S.ui.modals.pop();
+  popModal();
   go('project', { id: p.id, tab: f.tmpl === 'blank' ? 'overview' : S.prefs.defaultTab || 'board' });
   toast(`Created ${p.name}${tasksOf(p.id).length ? ` with ${tasksOf(p.id).length} starter tasks` : ''}`);
 };

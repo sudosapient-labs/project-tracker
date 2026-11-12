@@ -12,6 +12,10 @@ import { dropForm } from '../actions/drafts.js';
 export function openModal(m) {
   S.ui.modalOpeners = S.ui.modalOpeners || [];
   S.ui.modalOpeners[S.ui.modals.length] = S.ui.popOpener && S.ui.pop ? S.ui.popOpener : focusKey(document.activeElement);
+  // A task or project window's form is its own: one of the same kind opened over it takes S.ui.form
+  // (or S.ui.pform), and closing that one gives this one's back (closeModal).
+  if (m.type === 'task') m.form ??= S.ui.form;
+  if (m.type === 'project') m.form ??= S.ui.pform;
   S.ui.modals.push(m);
   S.ui.pop = null;
   render();
@@ -25,9 +29,18 @@ export function openModal(m) {
     (af || last?.querySelector('input,textarea,button'))?.focus();
   }, 30);
 }
+/* Take the topmost window away (closed or saved); a task or project window under it gets its form
+   back. Returns the window taken. */
+export function popModal() {
+  const m = S.ui.modals.pop();
+  const top = S.ui.modals[S.ui.modals.length - 1];
+  if (top?.type === 'task' && top.form) S.ui.form = top.form;
+  if (top?.type === 'project' && top.form) S.ui.pform = top.form;
+  return m;
+}
 /* `keep`: what's typed in it was kept (drafts.js) and stays; otherwise closing it discards that. */
 export function closeModal({ keep = false } = {}) {
-  const m = S.ui.modals.pop();
+  const m = popModal();
   if (!keep) dropForm(m);
   S.ui.pop = null;
   render();

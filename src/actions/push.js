@@ -15,8 +15,9 @@ import { toast } from '../ui/toast.js';
 
 export { PUSH_KEYS };
 const NUDGE_KEY = 'ss-push-nudge-dismissed';
-/* How long to wait for the service worker to be ready before saying push isn't on (a worker that
-   failed to install never becomes ready, and `navigator.serviceWorker.ready` never settles then). */
+/* How long to wait for the service worker to be registered and ready before saying push isn't on (a
+   worker that failed to install never becomes ready, and `navigator.serviceWorker.ready` never
+   settles then; registering can stall too, on a fetch of sw.js that never answers). */
 const READY_MS = 10_000;
 
 /* The service worker's registration: a promise of it, or of null when registering failed. */
@@ -69,16 +70,24 @@ export function registerServiceWorker() {
 }
 
 /* The active worker's registration, or null if it can't be had: registering failed (each call tries
-   again), or it isn't ready within READY_MS. */
+   again), or registering and getting ready together take longer than READY_MS. A registration that
+   hasn't settled by then is dropped, so the next call registers again instead of waiting on it. */
 async function readyWorker() {
-  if (!worker) register();
-  let reg = await worker;
-  if (!reg && !workerBlocked) reg = await register();
-  if (!reg) return null;
   let timer;
   const late = new Promise(resolve => (timer = setTimeout(() => resolve(null), READY_MS)));
+  let registering = null;
+  const ready = (async () => {
+    if (!worker) register();
+    registering = worker;
+    let reg = await worker;
+    if (!reg && !workerBlocked) reg = await (registering = register());
+    registering = null;
+    return reg && navigator.serviceWorker.ready;
+  })();
   try {
-    return await Promise.race([navigator.serviceWorker.ready, late]);
+    const reg = await Promise.race([ready, late]);
+    if (!reg && registering && worker === registering) worker = null;
+    return reg;
   } finally {
     clearTimeout(timer);
   }

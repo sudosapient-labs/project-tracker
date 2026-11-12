@@ -85,24 +85,42 @@ self.addEventListener('push', e => {
 /* The push service replaced or expired this browser's subscription (Firefox does this; Chrome
    rarely). Subscribe again if the browser didn't already, and hand the new one to the server the
    way the app does: same origin, so the session cookie goes with it, plus the header the API
-   requires on every change. Signed out (401), this does nothing and the next sign-in subscribes. */
+   requires on every change. A request the network or the server failed (5xx) is tried again a few
+   times while the browser keeps the worker running; any other refusal is final, and signed out
+   (401) there's nothing to do: the next sign-in subscribes. If every try fails, the next time the app
+   opens signed in it hands the server this browser's subscription anyway (refreshPush in push.js). */
+const RETRY_MS = [1000, 4000, 15000];
 async function resubscribe(e) {
-  const api = (path, body) =>
-    fetch(path, {
-      method: body ? 'POST' : 'GET',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'sudo-sapient' },
-      body: body && JSON.stringify(body),
-    });
+  const api = async (path, body) => {
+    for (let i = 0; ; i++) {
+      let res = null;
+      try {
+        res = await fetch(path, {
+          method: body ? 'POST' : 'GET',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'sudo-sapient' },
+          body: body && JSON.stringify(body),
+        });
+      } catch {
+        /* offline or the connection dropped: try again */
+      }
+      if (res && (res.ok || res.status < 500)) return res;
+      if (i >= RETRY_MS.length) return res;
+      await new Promise(r => setTimeout(r, RETRY_MS[i]));
+    }
+  };
   let sub = e.newSubscription;
   if (!sub) {
     const res = await api('/api/push/key');
-    if (!res.ok) return;
+    if (!res?.ok) return;
     const { publicKey } = await res.json();
     const s = atob((publicKey + '='.repeat((4 - (publicKey.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
     sub = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from(s, c => c.charCodeAt(0)) });
   }
-  if (e.oldSubscription && e.oldSubscription.endpoint !== sub.endpoint) await api('/api/push/unsubscribe', { endpoint: e.oldSubscription.endpoint });
+  if (e.oldSubscription && e.oldSubscription.endpoint !== sub.endpoint) {
+    const res = await api('/api/push/unsubscribe', { endpoint: e.oldSubscription.endpoint });
+    if (res?.status === 401) return;
+  }
   await api('/api/push/subscriptions', sub.toJSON());
 }
 self.addEventListener('pushsubscriptionchange', e => e.waitUntil(resubscribe(e).catch(() => {})));

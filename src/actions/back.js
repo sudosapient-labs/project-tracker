@@ -29,9 +29,14 @@ import { A, saveDatePop } from './actions.js';
 import { keepComposer, keepModal } from './drafts.js';
 
 const TYPING = 'input, textarea, select, [contenteditable="true"]';
-const blurTyping = () => {
+/* Leave the field being typed in. Back (`keep`) saves it as a tap outside does; Escape cancels it
+   first: a field that saves on blur (the drawer's title) goes back to what it showed, so its blur
+   saves nothing. */
+const blurTyping = (keep = true) => {
   const a = document.activeElement;
-  if (a?.matches?.(TYPING)) a.blur();
+  if (!a?.matches?.(TYPING)) return;
+  if (!keep && a.dataset.blur && 'defaultValue' in a) a.value = /** @type {HTMLInputElement} */ (a).defaultValue;
+  a.blur();
 };
 
 /* What's open, top first: the order Escape and Back close things in. */
@@ -90,13 +95,13 @@ export function closeTop(keep = false) {
     return true;
   }
   if (u.subOpen) {
-    blurTyping();
+    blurTyping(keep);
     u.lastSub = u.subOpen.sid;
     A.closeSub();
     return true;
   }
   if (u.drawer) {
-    blurTyping();
+    blurTyping(keep);
     A.closeDrawer();
     return true;
   }
@@ -107,12 +112,18 @@ export function closeTop(keep = false) {
   return false;
 }
 
-/* Back: what a tap outside does first (a date picker keeps the date picked, a field being typed in
-   saves as when it loses focus); if that already closed something, that was this Back's step. */
-function back() {
-  const was = open().join();
+/* What a tap outside does first: a date picker keeps the date picked, a field or table cell being
+   typed in saves as when it loses focus. Back does this before it closes anything, and so does a
+   link opening in the open app (openLink in session.js) before it closes everything. */
+export function settle() {
   if (S.ui.pop?.type === 'date') saveDatePop(true);
   blurTyping();
+}
+
+/* Back: settle first; if that already closed something, that was this Back's step. */
+function back() {
+  const was = open().join();
+  settle();
   if (open().join() !== was) return;
   closeTop(true);
 }
@@ -176,6 +187,15 @@ function closeTo(d) {
 }
 
 layers.onEntry = () => !S.ui.auth && touchUI() && depth(history.state) > 0;
+/* A page went to from a layer over another layer (the sidebar's project menu → Open) takes over the
+   top layer's entry, so the layers' entries under it are left between that page and the one before.
+   Back over them steps back to the page before; Forward onto one goes on to the page it led to, by
+   the number of entries up to it, remembered here for this page load. */
+const ahead = new Map();
+layers.replacing = () => {
+  const s = history.state;
+  for (const id of chainOf(s).slice(1, -1)) ahead.set(id, depth(s));
+};
 layers.sync = sync;
 layers.added = () => {
   tapped = false;
@@ -205,6 +225,12 @@ layers.back = () => {
     // Forward), or one of a layer closed since: nothing stays open.
     closeTo(Math.max(j, 0));
     if (j < 0 && depth(s)) {
+      // Forward from the page under it onto one left under a page gone to: on to that page.
+      const to = ahead.get(s.id);
+      if (to && was?.id && (s.below || []).includes(was.id)) {
+        history.go(to - depth(s));
+        return true;
+      }
       // A closed layer's: step back to the page it was over, which then routes as below.
       history.go(-depth(s));
       return true;

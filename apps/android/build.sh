@@ -26,7 +26,11 @@ die() {
 
 here=$(cd "$(dirname "$0")" && pwd -P)
 repo=$(cd "$here/../.." && pwd -P)
-production_host=$(sed -n 's/^ *"host": "\([^"]*\)".*/\1/p' "$here/twa-manifest.json")
+# A top-level string field of twa-manifest.json, and one of the twaManifest map in the committed build.gradle.
+manifest_field() { sed -n "s/^  \"$1\": \"\([^\"]*\)\".*/\1/p" "$here/twa-manifest.json"; }
+gradle_field() { sed -n "s/^    $1: '\([^']*\)'.*/\1/p" "$here/app/build.gradle"; }
+production_host=$(manifest_field host)
+production_package_id=$(manifest_field packageId)
 staging_host=sudo-tracker-staging.up.railway.app
 
 keystore=${ANDROID_KEYSTORE-} alias=${ANDROID_KEY_ALIAS:-sudo-sapient}
@@ -63,6 +67,9 @@ printf '%s' "$host" | grep -Eq '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$' ||
   die "--host takes a host name such as example.com, without https://, a port or a path"
 if [ -n "$package_id" ]; then
   printf '%s' "$package_id" | grep -Eq '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$' || die "invalid package id $package_id"
+  # The production id on another host would replace the real app when installed over it.
+  [ "$package_id" != "$production_package_id" ] ||
+    die "$package_id is the production app's package id; a $target build needs its own (see --help)"
 fi
 
 # --- signing inputs -----------------------------------------------------------------------------------
@@ -89,12 +96,29 @@ build_tools=$(find "$sdk/build-tools" -mindepth 1 -maxdepth 1 -type d 2>/dev/nul
 [ -n "$build_tools" ] && [ -x "$build_tools/apksigner" ] || die "no build-tools with apksigner in $sdk/build-tools"
 export JAVA_HOME ANDROID_HOME=$sdk PATH="$JAVA_HOME/bin:$PATH"
 
-# Production builds the committed project without regenerating it, so it must match twa-manifest.json.
+# Production builds the committed project without regenerating it, so it must match twa-manifest.json:
+# its identity, host, version, names, colours and shortcuts.
 if [ "$target" = production ]; then
-  want=$(sed -n 's/^[[:space:]]*"appVersionCode":[[:space:]]*\([0-9]*\).*/\1/p' "$here/twa-manifest.json")
-  have=$(sed -n 's/^[[:space:]]*versionCode[[:space:]]*\([0-9]*\).*/\1/p' "$here/app/build.gradle")
-  [ "$want" = "$have" ] ||
-    die "twa-manifest.json has appVersionCode $want but the project has versionCode $have; run node apps/android/generate.js and commit"
+  regenerate="run node apps/android/generate.js and commit"
+  same() { [ "$2" = "$3" ] || die "twa-manifest.json has $1 '$2' but the committed project has '$3'; $regenerate"; }
+  gradle_line() { sed -n "s/^[[:space:]]*$1[[:space:]][[:space:]]*\"*\([^\":]*\)\"*[[:space:]]*$/\1/p" "$here/app/build.gradle" | head -n 1; }
+  same appVersionCode "$(sed -n 's/^[[:space:]]*"appVersionCode":[[:space:]]*\([0-9]*\).*/\1/p' "$here/twa-manifest.json")" "$(gradle_line versionCode)"
+  same appVersion "$(manifest_field appVersion)" "$(gradle_line versionName)"
+  same packageId "$production_package_id" "$(gradle_line applicationId)"
+  same packageId "$production_package_id" "$(gradle_line namespace)"
+  same packageId "$production_package_id" "$(gradle_field applicationId)"
+  same host "$production_host" "$(gradle_field hostName)"
+  same startUrl "$(manifest_field startUrl)" "$(gradle_field launchUrl)"
+  for key in name launcherName themeColor themeColorDark navigationColor navigationColorDark \
+    navigationDividerColor navigationDividerColorDark backgroundColor fallbackType orientation; do
+    same "$key" "$(manifest_field "$key")" "$(gradle_field "$key")"
+  done
+  same enableNotifications "$(sed -n 's/^ *"enableNotifications": \([a-z]*\).*/\1/p' "$here/twa-manifest.json")" \
+    "$(sed -n 's/^ *enableNotifications: \([a-z]*\),.*/\1/p' "$here/app/build.gradle")"
+  shortcuts=$(sed -n 's/^ *shortcuts: \[\(.*\)\],$/\1/p' "$here/app/build.gradle")
+  for url in $(sed -n 's/^ *"url": "\([^"]*\)".*/\1/p' "$here/twa-manifest.json"); do
+    case "$shortcuts" in *"url:'$url'"*) ;; *) die "twa-manifest.json has the shortcut $url but the committed project doesn't; $regenerate" ;; esac
+  done
   [ ! "$here/twa-manifest.json" -nt "$here/app/build.gradle" ] ||
     echo "build: warning: twa-manifest.json is newer than the project; run node apps/android/generate.js if you changed it" >&2
 fi

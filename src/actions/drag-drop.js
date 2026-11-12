@@ -188,8 +188,11 @@ function placeRow(d) {
     .tasks.filter(x => !x.archived && x.id !== t.id)
     .sort((a, b) => a.order - b.order);
   const i = all.findIndex(x => x.id === tg.id);
-  const nb = d.pos === 'before' ? all[i - 1] : all[i + 1];
-  const order = nb ? (tg.order + nb.order) / 2 : tg.order + (d.pos === 'before' ? -1 : 1);
+  // `pos` is where the row goes on screen; sorted by hand in descending order, the row shown
+  // before another has the higher order.
+  const before = (d.pos === 'before') !== (v?.sort.f === 'manual' && v.sort.dir < 0);
+  const nb = before ? all[i - 1] : all[i + 1];
+  const order = nb ? (tg.order + nb.order) / 2 : tg.order + (before ? -1 : 1);
   const patch = {};
   if (v && d.group) {
     const g = v.group;
